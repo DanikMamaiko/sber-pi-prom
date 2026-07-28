@@ -5,7 +5,7 @@
 ## Конкурентное редактирование
 
 Все read-контракты нормализованных агрегатов возвращают `version`. Записывающие запросы
-`PATCH /pi-cycles/{cycle_id}`, все агрегатные PUT, `backlog/dispatch` и `pre-pi/submit`
+`PATCH /pi-cycles/{cycle_id}`, все агрегатные PUT, команды `/backlog-board/*` и `pre-pi/submit`
 обязаны передавать `expected_version`. Версия PI-цикла общая для setup, Pre PI, целей,
 командных досок, ёмкости, Program Board и рисков; у глобального `backlog-board` своя версия.
 
@@ -45,19 +45,26 @@
 ## Бэклог
 
 - `GET /backlog-board`
+- `POST /backlog-board/items`
+- `PATCH /backlog-board/items/{item_id}`
+- `DELETE /backlog-board/items/{item_id}`
+- `PUT /backlog-board/order`
 - `PUT /backlog-board`
-- `POST /pi-cycles/{cycle_id}/backlog/dispatch`
-- `GET /backlog`
-- `POST /backlog`
-- `POST /pi-cycles/{cycle_id}/initiatives/from-backlog/{backlog_item_id}`
+- `POST /backlog-board/dispatch`
 
 `backlog-board` — основной агрегат вкладки «Бэклог команд»: общий для всех
-PI-циклов список инициатив, разбивка по трайбам, порядок строк, системы АС,
-команды-исполнители и оценки по компетенциям. `PUT` сохраняет всю доску одной
-транзакцией. `dispatch` атомарно создаёт либо обновляет PI-копии выбранных
-инициатив; повторная отправка не создаёт дубликаты.
+PI-циклов список инициатив, разбивка по трайбам, порядок строк, теги, системы АС,
+команды-исполнители и оценки по компетенциям. GET возвращает готовый read model:
+версию, стабильные UUID, справочники, канонический порядок и серверную общую оценку.
+Каждая item/order-команда соответствует одному действию пользователя и возвращает
+полный новый read model. Bulk PUT оставлен как одна атомарная команда сохранения формы.
 
-Старые `/backlog` и `/initiatives/from-backlog` пока сохранены для совместимости.
+`dispatch` получает трайб, год и квартал; backend сам выбирает подходящие строки,
+блокирует глобальный бэклог и целевой PI-цикл, валидирует команды и компетенции,
+создаёт PI-копии и меняет обе версии в одной транзакции. Повторная отправка отклоняется.
+Удаление уже отправленного источника требует `confirm_cascade: true` и атомарно
+разрывает связи, не удаляя независимые PI-копии. Legacy `/backlog`, PI-scoped
+`backlog/dispatch` и `/initiatives/from-backlog` удалены.
 
 ## Инициативы
 

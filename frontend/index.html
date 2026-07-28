@@ -894,8 +894,6 @@ const defaultState = {
   cycles: {},
   // Данные бюджетирования по годам.
   budgets: {},
-  // Бэклог трайбов — общий, кросс-квартальный (вне циклов). Ключ — имя трайба.
-  tribeBacklog: {},
   ui:{
     // выбор PI-цикла на главной странице; null/null — показывается стартовая страница
     mode:null, year:null, quarter:null, landingYear:2026, budgetYear:null, budgetTab:'budgetData',
@@ -933,11 +931,7 @@ let cycleSyncChain=Promise.resolve();
 let aggregateMutationChain=Promise.resolve();
 let lastCycleSyncErrorAt=0;
 let backlogApiReady=false;
-let backlogBackendAdopted=false;
-let backlogVersion=0;
-let persistedBacklogSnapshot='';
-let backlogSyncTimer=null;
-let backlogSyncChain=Promise.resolve();
+let backlogBoard=null;
 let lastBacklogSyncErrorAt=0;
 let prePiApiReady=false;
 let persistedPrePiSnapshots={};
@@ -1134,7 +1128,6 @@ function save(syncCycles=true){
   // синхронизация зависимых агрегатов дала бы ложные 422 и могла бы затереть
   // незавершённый ввод ответом от более раннего запроса.
   if(syncCycles && state.ui.mode==='pi' && state.ui.tab!=='data'){
-    if(backlogApiReady) queueBacklogSync();
     if(prePiApiReady) queuePrePiSync();
     if(goalsApiReady) queueGoalsSync();
     if(teamBoardsApiReady) queueTeamBoardsSync();
@@ -1203,13 +1196,10 @@ function cycleMutation(id,path,options={}){
   aggregateMutationChain=run.catch(()=>{});
   return run;
 }
-function backlogMutation(payload){
+function backlogMutation(path,method,body={}){
   const run=aggregateMutationChain.then(async()=>{
-    const result=await cycleApi('/backlog-board',{
-      method:'PUT',body:{...payload,expected_version:backlogVersion},
-    });
-    if(result&&Number.isInteger(result.version))backlogVersion=result.version;
-    return result;
+    if(!backlogBoard||!Number.isInteger(backlogBoard.version)) throw new Error('Read model бэклога ещё не загружен');
+    return cycleApi(path,{method,body:{...body,expected_version:backlogBoard.version}});
   });
   aggregateMutationChain=run.catch(()=>{});
   return run;
@@ -1349,129 +1339,20 @@ function piDataCommand(path,options={}){
   aggregateMutationChain=run.catch(()=>{});
   return run;
 }
-function backlogBoardPayload(){
-  const items=[];
-  Object.keys(state.tribeBacklog||{}).forEach(tribe=>{
-    (state.tribeBacklog[tribe]||[]).forEach((it,sortOrder)=>{
-      ensureBacklogShape(it);
-      const issueKey=String(it.id||'').trim();
-      if(!issueKey) return;
-      const year=String(it.year||'').trim();
-      const quarter=String(it.quarter||'').trim();
-      items.push({
-        id:it._backendId||null,
-        tribe,
-        issue_key:issueKey,
-        title:String(it.name||''),
-        description:String(it.description||''),
-        product:String(it.product||''),
-        owner_team:String(it.owner||''),
-        initiative_type:String(it.type||''),
-        target_year:/^\d{4}$/.test(year)?+year:null,
-        target_quarter:/^Q[1-4]$/.test(quarter)?quarter:null,
-        customer_priority:String(it.custPrio||''),
-        team_priority:String(it.teamPrio||''),
-        status:String(it.status||'Нет оценки'),
-        systems:Array.isArray(it.ac)?it.ac:[],
-        sent_to:Array.isArray(it.sentTo)?it.sentTo:[],
-        sort_order:sortOrder,
-        executors:(it.executors||[]).filter(e=>String(e.team||'').trim()).map(e=>({
-          team:String(e.team).trim(),
-          effort_by_competency:e.comps&&typeof e.comps==='object'?e.comps:{},
-        })),
-      });
-    });
-  });
-  return {items};
-}
-function backlogSnapshotHash(payload=backlogBoardPayload()){
-  return stablePayloadHash(payload);
-}
-function backlogItemFromApi(row,prior){
-  const it=prior||{};
-  Object.assign(it,{
-    _uid:it._uid||uid(),
-    _backendId:row.id,
-    id:row.issue_key,
-    name:row.title||'',
-    description:row.description||'',
-    product:row.product||'',
-    owner:row.owner_team||'',
-    type:row.initiative_type||'',
-    quarter:row.target_quarter||'',
-    year:row.target_year?String(row.target_year):'',
-    custPrio:row.customer_priority||'',
-    teamPrio:row.team_priority||'',
-    status:row.status||'Нет оценки',
-    ac:Array.isArray(row.systems)?row.systems:[],
-    sentTo:Array.isArray(row.sent_to)?row.sent_to:[],
-    executors:(row.executors||[]).map(e=>({team:e.team,comps:e.effort_by_competency||{},attractions:[]})),
-  });
-  ensureBacklogShape(it);
-  return it;
-}
 function applyBacklogBoard(board){
-  const priorById={}, priorByKey={};
-  Object.values(state.tribeBacklog||{}).flat().forEach(it=>{
-    if(it._backendId) priorById[it._backendId]=it;
-    if(it.id) priorByKey[String(it.id).toLowerCase()]=it;
-  });
-  const grouped={};
-  (board.items||[]).forEach(row=>{
-    const prior=priorById[row.id]||priorByKey[String(row.issue_key).toLowerCase()];
-    const it=backlogItemFromApi(row,prior);
-    (grouped[row.tribe]=grouped[row.tribe]||[]).push(it);
-  });
-  state.tribeBacklog=grouped;
-}
-function applyBacklogIdentity(board){
-  const byKey={};
-  Object.values(state.tribeBacklog||{}).flat().forEach(it=>{
-    if(it.id) byKey[String(it.id).toLowerCase()]=it;
-  });
-  (board.items||[]).forEach(row=>{
-    const it=byKey[String(row.issue_key).toLowerCase()];
-    if(!it) return;
-    it._backendId=row.id;
-    it.status=row.status||it.status;
-    it.sentTo=Array.isArray(row.sent_to)?row.sent_to:it.sentTo;
-  });
+  backlogBoard=board;
 }
 function reportBacklogSyncError(error){
-  console.error('Backlog API sync failed',error);
+  console.error('Backlog API command failed',error);
   if(reportOptimisticConflict(error))return;
   const now=Date.now();
   if(now-lastBacklogSyncErrorAt>5000 && typeof toast==='function'){
     lastBacklogSyncErrorAt=now;
-    toast('Не удалось сохранить бэклог в backend. Проверьте доступность API и уникальность Issue ID.',{type:'warn',timeout:5000});
+    toast(error&&error.message?error.message:'Не удалось выполнить команду бэклога',{type:'warn',timeout:6000});
   }
 }
-async function persistBacklogBoard(force=false){
-  const payload=backlogBoardPayload();
-  const hash=backlogSnapshotHash(payload);
-  if(!force && hash===persistedBacklogSnapshot) return;
-  const board=await backlogMutation(payload);
-  applyBacklogIdentity(board);
-  persistedBacklogSnapshot=backlogSnapshotHash();
-}
-function runBacklogSync(){
-  const run=backlogSyncChain.then(()=>persistBacklogBoard());
-  backlogSyncChain=run.catch(reportBacklogSyncError);
-  return run;
-}
-function queueBacklogSync(){
-  clearTimeout(backlogSyncTimer);
-  backlogSyncTimer=setTimeout(()=>{backlogSyncTimer=null;runBacklogSync().catch(()=>{});},350);
-}
-function flushBacklogSync(){
-  if(backlogSyncTimer){clearTimeout(backlogSyncTimer);backlogSyncTimer=null;}
-  return runBacklogSync();
-}
 async function loadBacklogBoard(){
-  const board=await cycleApi('/backlog-board');
-  backlogVersion=board.version;
-  applyBacklogBoard(board);
-  persistedBacklogSnapshot=backlogSnapshotHash();
+  applyBacklogBoard(await cycleApi('/backlog-board'));
 }
 function prePiPayload(id,c){
   ensureCycleShape(c);
@@ -2312,9 +2193,6 @@ function normalize(){
   if(!('budgetCompositionDate' in state.ui)) state.ui.budgetCompositionDate=null;
   if(!state.budgets || typeof state.budgets!=='object') state.budgets={};
   Object.keys(state.budgets).forEach(y=>{ state.budgets[y]=ensureBudgetShape(state.budgets[y]); });
-  if(!state.tribeBacklog || typeof state.tribeBacklog!=='object') state.tribeBacklog={};
-  seedBacklogDemo();
-  seedSbolBacklogDemo();
   const keep=currentCycleId();
   Object.keys(state.cycles).forEach(id=>{
     activateCycle(id);
@@ -2446,47 +2324,6 @@ function normalizeCycle(){
   });
 }
 function newConnId(){ return 'cn_'+uid(); }
-// Идемпотентный демо-сид бэклога трайба «Корпоративный бизнес».
-function seedBacklogDemo(){
-  if(state.tribeBacklogSeeded) return;
-  state.tribeBacklogSeeded=true;
-  const tribe='Корпоративный бизнес';
-  state.tribeBacklog[tribe]=state.tribeBacklog[tribe]||[];
-  if(state.tribeBacklog[tribe].length) return;
-  state.tribeBacklog[tribe].push(
-    {_uid:uid(), id:'Corporate-2001', name:'Оптимизация расчётов', custPrio:'1', teamPrio:'1',
-     quarter:'Q2', year:'2026', product:'Расчётный модуль', owner:'Расчеты', type:'Доработка',
-     ac:['СБОЛ','КСШ'], status:'Оценка проведена',
-     executors:[{team:'Расчеты',comps:{SA:5,DEV:7,QA:1,BE:2}}], sentTo:[]},
-    {_uid:uid(), id:'Corporate-2002', name:'Новый кабинет продаж', custPrio:'2', teamPrio:'3',
-     quarter:'', year:'2026', product:'Продажи-портал', owner:'Продажи', type:'Развитие функционала',
-     ac:['CRM'], status:'Нет оценки',
-     executors:[{team:'Продажи',comps:{SA:3,DEV:4,QA:2}}], sentTo:[]},
-  );
-}
-// Идемпотентный демо-сид бэклога трайба «Розничный бизнес» для команды СБОЛ.
-function seedSbolBacklogDemo(){
-  if(state.sbolBacklogSeeded) return;
-  state.sbolBacklogSeeded=true;
-  const tribe='Розничный бизнес';
-  state.tribeBacklog[tribe]=state.tribeBacklog[tribe]||[];
-  const has=id=>state.tribeBacklog[tribe].some(x=>x.id===id);
-  const rows=[
-    {_uid:uid(), id:'SBOL-3001', name:'Редизайн главного экрана', custPrio:'1', teamPrio:'1',
-     quarter:'Q1', year:'2026', product:'Мобильный банк', owner:'СБОЛ', type:'Развитие функционала',
-     ac:['СБОЛ','СББОЛ'], status:'Оценка проведена',
-     executors:[{team:'СБОЛ',comps:{SA:4,FE:8,DES:5,BE:3}}], sentTo:[]},
-    {_uid:uid(), id:'SBOL-3002', name:'Оплата по QR', custPrio:'2', teamPrio:'2',
-     quarter:'Q2', year:'2026', product:'Платежи', owner:'СБОЛ', type:'Интеграция',
-     ac:['CRM','КСШ'], status:'Оценка проведена',
-     executors:[{team:'СБОЛ',comps:{SA:2,FE:5,BE:6}},{team:'Модуль расчетов',comps:{SA:1,DEV:4,QA:2}}], sentTo:[]},
-    {_uid:uid(), id:'SBOL-3003', name:'Push-уведомления 2.0', custPrio:'3', teamPrio:'4',
-     quarter:'', year:'2026', product:'Мобильный банк', owner:'СБОЛ', type:'Доработка',
-     ac:['СБОЛ'], status:'Нет оценки',
-     executors:[{team:'СБОЛ',comps:{SA:1,BE:4}}], sentTo:[]},
-  ];
-  rows.forEach(r=>{ if(!has(r.id)) state.tribeBacklog[tribe].push(r); });
-}
 // Идемпотентный демо-сид Pre PI (верхний/нижний блок) для команды СБОЛ.
 function seedSbolPrepDemo(){
   if(!state.pi.teams || !state.pi.teams.some(t=>t.name==='СБОЛ')) return;
@@ -2953,14 +2790,14 @@ function teamOptionsHTML(teamOptions,selected,withTribe=false){
 function execBlockHTML(iss, ex, ei, kind, teamOptions){
   const total=iss.executors.length;
   const idAttr = kind==='bk' ? iss._uid : iss.id;
-  const avail = kind==='bk' ? teamCompsFor(ex.team, iss.quarter, iss.year) : teamCompsFor(ex.team);
+  const avail = kind==='bk' ? backlogTeamCompetencies(ex.team) : teamCompsFor(ex.team);
   const selAttr = kind==='bk' ? `data-bk-exec="${esc(idAttr)}"` : `data-pi-exec="${esc(idAttr)}"`;
   const delAttr = kind==='bk' ? `data-bk-execdel="${esc(idAttr)}"` : `data-pi-execdel="${esc(idAttr)}"`;
   const addAttr = kind==='bk' ? `data-bk-execadd="${esc(idAttr)}"` : `data-pi-execadd="${esc(idAttr)}"`;
   return `<td class="exec-cell">
     <div class="exec-block">
       <div class="exec-team-line">
-        <select ${selAttr} data-ei="${ei}" class="exec-team">${teamOptionsHTML(teamOptions,ex.team,kind==='bk')}</select>
+        <select ${selAttr} data-ei="${ei}" class="exec-team">${kind==='bk'?'<option value="">—</option>':''}${teamOptionsHTML(teamOptions,ex.team,kind==='bk')}</select>
         ${total>1?`<button class="icon danger sm" ${delAttr} data-ei="${ei}" title="Убрать исполнителя">✕</button>`:''}
       </div>
       ${compFieldsHTML(avail, ex.comps, kind, idAttr, ei)}
@@ -3741,46 +3578,83 @@ function bindColFilters(){
    Общий кросс-квартальный бэклог трайба. Команды расписывают инициативы,
    затем по «Кварталу реализации» отправляют их на Pre PI выбранного цикла.
 ===================================================================== */
-function backlogList(tribe){ return state.tribeBacklog[tribe] = state.tribeBacklog[tribe] || []; }
-function findBacklogInit(u){
-  const list=state.tribeBacklog[state.ui.backlogTribe]||[];
-  return list.find(x=>x._uid===u)||null;
+function backlogRows(){ return backlogBoard&&Array.isArray(backlogBoard.items)?backlogBoard.items:[]; }
+function backlogRefs(){ return backlogBoard&&backlogBoard.reference_data||{tribes:[],teams:[],statuses:[],competencies:[]}; }
+function findBacklogRow(id){ return backlogRows().find(row=>row.id===id)||null; }
+function backlogTeamRefs(tribe=null){
+  return backlogRefs().teams.filter(team=>!tribe||team.tribe===tribe);
 }
-// Заглушка интеграции с Jira: вернёт поля инициативы по № Issue, когда интеграция появится.
-// Пока источника нет — null, и инициатива создаётся только с введённым номером.
-function fetchJiraIssue(id){ return null; }
-function newBacklogInit(tribe,fields){
-  const teams=state.ui.mode==='budget' ? budgetTeamsOfTribe(tribe) : tribeTeamsGlobal(tribe);
-  const firstTeam=(teams[0]&&teams[0].name)||'';
-  const base={_uid:uid(), id:'', name:'', custPrio:'', teamPrio:'', quarter:'', year:'',
-    description:'', product:'', owner:firstTeam, type:'', ac:[], status:'Нет оценки',
-    executors:[makeExecutor(firstTeam,'','')], sentTo:[]};
-  return Object.assign(base, fields||{});
+function backlogTeamCompetencies(name){
+  const team=backlogRefs().teams.find(row=>row.name===name);
+  return team&&Array.isArray(team.competencies)?team.competencies:[];
 }
-// Гарантировать корректную форму инициативы бэклога (для загруженных сессий).
-function ensureBacklogShape(it){
-  if(!it._uid) it._uid=uid();
-  ['id','name','description','custPrio','teamPrio','quarter','year','product','owner','type','status'].forEach(k=>{ if(!(k in it)) it[k]=(k==='status'?'Нет оценки':''); });
-  if(typeof it.ac==='string') it.ac=it.ac.split(',').map(s=>s.trim()).filter(Boolean);
-  if(!Array.isArray(it.ac)) it.ac=[];
-  if(!Array.isArray(it.sentTo)) it.sentTo=[];
-  if(!Array.isArray(it.executors) || !it.executors.length) it.executors=[makeExecutor(it.owner||'','','')];
-  it.executors.forEach(e=>{ if(!e.comps||typeof e.comps!=='object') e.comps={}; });
-  ensureIssueLinksShape(it);
+// Адаптер только для отображения в точной разметке прототипа. Канонические
+// бизнес-данные остаются неизменённым read model backend в backlogBoard.
+function backlogViewItem(row){
+  const executors=(row.executors||[]).map(ex=>({
+    id:ex.id,team:ex.team,comps:{...(ex.effort_by_competency||{})},attractions:[],
+  }));
+  if(!executors.length) executors.push({id:null,team:'',comps:{},attractions:[]});
+  return {
+    _uid:row.id,_backendId:row.id,id:row.issue_key,name:row.title||'',
+    description:row.description||'',product:row.product||'',owner:row.owner_team||'',
+    type:row.initiative_type||'',quarter:row.target_quarter||'',
+    year:row.target_year?String(row.target_year):'',custPrio:row.customer_priority||'',
+    teamPrio:row.team_priority||'',status:row.status||'Нет оценки',
+    ac:Array.isArray(row.systems)?row.systems:[],tags:Array.isArray(row.tags)?row.tags:[],
+    sentTo:Array.isArray(row.sent_to)?row.sent_to:[],totalEffort:+row.total_effort||0,
+    executors,
+  };
+}
+// Используется только старым, не развиваемым бюджетным экраном над transient-адаптером.
+function ensureBacklogShape(it){ return it; }
+function backlogCommandPayload(row){
+  return {
+    tribe:row.tribe,issue_key:row.issue_key,title:row.title||'',
+    description:row.description||'',product:row.product||'',owner_team:row.owner_team||'',
+    initiative_type:row.initiative_type||'',target_year:row.target_year,
+    target_quarter:row.target_quarter,customer_priority:row.customer_priority||'',
+    team_priority:row.team_priority||'',status:row.status||'Нет оценки',
+    tags:Array.isArray(row.tags)?row.tags:[],systems:Array.isArray(row.systems)?row.systems:[],
+    executors:(row.executors||[]).map(ex=>({
+      id:ex.id||null,team:ex.team,effort_by_competency:{...(ex.effort_by_competency||{})},
+    })),
+  };
+}
+function backlogCascadeMessage(detail){
+  const summary=Object.entries(detail&&detail.affected||{}).filter(([,count])=>count)
+    .map(([name,count])=>`${name}: ${count}`).join(', ');
+  return `Удаление разорвёт связи с уже отправленными инициативами${summary?` (${summary})`:''}. Продолжить?`;
+}
+async function executeBacklogCommand(path,method,body={},allowCascade=false){
+  try{
+    applyBacklogBoard(await backlogMutation(path,method,body));
+  }catch(error){
+    const cascade=allowCascade&&error&&error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required';
+    if(cascade&&window.confirm(backlogCascadeMessage(error.detail))){
+      applyBacklogBoard(await backlogMutation(path,method,{...body,confirm_cascade:true}));
+    }else{
+      reportBacklogSyncError(error);
+      throw error;
+    }
+  }
+  render();
+  return backlogBoard;
 }
 
 function viewBacklog(){
+  if(!backlogBoard) return `<div class="card"><h2>Бэклог команд ${activeBadge()}</h2><div class="note">Backend бэклога недоступен. Локальные или демонстрационные данные не используются.</div></div>`;
   if(!state.ui.backlogTribe) return viewBacklogSelect();
-  const tribes=state.ui.mode==='budget' ? budgetTribes() : allTribesGlobal();
+  const tribes=backlogRefs().tribes.map(row=>row.name);
   if(!tribes.includes(state.ui.backlogTribe)){ state.ui.backlogTribe=null; return viewBacklogSelect(); }
   return viewBacklogBoard(state.ui.backlogTribe);
 }
 // 7.0 — выбор трайба (список трайбов — глобальный, не зависит от выбранного PI-цикла)
 function viewBacklogSelect(){
   const isBudget=state.ui.mode==='budget';
-  const tribes=isBudget ? budgetTribes() : allTribesGlobal();
+  const tribes=backlogRefs().tribes.map(row=>row.name);
   let html=`<div class="card${isBudget?' budget-shell':''}"><div class="flex-between"><h2>Бэклог команд ${activeBadge()}</h2>
-    <div class="hint">Выберите трайб. Бэклог трайба общий для PI-цикла и бюджетирования; изменения синхронно видны в обоих разделах. ${isBudget?'Инициативы отправляются на оценку по году реализации.':'Инициативы отправляются на Pre PI по столбцу «Квартал реализации».'}</div></div>`;
+    <div class="hint">Выберите трайб. Общий бэклог хранится в PostgreSQL и одинаково отображается после перезагрузки и в другом браузере. ${isBudget?'Бюджетные команды в эту доработку не входят.':'Инициативы отправляются на Pre PI по столбцу «Квартал реализации».'}</div></div>`;
   html+=`<div class="tribe-list">`;
   if(!tribes.length) html+=`<div class="muted">Нет трайбов — добавьте команды на «${isBudget?'Данные для бюджетирования':'Данные PI-цикла'}».</div>`;
   tribes.forEach(tribe=>{
@@ -3801,20 +3675,15 @@ const BK_FILTER_COLS=[
   {k:'type',    label:'Тип инициативы'},
   {k:'ac',      label:'АС', val:it=>(Array.isArray(it.ac)?it.ac:[])},
   {k:'status',  label:'Статус'},
-  {k:'effort',  label:'Общая оценка (чел/дн)', val:it=>round1(issueTotalEffort(it))},
+  {k:'effort',  label:'Общая оценка (чел/дн)', val:it=>it.totalEffort},
 ];
 
 // 7.1 — весь бэклог трайба
 function viewBacklogBoard(tribe){
   const isBudget=state.ui.mode==='budget';
-  const teams=isBudget ? budgetTeamsOfTribe(tribe) : tribeTeamsGlobal(tribe);
-  (state.tribeBacklog[tribe]||[]).forEach(ensureBacklogShape);
+  const teams=backlogTeamRefs(tribe);
   const filter=state.ui.backlogTeamFilter;
-  let list=(state.tribeBacklog[tribe]||[]);
-  if(isBudget){
-    const budgetTeamNames=new Set(teams.map(t=>t.name));
-    list=list.filter(it=>budgetTeamNames.has(it.owner));
-  }
+  let list=backlogRows().filter(row=>row.tribe===tribe).map(backlogViewItem);
   if(filter) list=list.filter(it=> it.owner===filter || issueExecTeams(it).includes(filter));
   // фильтры по столбцам применяются поверх фильтра по команде
   colFilterCtx['bk']={rows:list, cols:BK_FILTER_COLS};
@@ -3839,7 +3708,7 @@ function viewBacklogBoard(tribe){
   const qs=['Q1','Q2','Q3','Q4'];
   const years=[2025,2026,2027,2028];
   if(isBudget){
-    html+=`<div class="note" style="margin:8px 0">В бюджетном сценарии инициативы создаются на вкладке <b>Оценка инициатив</b>. Бэклог здесь используется как справочник задач для ручной связки в карточке инициативы.</div>`;
+    html+=`<div class="note" style="margin:8px 0">Бюджетирование не входит в текущую доработку. Здесь показана read-only проекция общего бэклога.</div>`;
   }else{
     html+=`<div class="row" style="margin:8px 0;gap:8px;flex-wrap:wrap;align-items:center">
       <input id="bkIssueId" placeholder="Введите № Issue" style="width:200px" title="Например, SBOL-2010. Enter — добавить">
@@ -3867,9 +3736,9 @@ function viewBacklogBoard(tribe){
     const msg = listAll.length ? 'Ничего не найдено — измените фильтры по столбцам.' : 'Бэклог пуст — добавьте инициативу по № Issue.';
     body=`<tr><td class="stik1 muted">—</td><td class="muted" colspan="12">${msg}</td></tr>`;
   }else{
-    list.forEach(it=>{ body+=backlogRowHTML(it,tribe,teams); });
+    list.forEach(it=>{ body+=backlogRowHTML(it,tribe,teams,isBudget); });
   }
-  html+=`<div class="prep-wrap" data-scroll-key="bk"><table class="prep bk-table"><colgroup></colgroup>${head}<tbody>${body}</tbody></table></div>`;
+  html+=`<div class="prep-wrap" data-scroll-key="bk"><table class="prep bk-table${isBudget?' backlog-readonly':''}"><colgroup></colgroup>${head}<tbody>${body}</tbody></table></div>`;
   html+=`<div class="note" style="margin-top:8px">Порядок инициатив можно менять: перетащите строку за ручку <b>⠿</b> в столбце «№ Инициативы». Кнопка <b>▼</b> в шапке столбца — фильтр и сортировка (по возрастанию / по убыванию, пустые значения всегда внизу). Пока сортировка активна, порядок задаёт она и ручка <b>⠿</b> неактивна — сбросьте сортировку в плашке над таблицей.</div>`;
   html+=isBudget
     ? `<div class="note" style="margin-top:8px">Для бюджета новые инициативы добавляются сразу на вкладке «Оценка инициатив». В карточке инициативы можно вручную указать ID Issue из бэклога.</div>`
@@ -3877,125 +3746,76 @@ function viewBacklogBoard(tribe){
   html+=`</div>`;
   return html;
 }
-function backlogQuarterCell(it){
+function backlogQuarterCell(it,readonly=false){
   const qs=['','Q1','Q2','Q3','Q4'];
   const years=['',2025,2026,2027,2028];
   return `<div style="display:flex;gap:3px">
-    <select data-bk="${it._uid}" data-bp="quarter" class="q-mini">${qs.map(x=>`<option value="${x}" ${String(it.quarter)===String(x)?'selected':''}>${x||'—'}</option>`).join('')}</select>
-    <select data-bk="${it._uid}" data-bp="year" class="q-mini">${years.map(x=>`<option value="${x}" ${String(it.year)===String(x)?'selected':''}>${x||'—'}</option>`).join('')}</select>
+    <select data-bk="${it._uid}" data-bp="quarter" class="q-mini" ${readonly?'disabled':''}>${qs.map(x=>`<option value="${x}" ${String(it.quarter)===String(x)?'selected':''}>${x||'—'}</option>`).join('')}</select>
+    <select data-bk="${it._uid}" data-bp="year" class="q-mini" ${readonly?'disabled':''}>${years.map(x=>`<option value="${x}" ${String(it.year)===String(x)?'selected':''}>${x||'—'}</option>`).join('')}</select>
   </div>`;
 }
-function backlogAcCell(it){
+function backlogAcCell(it,readonly=false){
   const val=Array.isArray(it.ac)?it.ac.join(', '):(it.ac||'');
-  return `<input data-bk="${it._uid}" data-bp="ac" value="${esc(val)}" placeholder="СБОЛ, CRM…" class="ac-input">`;
+  return `<input data-bk="${it._uid}" data-bp="ac" value="${esc(val)}" placeholder="СБОЛ, CRM…" class="ac-input" ${readonly?'readonly':''}>`;
 }
-function backlogStatusCell(it){
-  return `<select data-bk="${it._uid}" data-bp="status">${BACKLOG_STATUSES.map(s=>`<option ${it.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>`;
+function backlogStatusCell(it,readonly=false){
+  const statuses=backlogRefs().statuses.length?backlogRefs().statuses:BACKLOG_STATUSES;
+  const disabled=readonly||it.status==='Отправлена в Pre PI Planning';
+  return `<select data-bk="${it._uid}" data-bp="status" ${disabled?'disabled':''}>${statuses.map(s=>`<option ${it.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>`;
 }
 function backlogExecutorTeamOptions(){
-  return state.ui.mode==='budget' ? budgetTeamObjects() : allCycleTeams();
+  return backlogTeamRefs();
 }
-function backlogRowHTML(it,tribe,teams){
-  ensureBacklogShape(it);
+function backlogRowHTML(it,tribe,teams,readonly=false){
   const execTeamOptions=backlogExecutorTeamOptions();
   const exs=it.executors, span=exs.length;
+  const ro=readonly?'readonly':'', dis=readonly?'disabled':'';
   const lead=`
     <td class="stik1" rowspan="${span}"><div class="id-cell">
-      ${bkDragHandleHTML(it)}
-      <input data-bk="${it._uid}" data-bp="id" value="${esc(it.id)}">
+      ${readonly?'':bkDragHandleHTML(it)}
+      <input data-bk="${it._uid}" data-bp="id" value="${esc(it.id)}" ${ro}>
     </div></td>
-    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="name" value="${esc(it.name)}"></td>
-    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="custPrio" value="${esc(it.custPrio)}" class="w-narrow"></td>
-    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="teamPrio" value="${esc(it.teamPrio)}" class="w-narrow"></td>
-    <td rowspan="${span}">${backlogQuarterCell(it)}</td>
-    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="product" value="${esc(it.product)}"></td>
-    <td rowspan="${span}"><select data-bk="${it._uid}" data-bp="owner"><option value=""></option>${teams.map(t=>`<option ${t.name===it.owner?'selected':''}>${esc(t.name)}</option>`).join('')}</select></td>
-    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="type" value="${esc(it.type)}"></td>
-    <td rowspan="${span}">${backlogAcCell(it)}</td>
-    <td rowspan="${span}">${backlogStatusCell(it)}</td>
-    <td rowspan="${span}" style="text-align:center;font-weight:700">${round1(issueTotalEffort(it))}</td>`;
-  const delCell=`<td class="row-del-cell" rowspan="${span}"><button class="row-del" data-bk-delrow="${esc(it._uid)}" title="Удалить инициативу">✕</button></td>`;
+    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="name" value="${esc(it.name)}" ${ro}></td>
+    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="custPrio" value="${esc(it.custPrio)}" class="w-narrow" ${ro}></td>
+    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="teamPrio" value="${esc(it.teamPrio)}" class="w-narrow" ${ro}></td>
+    <td rowspan="${span}">${backlogQuarterCell(it,readonly)}</td>
+    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="product" value="${esc(it.product)}" ${ro}></td>
+    <td rowspan="${span}"><select data-bk="${it._uid}" data-bp="owner" ${dis}><option value=""></option>${teams.map(t=>`<option ${t.name===it.owner?'selected':''}>${esc(t.name)}</option>`).join('')}</select></td>
+    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="type" value="${esc(it.type)}" ${ro}></td>
+    <td rowspan="${span}">${backlogAcCell(it,readonly)}</td>
+    <td rowspan="${span}">${backlogStatusCell(it,readonly)}</td>
+    <td rowspan="${span}" style="text-align:center;font-weight:700">${round1(it.totalEffort)}</td>`;
+  const delCell=readonly?`<td class="row-del-cell" rowspan="${span}"></td>`:`<td class="row-del-cell" rowspan="${span}"><button class="row-del" data-bk-delrow="${esc(it._uid)}" title="Удалить инициативу">✕</button></td>`;
   let rows='';
   exs.forEach((ex,ei)=>{
-    rows+=`<tr class="exec-row" data-bk-row="${esc(it._uid)}">${ei===0?lead:''}${execBlockHTML(it, ex, ei, 'bk', execTeamOptions)}${ei===0?delCell:''}</tr>`;
+    const executorCell=readonly
+      ? `<td class="exec-cell"><div class="exec-block"><b>${esc(ex.team)||'—'}</b><div class="comp-cells">${Object.entries(ex.comps||{}).map(([c,v])=>`<span class="comp-cell"><span class="cc-lab">${esc(c)}</span>${esc(v)}</span>`).join('')||'<span class="comp-cells-empty">нет оценки</span>'}</div></div></td>`
+      : execBlockHTML(it, ex, ei, 'bk', execTeamOptions);
+    rows+=`<tr class="exec-row" data-bk-row="${esc(it._uid)}">${ei===0?lead:''}${executorCell}${ei===0?delCell:''}</tr>`;
   });
   return rows;
-}
-// Гарантировать наличие целевого цикла для отправки (наследует структуру команд из активного).
-function ensureTargetCycle(id){
-  if(state.cycles[id]) return state.cycles[id];
-  const c=blankCycle();
-  try{
-    // структура команд для нового целевого цикла: из активного, иначе — глобальная (кросс-квартальная)
-    const teamsSrc=(state.pi.teams&&state.pi.teams.length)?state.pi.teams:allCycleTeams();
-    c.pi.teams=JSON.parse(JSON.stringify(teamsSrc));
-    c.pi.sprintCount=state.pi.sprintCount;
-    c.pi.startDate=state.pi.startDate;
-    c.pi.pirs=JSON.parse(JSON.stringify(state.pi.pirs||[]));
-    c.pi.goals=(state.pi.goals||[]).slice();
-    c.pi.tags=(state.pi.tags||[]).slice();
-  }catch(e){}
-  state.cycles[id]=c;
-  return c;
 }
 async function sendBacklogToPrePI(tribe){
   const q=state.ui.backlogQuarter, y=state.ui.backlogYear;
   if(!q||!y){ toast('Сначала выберите Квартал и Год',{type:'warn'}); return; }
   const target=cycleId(y,q);
-  const list=state.tribeBacklog[tribe]||[];
-  // подходящие: квартал+год точно совпадают (только год — не отправляется)
-  const matched=list.filter(it=> it.quarter && String(it.quarter)===String(q) && String(it.year)===String(y));
-  if(!matched.length){ toast(`Нет инициатив с «Кварталом реализации» = ${q} ${y}`,{type:'info'}); return; }
   try{
-    await flushBacklogSync();
-    if(matched.some(it=>!it._backendId)) throw new Error('Не все инициативы сохранены в backend');
-    const c=ensureTargetCycle(target);
-    await persistCycle(target);
-    await cycleMutation(target,`/pi-cycles/${cycleBackendIds[target]}/backlog/dispatch`,{
-      method:'POST',body:{backlog_item_ids:matched.map(it=>it._backendId)},
+    const before=new Set(backlogRows().filter(row=>(row.sent_to||[]).includes(target)).map(row=>row.id));
+    await executeBacklogCommand('/backlog-board/dispatch','POST',{
+      tribe,target_year:+y,target_quarter:q,
     });
-
-    // Обновляем текущую модель UI, затем сохраняем её тем же агрегатным API Pre PI.
-    // Идентичность stories/subtasks приходит из нормализованного team-boards API.
-    c.issues=c.issues||[];
-    matched.forEach(it=>{
-      const execs=JSON.parse(JSON.stringify(it.executors||[]));
-      const primary=(execs[0]&&execs[0].team)||it.owner||'';
-      let iss=c.issues.find(x=>x.id===it.id);
-      const payload={
-        owner:it.owner||primary, executor:primary, executors:execs,
-        type:it.type||'', name:it.name||'', custPrio:it.custPrio||'', teamPrio:it.teamPrio||'',
-        product:it.product||'',
-      };
-      if(iss) Object.assign(iss,payload);
-      else c.issues.push({
-        id:it.id, ...payload,
-        cel:'', metric:'', fact:'', plan:'', hypo:'', redesign:'', estimate:'',
-        comment:'', sprint:null, prePlanned:false, onBoard:false, agreed:false,
-        attractions:[], subtasks:[], stories:[],
-      });
-      it.status='Отправлена в Pre PI Planning';
-      if(!it.sentTo.includes(target)) it.sentTo.push(target);
-    });
-    save();
-    await persistPrePiCycle(target,true);
-    await Promise.all([flushCycleSync(),flushBacklogSync()]);
-    render();
-    const sent=matched.length;
+    const sent=backlogRows().filter(row=>!before.has(row.id)&&(row.sent_to||[]).includes(target)).length;
+    await loadPrePiCycles().catch(()=>{});
     toast(`Отправлено на Pre PI (${target}): ${sent} ${sent===1?'инициатива':'инициатив'}`,{type:'success',title:'Отправлено на Pre PI Planning'});
   }catch(error){
-    reportBacklogSyncError(error);
     if(error&&error.status===409)return;
-    toast(`Не удалось отправить инициативы на Pre PI: ${error.message||error}`,{type:'warn'});
   }
 }
 function budgetIssueKey(it){ return it && (it._uid || it.id); }
 function backlogInitiativeYear(it){ return String(it && it.year || '').trim(); }
 function findBacklogByBudgetKey(key){
-  for(const tribe of Object.keys(state.tribeBacklog||{})){
-    const it=(state.tribeBacklog[tribe]||[]).find(x=>budgetIssueKey(x)===key);
-    if(it) return {tribe,it};
-  }
+  const row=backlogRows().find(value=>value.id===key||value.issue_key===key);
+  if(row) return {tribe:row.tribe,it:backlogViewItem(row)};
   return null;
 }
 function budgetAssessmentFor(it,year){
@@ -4009,7 +3829,7 @@ function sendBacklogToBudgetAssessment(tribe){
   const y=state.ui.backlogYear || state.ui.budgetYear;
   if(!y){ toast('Сначала выберите год',{type:'warn'}); return; }
   const b=ensureBudgetYear(y);
-  const list=state.tribeBacklog[tribe]||[];
+  const list=backlogRows().filter(row=>row.tribe===tribe).map(backlogViewItem);
   const matched=list.filter(it=>backlogInitiativeYear(it)===String(y));
   if(!matched.length){ toast(`Нет инициатив с годом реализации ${y}`,{type:'info'}); return; }
   let sent=0;
@@ -4038,32 +3858,30 @@ function bindBacklog(){
   document.querySelectorAll('[data-bk-filter]').forEach(el=>el.onclick=()=>{
     state.ui.backlogTeamFilter=el.dataset.bkFilter||null; save(); render();
   });
+  if(state.ui.mode==='budget') return;
   const issInput=$('#bkIssueId');
-  const addByIssue=()=>{
+  const addByIssue=async()=>{
     const id=(issInput.value||'').trim();
     if(!id){ toast('Введите № Issue',{type:'warn'}); issInput.focus(); return; }
-    const list=backlogList(tribe);
-    if(Object.values(state.tribeBacklog||{}).flat().some(x=>String(x.id).trim().toLowerCase()===id.toLowerCase())){
-      toast(`Инициатива ${id} уже есть в общем бэклоге`,{type:'warn'}); return;
-    }
-    const jira=fetchJiraIssue(id);
-    // Открыт бэклог конкретной команды — заводим инициативу на неё, иначе она досталась бы
-    // первой команде трайба и тут же выпала бы из отфильтрованного списка.
     const tf=state.ui.backlogTeamFilter;
-    const own=tf?{owner:tf, executors:[makeExecutor(tf,'','')]}:{};
-    const init=newBacklogInit(tribe, Object.assign(own, {id}, jira||{}));
-    list.push(init);
-    issInput.value='';
-    // Новая инициатива пустая и под активные фильтры по столбцам обычно не подходит —
-    // снимаем их, иначе строка создастся, но на вкладке её не будет видно.
-    const hidden = colFiltersCount('bk') && !rowMatchesColFilters(init,BK_FILTER_COLS,colFilters('bk'));
-    if(hidden) clearColFilters('bk');
-    save(); render();
-    toast(jira ? `Инициатива ${id} загружена из Jira`
-               : `Инициатива ${id} создана. Данные подтянутся из Jira после подключения интеграции — пока заполните поля вручную.`,
-      {type:'success'});
-    if(hidden) toast('Фильтры по столбцам сброшены — иначе новая инициатива была бы скрыта',{type:'info'});
-    flashBacklogRow(init._uid);
+    const owner=tf||(backlogTeamRefs(tribe)[0]&&backlogTeamRefs(tribe)[0].name)||'';
+    const executor=owner?{
+      team:owner,
+      effort_by_competency:Object.fromEntries(backlogTeamCompetencies(owner).map(code=>[code,0])),
+    }:null;
+    try{
+      clearColFilters('bk');
+      await executeBacklogCommand('/backlog-board/items','POST',{
+        tribe,issue_key:id,title:'',description:'',product:'',owner_team:owner,
+        initiative_type:'',target_year:null,target_quarter:null,
+        customer_priority:'',team_priority:'',status:'Нет оценки',tags:[],systems:[],
+        executors:executor?[executor]:[],
+      });
+      issInput.value='';
+      toast(`Инициатива ${id} создана. Заполните поля вручную.`,{type:'success'});
+      const created=backlogRows().find(row=>row.issue_key.toLowerCase()===id.toLowerCase());
+      if(created) flashBacklogRow(created.id);
+    }catch(_){ }
   };
   // Показать только что созданную строку: прокрутить к ней, подсветить и поставить курсор в «Название».
   function flashBacklogRow(u){
@@ -4077,57 +3895,70 @@ function bindBacklog(){
   if(issInput) issInput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); addByIssue(); } };
   const sq=$('#bkSendQ'); if(sq) sq.onchange=()=>{ state.ui.backlogQuarter=sq.value||null; save(); render(); };
   const sy=$('#bkSendY'); if(sy) sy.onchange=()=>{ state.ui.backlogYear=sy.value||null; save(); render(); };
-  const send=$('#bkSend'); if(send) send.onclick=()=> state.ui.mode==='budget' ? sendBacklogToBudgetAssessment(tribe) : sendBacklogToPrePI(tribe);
+  const send=$('#bkSend'); if(send) send.onclick=()=>sendBacklogToPrePI(tribe);
 
   // удаление инициативы из бэклога
-  document.querySelectorAll('[data-bk-delrow]').forEach(el=>el.onclick=(e)=>{
+  document.querySelectorAll('[data-bk-delrow]').forEach(el=>el.onclick=async(e)=>{
     e.stopPropagation();
-    const l=state.tribeBacklog[tribe]||[];
-    const idx=l.findIndex(x=>x._uid===el.dataset.bkDelrow);
-    if(idx>=0){ l.splice(idx,1); save(); render(); }
+    try{
+      await executeBacklogCommand(`/backlog-board/items/${el.dataset.bkDelrow}`,'DELETE',{},true);
+      toast('Инициатива удалена',{type:'success'});
+    }catch(_){ }
   });
 
   // правка полей инициативы
-  document.querySelectorAll('[data-bk][data-bp]').forEach(el=>el.onchange=()=>{
-    const it=findBacklogInit(el.dataset.bk); if(!it) return;
+  document.querySelectorAll('[data-bk][data-bp]').forEach(el=>el.onchange=async()=>{
+    const row=findBacklogRow(el.dataset.bk); if(!row) return;
     const bp=el.dataset.bp;
-    if(bp==='ac'){ it.ac=el.value.split(',').map(s=>s.trim()).filter(Boolean); save(); return; }
-    it[bp]=el.value;
-    if(bp==='quarter'||bp==='year'){ save(); render(); }  // меняются столбцы компетенций
-    else save();
+    const payload=backlogCommandPayload(row);
+    const fieldMap={id:'issue_key',name:'title',custPrio:'customer_priority',teamPrio:'team_priority',
+      quarter:'target_quarter',year:'target_year',product:'product',owner:'owner_team',type:'initiative_type',status:'status'};
+    if(bp==='ac') payload.systems=el.value.split(',').map(s=>s.trim()).filter(Boolean);
+    else if(bp==='year') payload.target_year=el.value?+el.value:null;
+    else if(bp==='quarter') payload.target_quarter=el.value||null;
+    else payload[fieldMap[bp]]=el.value;
+    try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
+    catch(_){ }
   });
   // выбор команды-исполнителя: единый список, сгруппированный по трайбам
-  document.querySelectorAll('[data-bk-exec]').forEach(el=>el.onchange=()=>{
-    const it=findBacklogInit(el.dataset.bkExec); if(!it) return;
-    const ei=+el.dataset.ei; if(!it.executors[ei]) return;
-    it.executors[ei].team=el.value;
-    // пересобрать набор компетенций под новую команду (сохранив совпадающие значения)
-    const avail=teamCompsFor(el.value,it.quarter,it.year);
-    const old=it.executors[ei].comps||{}; const nc={};
-    avail.forEach(c=>{ nc[c]=+old[c]||0; });
-    it.executors[ei].comps=nc;
-    save(); render();
+  document.querySelectorAll('[data-bk-exec]').forEach(el=>el.onchange=async()=>{
+    const row=findBacklogRow(el.dataset.bkExec); if(!row) return;
+    const ei=+el.dataset.ei, payload=backlogCommandPayload(row);
+    if(!payload.executors[ei]){
+      payload.executors[ei]={id:null,team:el.value,effort_by_competency:{}};
+    }
+    const old=payload.executors[ei].effort_by_competency||{}, effort={};
+    backlogTeamCompetencies(el.value).forEach(code=>{ effort[code]=+old[code]||0; });
+    payload.executors[ei]={...payload.executors[ei],team:el.value,effort_by_competency:effort};
+    try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
+    catch(_){ }
   });
   // ввод чел/дн по компетенции
-  document.querySelectorAll('[data-bk-comp]').forEach(el=>el.onchange=()=>{
-    const it=findBacklogInit(el.dataset.bkComp); if(!it) return;
-    const ei=+el.dataset.ei; if(!it.executors[ei]) return;
-    it.executors[ei].comps=it.executors[ei].comps||{};
-    it.executors[ei].comps[el.dataset.c]=+el.value||0;
-    save(); render();  // обновить «Общая оценка»
+  document.querySelectorAll('[data-bk-comp]').forEach(el=>el.onchange=async()=>{
+    const row=findBacklogRow(el.dataset.bkComp); if(!row) return;
+    const ei=+el.dataset.ei, payload=backlogCommandPayload(row);
+    if(!payload.executors[ei]) return;
+    payload.executors[ei].effort_by_competency={
+      ...payload.executors[ei].effort_by_competency,[el.dataset.c]:+el.value||0,
+    };
+    try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
+    catch(_){ }
   });
   // добавить/убрать исполнителя
-  document.querySelectorAll('[data-bk-execadd]').forEach(el=>el.onclick=()=>{
-    const it=findBacklogInit(el.dataset.bkExecadd); if(!it) return;
-    const teams=state.ui.mode==='budget' ? budgetTeamsOfTribe(tribe) : tribeTeamsGlobal(tribe);
-    const firstTeam=(teams[0]&&teams[0].name)||'';
-    it.executors.push(makeExecutor(firstTeam,it.quarter,it.year)); save(); render();
+  document.querySelectorAll('[data-bk-execadd]').forEach(el=>el.onclick=async()=>{
+    const row=findBacklogRow(el.dataset.bkExecadd); if(!row) return;
+    const payload=backlogCommandPayload(row), used=new Set(payload.executors.map(ex=>ex.team));
+    const team=backlogTeamRefs().find(value=>!used.has(value.name));
+    if(!team){ toast('Все доступные команды уже добавлены',{type:'info'}); return; }
+    payload.executors.push({id:null,team:team.name,effort_by_competency:Object.fromEntries(team.competencies.map(code=>[code,0]))});
+    try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
+    catch(_){ }
   });
-  document.querySelectorAll('[data-bk-execdel]').forEach(el=>el.onclick=()=>{
-    const it=findBacklogInit(el.dataset.bkExecdel); if(!it) return;
-    const ei=+el.dataset.ei; it.executors.splice(ei,1);
-    if(!it.executors.length) it.executors.push(makeExecutor(it.owner||'',it.quarter,it.year));
-    save(); render();
+  document.querySelectorAll('[data-bk-execdel]').forEach(el=>el.onclick=async()=>{
+    const row=findBacklogRow(el.dataset.bkExecdel); if(!row) return;
+    const payload=backlogCommandPayload(row); payload.executors.splice(+el.dataset.ei,1);
+    try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
+    catch(_){ }
   });
 
   // перетаскивание строк — изменение порядка инициатив
@@ -4173,16 +4004,23 @@ function bindBacklogRowDrag(tribe){
 }
 // Порядок меняем в полном списке бэклога трайба, даже если часть строк скрыта
 // фильтрами по команде/столбцам: цель определяем по её позиции в этом списке.
-function moveBacklogRow(tribe,dragUid,targetUid,after){
+async function moveBacklogRow(tribe,dragUid,targetUid,after){
   if(!dragUid || !targetUid || dragUid===targetUid) return;
-  const list=state.tribeBacklog[tribe]; if(!list) return;
-  const from=list.findIndex(x=>x._uid===dragUid);
+  const canonical=backlogRows().map(row=>row.id);
+  const list=backlogRows().filter(row=>row.tribe===tribe).map(row=>row.id);
+  const from=list.indexOf(dragUid);
   if(from<0) return;
   const [item]=list.splice(from,1);
-  const to=list.findIndex(x=>x._uid===targetUid);
+  const to=list.indexOf(targetUid);
   if(to<0){ list.splice(from,0,item); return; }  // цель исчезла — возвращаем на место
   list.splice(after?to+1:to,0,item);
-  save(); render();
+  let tribeIndex=0;
+  const order=canonical.map(id=>{
+    const row=findBacklogRow(id);
+    return row&&row.tribe===tribe?list[tribeIndex++]:id;
+  });
+  try{ await executeBacklogCommand('/backlog-board/order','PUT',{item_ids:order}); }
+  catch(_){ }
 }
 
 /* =====================================================================
@@ -7439,7 +7277,6 @@ async function boot(){
   }
   try{
     await loadBacklogBoard();
-    backlogBackendAdopted=true;
     backlogApiReady=true;
   }catch(error){
     backlogApiReady=false;
@@ -7492,7 +7329,6 @@ async function boot(){
 }
 document.addEventListener('visibilitychange',()=>{
   if(state.ui.mode!=='pi' || state.ui.tab==='data') return;
-  if(document.visibilityState==='hidden' && backlogApiReady) flushBacklogSync().catch(()=>{});
   if(document.visibilityState==='hidden' && prePiApiReady) flushPrePiSync().catch(()=>{});
   if(document.visibilityState==='hidden' && goalsApiReady) flushGoalsSync().catch(()=>{});
   if(document.visibilityState==='hidden' && teamBoardsApiReady) flushTeamBoardsSync().catch(()=>{});

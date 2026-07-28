@@ -100,23 +100,32 @@ class VersionedApiClient:
         return {**kwargs, "json": body}
 
     async def put(self, path: str, **kwargs):
-        if path == "/backlog-board":
+        if path == "/backlog-board" or path.startswith("/backlog-board/"):
             kwargs = await self._with_version(path, kwargs, backlog=True)
         elif path.startswith("/pi-cycles/"):
             kwargs = await self._with_version(path, kwargs)
         return await self.raw.put(path, **kwargs)
 
     async def patch(self, path: str, **kwargs):
-        if path.startswith("/pi-cycles/"):
+        if path.startswith("/backlog-board/"):
+            kwargs = await self._with_version(path, kwargs, backlog=True)
+        elif path.startswith("/pi-cycles/"):
             kwargs = await self._with_version(path, kwargs)
         return await self.raw.patch(path, **kwargs)
 
     async def post(self, path: str, **kwargs):
-        if path.startswith("/pi-cycles/") and (
+        if path.startswith("/backlog-board/"):
+            kwargs = await self._with_version(path, kwargs, backlog=True)
+        elif path.startswith("/pi-cycles/") and (
             path.endswith("/backlog/dispatch") or path.endswith("/pre-pi/submit")
         ):
             kwargs = await self._with_version(path, kwargs)
         return await self.raw.post(path, **kwargs)
+
+    async def delete(self, path: str, **kwargs):
+        if path.startswith("/backlog-board/"):
+            kwargs = await self._with_version(path, kwargs, backlog=True)
+        return await self.raw.request("DELETE", path, **kwargs)
 
 
 @pytest_asyncio.fixture

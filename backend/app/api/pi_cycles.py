@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.models.pi_cycle import (
-    BacklogExecutor,
     BacklogItem,
     Initiative,
     InitiativeExecutor,
@@ -22,10 +21,10 @@ from app.models.pi_cycle import (
 from app.schemas.pi_cycle import (
     BacklogBoardRead,
     BacklogBoardWrite,
-    BacklogDispatchRead,
     BacklogDispatchWrite,
-    BacklogItemCreate,
-    BacklogItemRead,
+    BacklogItemCommand,
+    BacklogItemDelete,
+    BacklogReorderCommand,
     CapacityRead,
     CapacityWrite,
     GoalsRead,
@@ -75,9 +74,15 @@ from app.schemas.pi_cycle import (
 from app.services.planning import compute_sprints
 from app.services.cycle_setup import read_cycle_setup, replace_cycle_setup
 from app.services.backlog_board import (
+    BacklogCascadeRequired,
+    BacklogNotFound,
+    create_backlog_item,
+    delete_backlog_item,
     dispatch_backlog_items,
     read_backlog_board,
+    reorder_backlog_items,
     replace_backlog_board,
+    update_backlog_item,
 )
 from app.services.pre_pi import read_pre_pi, replace_pre_pi
 from app.services.goals import (
@@ -506,45 +511,20 @@ async def list_team_members(session: AsyncSession = Depends(get_session)):
     return result.all()
 
 
-@router.get("/backlog", response_model=list[BacklogItemRead])
-async def list_backlog(session: AsyncSession = Depends(get_session)):
-    result = await session.scalars(select(BacklogItem).order_by(BacklogItem.created_at.desc()))
-    return result.all()
-
-
-@router.post("/backlog", response_model=BacklogItemRead, status_code=status.HTTP_201_CREATED)
-async def create_backlog_item(payload: BacklogItemCreate, session: AsyncSession = Depends(get_session)):
-    await lock_backlog(session)
-    if await session.scalar(
-        select(BacklogItem).where(func.lower(BacklogItem.issue_key) == payload.issue_key.strip().lower())
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Issue ID must be unique across the global backlog",
-        )
-    executor_team_ids = [row.team_id for row in payload.executors]
-    if len(executor_team_ids) != len(set(executor_team_ids)):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Executor team can only occur once",
-        )
-    for executor in payload.executors:
-        if await session.get(Team, executor.team_id) is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Executor team not found: {executor.team_id}",
-            )
-    data = payload.model_dump(exclude={"executors"})
-    data["issue_key"] = payload.issue_key.strip()
-    item = BacklogItem(**data)
-    item.executors = [
-        BacklogExecutor(team_id=executor.team_id, effort_by_competency=executor.effort_by_competency)
-        for executor in payload.executors
-    ]
-    session.add(item)
-    await session.commit()
-    await session.refresh(item)
-    return item
+async def _run_backlog_command(session: AsyncSession, operation):
+    try:
+        await operation
+        await session.commit()
+        return await read_backlog_board(session)
+    except BacklogCascadeRequired as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.detail)
+    except BacklogNotFound as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.get("/backlog-board", response_model=BacklogBoardRead)
@@ -552,34 +532,64 @@ async def get_backlog_board(session: AsyncSession = Depends(get_session)):
     return await read_backlog_board(session)
 
 
+@router.post(
+    "/backlog-board/items",
+    response_model=BacklogBoardRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_backlog_item(
+    payload: BacklogItemCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    await lock_backlog(session, payload.expected_version)
+    return await _run_backlog_command(session, create_backlog_item(session, payload))
+
+
+@router.patch("/backlog-board/items/{item_id}", response_model=BacklogBoardRead)
+async def patch_backlog_item(
+    item_id: uuid.UUID,
+    payload: BacklogItemCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    await lock_backlog(session, payload.expected_version)
+    return await _run_backlog_command(session, update_backlog_item(session, item_id, payload))
+
+
+@router.delete("/backlog-board/items/{item_id}", response_model=BacklogBoardRead)
+async def delete_backlog_item_endpoint(
+    item_id: uuid.UUID,
+    payload: BacklogItemDelete,
+    session: AsyncSession = Depends(get_session),
+):
+    await lock_backlog(session, payload.expected_version)
+    return await _run_backlog_command(session, delete_backlog_item(session, item_id, payload))
+
+
+@router.put("/backlog-board/order", response_model=BacklogBoardRead)
+async def put_backlog_order(
+    payload: BacklogReorderCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    await lock_backlog(session, payload.expected_version)
+    return await _run_backlog_command(session, reorder_backlog_items(session, payload))
+
+
 @router.put("/backlog-board", response_model=BacklogBoardRead)
 async def put_backlog_board(
     payload: BacklogBoardWrite,
     session: AsyncSession = Depends(get_session),
 ):
-    try:
-        await lock_backlog(session, payload.expected_version)
-        return await replace_backlog_board(session, payload)
-    except ValueError as error:
-        await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+    await lock_backlog(session, payload.expected_version)
+    return await _run_backlog_command(session, replace_backlog_board(session, payload))
 
 
-@router.post(
-    "/pi-cycles/{cycle_id}/backlog/dispatch",
-    response_model=BacklogDispatchRead,
-)
-async def dispatch_backlog_to_cycle(
-    cycle_id: uuid.UUID,
+@router.post("/backlog-board/dispatch", response_model=BacklogBoardRead)
+async def dispatch_backlog(
     payload: BacklogDispatchWrite,
     session: AsyncSession = Depends(get_session),
 ):
-    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
-    try:
-        return await dispatch_backlog_items(session, cycle, payload)
-    except ValueError as error:
-        await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+    await lock_backlog(session, payload.expected_version)
+    return await _run_backlog_command(session, dispatch_backlog_items(session, payload))
 
 
 @router.get("/pi-cycles/{cycle_id}/pre-pi", response_model=PrePiRead)
@@ -781,34 +791,6 @@ async def create_initiative(
     await session.commit()
     await session.refresh(initiative)
     return initiative
-
-
-@router.post(
-    "/pi-cycles/{cycle_id}/initiatives/from-backlog/{backlog_item_id}",
-    response_model=InitiativeRead,
-)
-async def move_backlog_item_to_cycle(
-    cycle_id: uuid.UUID,
-    backlog_item_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
-):
-    cycle = await lock_cycle(session, cycle_id)
-    try:
-        result = await dispatch_backlog_items(
-            session,
-            cycle,
-            BacklogDispatchWrite(
-                expected_version=cycle.version - 1,
-                backlog_item_ids=[backlog_item_id],
-            ),
-        )
-    except ValueError as error:
-        await session.rollback()
-        detail = str(error)
-        if detail.startswith("Backlog items not found"):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backlog item not found")
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
-    return result.initiatives[0]
 
 
 @router.get("/pi-cycles/{cycle_id}/initiatives", response_model=list[InitiativeRead])

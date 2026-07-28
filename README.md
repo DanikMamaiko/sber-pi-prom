@@ -73,10 +73,9 @@ backend/
     services/   domain calculations
 frontend/
   index.html
-  styles.css
-  app.js
 docs/
   architecture.md
+  backlog-tab.md
   golden-standard-tab.md
   data-model.md
   regression.md

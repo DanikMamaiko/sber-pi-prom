@@ -267,7 +267,9 @@ class BacklogItem(Base, TimestampMixin):
     tribe: Mapped[Tribe | None] = relationship()
     owner_team: Mapped[Team | None] = relationship()
     executors: Mapped[list["BacklogExecutor"]] = relationship(
-        back_populates="backlog_item", cascade="all, delete-orphan"
+        back_populates="backlog_item",
+        cascade="all, delete-orphan",
+        order_by="BacklogExecutor.sort_order",
     )
 
 
@@ -289,6 +291,7 @@ class BacklogExecutor(Base):
     backlog_item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("backlog_items.id", ondelete="CASCADE"))
     team_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("teams.id"))
     effort_by_competency: Mapped[dict] = mapped_column(JSONB, default=dict)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     backlog_item: Mapped[BacklogItem] = relationship(back_populates="executors")
     team: Mapped[Team] = relationship()

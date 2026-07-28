@@ -50,8 +50,9 @@ SQLAlchemy, Pydantic/OpenAPI и основной PostgreSQL миграцией `
 5. OpenAPI содержит snapshot только в `PiCycleRead`.
 6. 20 тестов и UI-проверка всех вкладок проходят; MD5 сохранённых snapshot не изменились.
 
-Удаление старых `/backlog`, `/goals`, `/risks` и `/initiatives/from-backlog` не входило в
-релиз C: их использование и вывод из эксплуатации требуют отдельной проверки клиентов.
+Старые `/backlog` и `/initiatives/from-backlog` удалены при переводе вкладки «Бэклог»
+на канонические команды `/backlog-board`. Legacy `/goals` и `/risks` остаются отдельной
+задачей и не используются вкладкой «Бэклог».
 
 ### Релиз C — выполнен
 

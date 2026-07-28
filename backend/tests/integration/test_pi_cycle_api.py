@@ -155,12 +155,12 @@ async def test_full_pi_cycle_flow_persists_and_deletes_dependencies(api_client):
 
     dispatched = assert_ok(
         await api_client.post(
-            f"/pi-cycles/{cycle_id}/backlog/dispatch",
-            json={"backlog_item_ids": [backlog_item["id"]]},
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2028, "target_quarter": "Q4"},
         )
     )
-    assert dispatched["dispatched"] == 1
-    initiative = dispatched["initiatives"][0]
+    assert dispatched["items"][0]["status"] == "Отправлена в Pre PI Planning"
+    initiative = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"][0]
 
     invalid_pre_pi = {
         "initiatives": [
@@ -437,11 +437,12 @@ async def test_invalid_aggregate_puts_return_422_and_are_atomic(api_client):
     item = board["items"][0]
     dispatch = assert_ok(
         await api_client.post(
-            f"/pi-cycles/{cycle_id}/backlog/dispatch",
-            json={"backlog_item_ids": [item["id"]]},
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2028, "target_quarter": "Q4"},
         )
     )
-    initiative = dispatch["initiatives"][0]
+    assert dispatch["items"][0]["sent_to"] == ["2028-Q4"]
+    initiative = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"][0]
 
     pre_pi_payload = {
         "initiatives": [
@@ -625,7 +626,7 @@ async def test_optimistic_locking_rejects_stale_cycle_and_backlog_updates(api_cl
         "expected_version": backlog["version"],
         "items": [
             {
-                "tribe": "Concurrency",
+                "tribe": "Регрессия",
                 "issue_key": "LOCK-1",
                 "title": "First backlog value",
             }
@@ -698,6 +699,255 @@ async def test_pi_cycle_data_commands_return_canonical_server_view(api_client):
         )
     )
     assert data["teams"][0]["competencies"] == ["SA", "DEV"]
+
+
+def backlog_write_row(row: dict, **changes) -> dict:
+    payload = {
+        "id": row["id"],
+        "tribe": row["tribe"],
+        "issue_key": row["issue_key"],
+        "title": row["title"],
+        "description": row["description"],
+        "product": row["product"],
+        "owner_team": row["owner_team"],
+        "initiative_type": row["initiative_type"],
+        "target_year": row["target_year"],
+        "target_quarter": row["target_quarter"],
+        "customer_priority": row["customer_priority"],
+        "team_priority": row["team_priority"],
+        "status": row["status"],
+        "tags": row["tags"],
+        "systems": row["systems"],
+        "sort_order": row["sort_order"],
+        "executors": [
+            {
+                "id": executor["id"],
+                "team": executor["team"],
+                "effort_by_competency": executor["effort_by_competency"],
+            }
+            for executor in row["executors"]
+        ],
+    }
+    payload.update(changes)
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_backlog_item_commands_keep_ids_validate_and_return_canonical_view(api_client):
+    await create_cycle_with_setup(api_client, year=2032, quarter="Q2")
+    initial = assert_ok(await api_client.get("/backlog-board"))
+    assert initial["reference_data"]["tribes"][0]["name"] == "Регрессия"
+    alpha_ref = next(
+        row for row in initial["reference_data"]["teams"] if row["name"] == "Команда Альфа"
+    )
+    assert alpha_ref["competencies"] == ["SA", "DEV", "QA"]
+
+    created = assert_ok(
+        await api_client.post(
+            "/backlog-board/items",
+            json={
+                "tribe": "Регрессия",
+                "issue_key": "  CMD-1  ",
+                "title": "Первая версия",
+                "owner_team": "Команда Альфа",
+                "target_year": 2032,
+                "target_quarter": "Q2",
+                "tags": ["tag", "tag", ""],
+                "systems": ["CRM", "CRM"],
+                "executors": [
+                    {
+                        "team": "Команда Альфа",
+                        "effort_by_competency": {"sa": 1.25, "DEV": 2},
+                    }
+                ],
+            },
+        ),
+        201,
+    )
+    first = created["items"][0]
+    item_id = first["id"]
+    executor_id = first["executors"][0]["id"]
+    assert created["version"] == initial["version"] + 1
+    assert first["issue_key"] == "CMD-1"
+    assert first["tags"] == ["tag"]
+    assert first["systems"] == ["CRM"]
+    assert first["total_effort"] == 3.25
+
+    command = backlog_write_row(first, issue_key="CMD-RENAMED", title="Вторая версия")
+    command.pop("id")
+    command.pop("sort_order")
+    updated = assert_ok(
+        await api_client.patch(f"/backlog-board/items/{item_id}", json=command)
+    )
+    edited = updated["items"][0]
+    assert edited["id"] == item_id
+    assert edited["executors"][0]["id"] == executor_id
+    assert edited["issue_key"] == "CMD-RENAMED"
+    assert updated["version"] == created["version"] + 1
+
+    bad_competency = deepcopy(command)
+    bad_competency["executors"][0]["effort_by_competency"] = {"UX": 10}
+    rejected = await api_client.patch(
+        f"/backlog-board/items/{item_id}", json=bad_competency
+    )
+    assert rejected.status_code == 422
+    persisted = assert_ok(await api_client.get("/backlog-board"))
+    assert persisted["version"] == updated["version"]
+    assert persisted["items"][0]["title"] == "Вторая версия"
+
+    manual_sent = deepcopy(command)
+    manual_sent["status"] = "Отправлена в Pre PI Planning"
+    assert (
+        await api_client.patch(f"/backlog-board/items/{item_id}", json=manual_sent)
+    ).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_backlog_bulk_swap_reorder_dispatch_and_confirmed_unlink_are_atomic(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2033, quarter="Q3")
+    cycle_id = cycle["id"]
+    board = assert_ok(
+        await api_client.put(
+            "/backlog-board",
+            json={
+                "items": [
+                    {
+                        "tribe": "Регрессия",
+                        "issue_key": "SWAP-A",
+                        "title": "A",
+                        "owner_team": "Команда Альфа",
+                        "target_year": 2033,
+                        "target_quarter": "Q3",
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "effort_by_competency": {"SA": 1},
+                            }
+                        ],
+                    },
+                    {
+                        "tribe": "Регрессия",
+                        "issue_key": "SWAP-B",
+                        "title": "B",
+                        "owner_team": "Проект Бета",
+                        "target_year": 2033,
+                        "target_quarter": "Q3",
+                        "executors": [
+                            {
+                                "team": "Проект Бета",
+                                "effort_by_competency": {"DEV": 2},
+                            }
+                        ],
+                    },
+                ]
+            },
+        )
+    )
+    a, b = board["items"]
+    swapped = assert_ok(
+        await api_client.put(
+            "/backlog-board",
+            json={
+                "items": [
+                    backlog_write_row(a, issue_key="SWAP-B", sort_order=1),
+                    backlog_write_row(b, issue_key="SWAP-A", sort_order=0),
+                ]
+            },
+        )
+    )
+    by_id = {row["id"]: row for row in swapped["items"]}
+    assert by_id[a["id"]]["issue_key"] == "SWAP-B"
+    assert by_id[b["id"]]["issue_key"] == "SWAP-A"
+    assert [row["id"] for row in swapped["items"]] == [b["id"], a["id"]]
+
+    ordered = assert_ok(
+        await api_client.put(
+            "/backlog-board/order", json={"item_ids": [a["id"], b["id"]]}
+        )
+    )
+    assert [row["id"] for row in ordered["items"]] == [a["id"], b["id"]]
+
+    cycle_before = next(
+        row for row in assert_ok(await api_client.get("/pi-cycles")) if row["id"] == cycle_id
+    )
+    dispatched = assert_ok(
+        await api_client.post(
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2033, "target_quarter": "Q3"},
+        )
+    )
+    assert all(row["sent_to"] == ["2033-Q3"] for row in dispatched["items"])
+    cycle_after = next(
+        row for row in assert_ok(await api_client.get("/pi-cycles")) if row["id"] == cycle_id
+    )
+    assert cycle_after["version"] == cycle_before["version"] + 1
+    assert len(assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"]) == 2
+
+    repeat_version = dispatched["version"]
+    repeated = await api_client.post(
+        "/backlog-board/dispatch",
+        json={"tribe": "Регрессия", "target_year": 2033, "target_quarter": "Q3"},
+    )
+    assert repeated.status_code == 422
+    assert assert_ok(await api_client.get("/backlog-board"))["version"] == repeat_version
+
+    cascade = await api_client.delete(f"/backlog-board/items/{a['id']}")
+    assert cascade.status_code == 409
+    assert cascade.json()["detail"]["code"] == "cascade_confirmation_required"
+    assert len(assert_ok(await api_client.get("/backlog-board"))["items"]) == 2
+
+    deleted = assert_ok(
+        await api_client.delete(
+            f"/backlog-board/items/{a['id']}", json={"confirm_cascade": True}
+        )
+    )
+    assert [row["id"] for row in deleted["items"]] == [b["id"]]
+    assert len(assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"]) == 2
+    cycle_unlinked = next(
+        row for row in assert_ok(await api_client.get("/pi-cycles")) if row["id"] == cycle_id
+    )
+    assert cycle_unlinked["version"] == cycle_after["version"] + 1
+
+
+@pytest.mark.asyncio
+async def test_pi_cycle_data_bulk_commands_keep_ids_and_rollback(api_client):
+    data = assert_ok(
+        await api_client.post(
+            "/pi-cycle-data",
+            json={
+                "year": 2031,
+                "quarter": "Q2",
+                "start_date": "2031-04-07",
+                "sprint_count": 2,
+            },
+        ),
+        201,
+    )
+    path = f"/pi-cycles/{data['cycle']['id']}"
+    data = assert_ok(
+        await api_client.raw.post(
+            f"{path}/pirs",
+            json={
+                "expected_version": data["cycle"]["version"],
+                "name": "PIR 1",
+                "date": "2031-04-21",
+            },
+        )
+    )
+    pir_id = data["pirs"][0]["id"]
+    data = assert_ok(
+        await api_client.raw.post(
+            f"{path}/cycle-teams",
+            json={
+                "expected_version": data["cycle"]["version"],
+                "tribe": "Data tribe",
+                "name": "Data team",
+                "team_type": "Agile",
+                "excluded_from_goals": False,
+                "competencies": ["SA", "DEV"],
+            },
+        )
+    )
 
     data = assert_ok(
         await api_client.raw.post(

@@ -97,9 +97,9 @@ def test_backlog_board_accepts_the_prototype_contract():
     assert board.items[0].executors[0].effort_by_competency["FE"] == 8
 
 
-def test_backlog_dispatch_requires_at_least_one_item():
+def test_backlog_dispatch_requires_server_selection_dimensions():
     with pytest.raises(ValidationError):
-        BacklogDispatchWrite(expected_version=0, backlog_item_ids=[])
+        BacklogDispatchWrite(expected_version=0, tribe="", target_year=2026, target_quarter="Q5")
 
 
 def test_pre_pi_accepts_prototype_fields_and_attractions():
