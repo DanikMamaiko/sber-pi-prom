@@ -854,3 +854,267 @@ async def test_pi_cycle_team_delete_requires_confirmation_and_cascades(api_clien
     assert deleted["teams"] == []
     assert assert_ok(await api_client.get(f"{path}/capacity"))["teams"] == []
     assert assert_ok(await api_client.get(f"{path}/risks-board"))["risks"] == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_pi_data_atomically_swaps_two_tags_and_two_teams(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2032, quarter="Q1")
+    path = f"/pi-cycles/{cycle['id']}"
+    data = assert_ok(await api_client.get(f"{path}/data"))
+    data = assert_ok(
+        await api_client.raw.post(
+            f"{path}/tags",
+            json={"expected_version": data["cycle"]["version"], "name": "Second"},
+        )
+    )
+    assert_ok(
+        await api_client.put(
+            f"{path}/pre-pi",
+            json={
+                "initiatives": [
+                    {
+                        "issue_key": "SWAP-1",
+                        "title": "Swap references",
+                        "owner_team": "Команда Альфа",
+                        "owner_tribe": "Регрессия",
+                        "status": "planned",
+                        "pre_planned": True,
+                        "sprint_index": 0,
+                        "tags": ["E2E"],
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "tribe": "Регрессия",
+                                "effort_by_competency": {"SA": 1},
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    assert_ok(
+        await api_client.put(
+            f"{path}/capacity",
+            json={
+                "teams": [
+                    {
+                        "tribe": "Регрессия",
+                        "team": "Команда Альфа",
+                        "members": [
+                            {
+                                "client_uid": "swap-member",
+                                "full_name": "Swap Member",
+                                "competency": "SA",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    assert_ok(
+        await api_client.put(
+            f"{path}/risks-board",
+            json={
+                "risks": [
+                    {
+                        "client_uid": "swap-risk",
+                        "scope": "team",
+                        "team": {"tribe": "Регрессия", "name": "Команда Альфа"},
+                        "description": "Swap risk",
+                    }
+                ]
+            },
+        )
+    )
+    data = assert_ok(await api_client.get(f"{path}/data"))
+    version_before = data["cycle"]["version"]
+    alpha = next(row for row in data["teams"] if row["name"] == "Команда Альфа")
+    beta = next(row for row in data["teams"] if row["name"] == "Проект Бета")
+    first_tag, second_tag = data["tags"]
+
+    swapped = assert_ok(
+        await api_client.raw.put(
+            f"{path}/data",
+            json={
+                "expected_version": version_before,
+                "start_date": data["cycle"]["start_date"],
+                "sprint_count": data["cycle"]["sprint_count"],
+                "pirs": data["pirs"],
+                "teams": [
+                    {
+                        "id": alpha["id"],
+                        "tribe": beta["tribe"],
+                        "name": beta["name"],
+                        "team_type": alpha["team_type"],
+                        "excluded_from_goals": alpha["excluded_from_goals"],
+                        "competencies": alpha["competencies"],
+                    },
+                    {
+                        "id": beta["id"],
+                        "tribe": alpha["tribe"],
+                        "name": alpha["name"],
+                        "team_type": beta["team_type"],
+                        "excluded_from_goals": beta["excluded_from_goals"],
+                        "competencies": beta["competencies"],
+                    },
+                ],
+                "goal_options": data["goal_options"],
+                "tags": [
+                    {"id": first_tag["id"], "name": second_tag["name"]},
+                    {"id": second_tag["id"], "name": first_tag["name"]},
+                ],
+            },
+        )
+    )
+    assert swapped["cycle"]["version"] == version_before + 1
+    assert next(row for row in swapped["teams"] if row["id"] == alpha["id"])["name"] == (
+        "Проект Бета"
+    )
+    assert next(row for row in swapped["tags"] if row["id"] == first_tag["id"])["name"] == (
+        "Second"
+    )
+    pre_pi = assert_ok(await api_client.get(f"{path}/pre-pi"))["initiatives"][0]
+    assert pre_pi["owner_team"] == "Проект Бета"
+    assert pre_pi["executors"][0]["team"] == "Проект Бета"
+    assert pre_pi["tags"] == ["Second"]
+    assert assert_ok(await api_client.get(f"{path}/capacity"))["teams"][0]["team"] == (
+        "Проект Бета"
+    )
+    assert assert_ok(await api_client.get(f"{path}/risks-board"))["risks"][0]["team"][
+        "name"
+    ] == "Проект Бета"
+
+
+@pytest.mark.asyncio
+async def test_bulk_pi_data_combined_cascades_are_confirmed_and_atomic(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2032, quarter="Q2")
+    path = f"/pi-cycles/{cycle['id']}"
+    assert_ok(
+        await api_client.put(
+            f"{path}/pre-pi",
+            json={
+                "initiatives": [
+                    {
+                        "issue_key": "CASCADE-A",
+                        "title": "Removed team initiative",
+                        "owner_team": "Команда Альфа",
+                        "owner_tribe": "Регрессия",
+                        "status": "planned",
+                        "pre_planned": True,
+                        "sprint_index": 2,
+                        "tags": ["E2E"],
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "tribe": "Регрессия",
+                                "effort_by_competency": {"SA": 1},
+                            }
+                        ],
+                    },
+                    {
+                        "issue_key": "CASCADE-B",
+                        "title": "Out of range initiative",
+                        "owner_team": "Проект Бета",
+                        "owner_tribe": "Регрессия",
+                        "status": "planned",
+                        "pre_planned": True,
+                        "sprint_index": 2,
+                        "tags": ["E2E"],
+                        "executors": [
+                            {
+                                "team": "Проект Бета",
+                                "tribe": "Регрессия",
+                                "effort_by_competency": {"SA": 1},
+                            }
+                        ],
+                    },
+                ]
+            },
+        )
+    )
+    assert_ok(
+        await api_client.put(
+            f"{path}/capacity",
+            json={
+                "teams": [
+                    {
+                        "tribe": "Регрессия",
+                        "team": "Команда Альфа",
+                        "members": [
+                            {
+                                "client_uid": "cascade-combined-member",
+                                "full_name": "Cascade Member",
+                                "competency": "SA",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    assert_ok(
+        await api_client.put(
+            f"{path}/risks-board",
+            json={
+                "risks": [
+                    {
+                        "client_uid": "cascade-combined-risk",
+                        "scope": "team",
+                        "team": {"tribe": "Регрессия", "name": "Команда Альфа"},
+                        "description": "Combined cascade risk",
+                    }
+                ]
+            },
+        )
+    )
+    data = assert_ok(await api_client.get(f"{path}/data"))
+    version_before = data["cycle"]["version"]
+    beta = next(row for row in data["teams"] if row["name"] == "Проект Бета")
+    payload = {
+        "expected_version": version_before,
+        "start_date": data["cycle"]["start_date"],
+        "sprint_count": 1,
+        "pirs": [],
+        "teams": [beta],
+        "goal_options": data["goal_options"],
+        "tags": [],
+        "confirm_cascade": False,
+    }
+
+    confirmation = await api_client.raw.put(f"{path}/data", json=payload)
+    assert confirmation.status_code == 409
+    assert confirmation.json()["detail"]["code"] == "cascade_confirmation_required"
+    unchanged = assert_ok(await api_client.get(f"{path}/data"))
+    assert unchanged["cycle"]["version"] == version_before
+    assert unchanged["cycle"]["sprint_count"] == 3
+    assert len(unchanged["teams"]) == 2
+    assert unchanged["pirs"]
+    assert unchanged["tags"]
+
+    cascaded = assert_ok(
+        await api_client.raw.put(
+            f"{path}/data",
+            json={**payload, "confirm_cascade": True},
+        )
+    )
+    assert cascaded["cycle"]["version"] == version_before + 1
+    assert cascaded["cycle"]["sprint_count"] == 1
+    assert [row["name"] for row in cascaded["teams"]] == ["Проект Бета"]
+    assert cascaded["pirs"] == []
+    assert cascaded["tags"] == []
+    initiatives = {
+        row["issue_key"]: row
+        for row in assert_ok(await api_client.get(f"{path}/pre-pi"))["initiatives"]
+    }
+    assert initiatives["CASCADE-A"]["owner_team"] == ""
+    assert initiatives["CASCADE-A"]["executors"] == []
+    assert initiatives["CASCADE-A"]["sprint_index"] is None
+    assert initiatives["CASCADE-A"]["tags"] == []
+    assert initiatives["CASCADE-B"]["sprint_index"] is None
+    assert initiatives["CASCADE-B"]["tags"] == []
+    capacity_teams = assert_ok(await api_client.get(f"{path}/capacity"))["teams"]
+    assert [row["team"] for row in capacity_teams] == ["Проект Бета"]
+    assert capacity_teams[0]["members"] == []
+    assert assert_ok(await api_client.get(f"{path}/risks-board"))["risks"] == []

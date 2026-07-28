@@ -53,8 +53,8 @@ $env:TEST_DATABASE_URL='postgresql+asyncpg://sberpi:sberpi@localhost:5433/sberpi
 python -m pytest -q
 ```
 
-Текущий результат: 21 тест, включая 5 интеграционных сценариев на PostgreSQL 16.
-Отдельный сценарий проверяет optimistic locking PI-цикла и общего бэклога: устаревшая
+Полный набор включает unit-, архитектурные и интеграционные сценарии на PostgreSQL 16.
+Отдельные сценарии проверяют optimistic locking PI-цикла и общего бэклога: устаревшая
 версия получает 409 и не перезаписывает уже сохранённые данные.
 
 Тестовый контур принимает только имя БД с суффиксом `_test`, применяет Alembic до `head`
@@ -77,9 +77,13 @@ frontend/
   app.js
 docs/
   architecture.md
+  golden-standard-tab.md
   data-model.md
   regression.md
   compatibility-snapshot-removal.md
   optimistic-locking.md
   roadmap.md
 ```
+
+Архитектурный шаблон для реализации следующих вкладок описан в
+[`docs/golden-standard-tab.md`](docs/golden-standard-tab.md).

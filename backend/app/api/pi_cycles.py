@@ -176,7 +176,7 @@ async def _run_pi_data_command(session: AsyncSession, operation):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.detail)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.patch("/pi-cycles/{cycle_id}", response_model=PiCycleRead)
@@ -214,7 +214,7 @@ async def put_pi_cycle_setup(
     try:
         return await replace_cycle_setup(session, cycle, payload)
     except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/data", response_model=PiCycleDataRead)
@@ -453,7 +453,7 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
     tribe = await session.get(Tribe, payload.tribe_id)
     if tribe is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Tribe not found",
         )
     existing = await session.scalar(
@@ -468,7 +468,7 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
             competencies.append(code)
     if not competencies:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="At least one team competency is required",
         )
     team = Team(
@@ -490,7 +490,7 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
 async def create_team_member(payload: TeamMemberCreate, session: AsyncSession = Depends(get_session)):
     if await session.get(Team, payload.team_id) is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Team not found",
         )
     member = TeamMember(**payload.model_dump())
@@ -519,19 +519,19 @@ async def create_backlog_item(payload: BacklogItemCreate, session: AsyncSession 
         select(BacklogItem).where(func.lower(BacklogItem.issue_key) == payload.issue_key.strip().lower())
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Issue ID must be unique across the global backlog",
         )
     executor_team_ids = [row.team_id for row in payload.executors]
     if len(executor_team_ids) != len(set(executor_team_ids)):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Executor team can only occur once",
         )
     for executor in payload.executors:
         if await session.get(Team, executor.team_id) is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Executor team not found: {executor.team_id}",
             )
     data = payload.model_dump(exclude={"executors"})
@@ -562,7 +562,7 @@ async def put_backlog_board(
         return await replace_backlog_board(session, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.post(
@@ -579,7 +579,7 @@ async def dispatch_backlog_to_cycle(
         return await dispatch_backlog_items(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/pre-pi", response_model=PrePiRead)
@@ -602,7 +602,7 @@ async def put_pre_pi(
         return await replace_pre_pi(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.post("/pi-cycles/{cycle_id}/pre-pi/submit", response_model=PrePiSubmitRead)
@@ -617,7 +617,7 @@ async def post_pre_pi_submit(
     except PrePiValidationError as error:
         await session.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "message": "Заполните обязательные поля Pre PI",
                 "problems": error.problems,
@@ -625,7 +625,7 @@ async def post_pre_pi_submit(
         )
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/goals-board", response_model=GoalsRead)
@@ -648,7 +648,7 @@ async def put_goals_board(
         return await replace_goals(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/team-boards", response_model=TeamBoardsRead)
@@ -671,7 +671,7 @@ async def put_team_boards(
         return await replace_team_boards(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/capacity", response_model=CapacityRead)
@@ -694,7 +694,7 @@ async def put_capacity(
         return await replace_capacity(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/program-board", response_model=ProgramBoardRead)
@@ -717,7 +717,7 @@ async def put_program_board(
         return await replace_program_board(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.post(
@@ -738,19 +738,19 @@ async def create_initiative(
         )
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Issue ID must be unique inside a PI cycle",
         )
     _, _, competencies_by_team = await cycle_team_context(session, cycle.id)
     team_ids = [row.team_id for row in payload.executors]
     if len(team_ids) != len(set(team_ids)):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Executor team can only occur once",
         )
     if payload.owner_team_id is not None and payload.owner_team_id not in competencies_by_team:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Owner team is not part of this PI cycle",
         )
     normalized_executors = []
@@ -769,7 +769,7 @@ async def create_initiative(
                 )
             )
     except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
     data = payload.model_dump(exclude={"executors"})
     data["issue_key"] = payload.issue_key.strip()
     initiative = Initiative(cycle_id=cycle_id, **data)
@@ -807,7 +807,7 @@ async def move_backlog_item_to_cycle(
         detail = str(error)
         if detail.startswith("Backlog items not found"):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backlog item not found")
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
     return result.initiatives[0]
 
 
@@ -845,7 +845,7 @@ async def create_goal(
         )
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Goal team is not part of this PI cycle",
         )
     if payload.initiative_id is not None and not await session.scalar(
@@ -855,7 +855,7 @@ async def create_goal(
         )
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Goal initiative is not part of this PI cycle",
         )
     goal = PiGoal(cycle_id=cycle_id, **payload.model_dump())
@@ -894,7 +894,7 @@ async def put_risks_board(
         return await replace_risks(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
 @router.post("/pi-cycles/{cycle_id}/risks", response_model=RiskRead, status_code=status.HTTP_201_CREATED)
@@ -906,7 +906,7 @@ async def create_risk(
     await lock_cycle(session, cycle_id)
     if payload.scope == "general" and (payload.team_id is not None or payload.is_shared):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A general risk cannot reference a team or be shared",
         )
     if payload.scope == "team":
@@ -917,7 +917,7 @@ async def create_risk(
             )
         ):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Risk team is not part of this PI cycle",
             )
     risk_id = uuid.uuid4()

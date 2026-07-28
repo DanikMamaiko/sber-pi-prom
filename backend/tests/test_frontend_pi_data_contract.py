@@ -24,6 +24,25 @@ def test_active_pi_data_boot_uses_backend_read_model_without_frontend_migration(
     assert "state.ui.tab!=='data'" in source
 
 
+def test_pi_data_legacy_implementations_cannot_return_to_active_bundle():
+    source = FRONTEND.read_text(encoding="utf-8")
+
+    forbidden_legacy_symbols = (
+        "legacyViewData",
+        "legacyBindData",
+        "commandViewDataV1",
+        "commandBindDataV1",
+        "commitDataInputs",
+        "cycleSetupPayload",
+        "applyCycleSetup",
+        "persistCycleSetup",
+        "loadCycleSetups",
+    )
+
+    for symbol in forbidden_legacy_symbols:
+        assert symbol not in source
+
+
 def test_active_pi_data_view_keeps_prototype_layout_contract():
     source = FRONTEND.read_text(encoding="utf-8")
     start = source.rindex("function viewData(){")

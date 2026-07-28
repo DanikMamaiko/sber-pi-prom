@@ -488,6 +488,69 @@ async def _replace_attraction_team(
             executor.attractions = next_rows
 
 
+async def _relink_cycle_team(
+    session: AsyncSession,
+    cycle: PiCycle,
+    row: PiCycleTeam,
+    target_team: Team,
+) -> None:
+    old_team = row.team
+    initiative_ids = list(
+        (
+            await session.scalars(
+                select(InitiativeExecutor.initiative_id)
+                .join(Initiative, Initiative.id == InitiativeExecutor.initiative_id)
+                .where(
+                    Initiative.cycle_id == cycle.id,
+                    InitiativeExecutor.team_id == old_team.id,
+                )
+            )
+        ).all()
+    )
+    if initiative_ids and await session.scalar(
+        select(InitiativeExecutor).where(
+            InitiativeExecutor.initiative_id.in_(initiative_ids),
+            InitiativeExecutor.team_id == target_team.id,
+        )
+    ):
+        raise ValueError("An initiative already contains the target team as executor")
+    await session.execute(
+        update(Initiative)
+        .where(Initiative.cycle_id == cycle.id, Initiative.owner_team_id == old_team.id)
+        .values(owner_team_id=target_team.id)
+    )
+    await session.execute(
+        update(InitiativeExecutor)
+        .where(
+            InitiativeExecutor.initiative_id.in_(
+                select(Initiative.id).where(Initiative.cycle_id == cycle.id)
+            ),
+            InitiativeExecutor.team_id == old_team.id,
+        )
+        .values(team_id=target_team.id)
+    )
+    await session.execute(
+        update(PiCycleCapacityMember)
+        .where(
+            PiCycleCapacityMember.cycle_id == cycle.id,
+            PiCycleCapacityMember.team_id == old_team.id,
+        )
+        .values(team_id=target_team.id)
+    )
+    await session.execute(
+        update(PiGoal)
+        .where(PiGoal.cycle_id == cycle.id, PiGoal.team_id == old_team.id)
+        .values(team_id=target_team.id, tribe_id=target_team.tribe_id)
+    )
+    await session.execute(
+        update(Risk)
+        .where(Risk.cycle_id == cycle.id, Risk.team_id == old_team.id)
+        .values(team_id=target_team.id)
+    )
+    await _replace_attraction_team(session, cycle.id, old_team.name, target_team.name)
+    row.team = target_team
+
+
 async def update_cycle_team(
     session: AsyncSession,
     cycle: PiCycle,
@@ -519,60 +582,7 @@ async def update_cycle_team(
         )
         if duplicate_membership:
             raise ValueError("Target team is already included in this PI cycle")
-        initiative_ids = list(
-            (
-                await session.scalars(
-                    select(InitiativeExecutor.initiative_id)
-                    .join(Initiative, Initiative.id == InitiativeExecutor.initiative_id)
-                    .where(
-                        Initiative.cycle_id == cycle.id,
-                        InitiativeExecutor.team_id == old_team.id,
-                    )
-                )
-            ).all()
-        )
-        if initiative_ids and await session.scalar(
-            select(InitiativeExecutor).where(
-                InitiativeExecutor.initiative_id.in_(initiative_ids),
-                InitiativeExecutor.team_id == target_team.id,
-            )
-        ):
-            raise ValueError("An initiative already contains the target team as executor")
-        await session.execute(
-            update(Initiative)
-            .where(Initiative.cycle_id == cycle.id, Initiative.owner_team_id == old_team.id)
-            .values(owner_team_id=target_team.id)
-        )
-        await session.execute(
-            update(InitiativeExecutor)
-            .where(
-                InitiativeExecutor.initiative_id.in_(
-                    select(Initiative.id).where(Initiative.cycle_id == cycle.id)
-                ),
-                InitiativeExecutor.team_id == old_team.id,
-            )
-            .values(team_id=target_team.id)
-        )
-        await session.execute(
-            update(PiCycleCapacityMember)
-            .where(
-                PiCycleCapacityMember.cycle_id == cycle.id,
-                PiCycleCapacityMember.team_id == old_team.id,
-            )
-            .values(team_id=target_team.id)
-        )
-        await session.execute(
-            update(PiGoal)
-            .where(PiGoal.cycle_id == cycle.id, PiGoal.team_id == old_team.id)
-            .values(team_id=target_team.id, tribe_id=target_team.tribe_id)
-        )
-        await session.execute(
-            update(Risk)
-            .where(Risk.cycle_id == cycle.id, Risk.team_id == old_team.id)
-            .values(team_id=target_team.id)
-        )
-        await _replace_attraction_team(session, cycle.id, old_team.name, target_team.name)
-        row.team = target_team
+        await _relink_cycle_team(session, cycle, row, target_team)
 
     removed = {item.code for item in row.competencies} - set(competencies)
     if removed:
@@ -956,6 +966,10 @@ async def replace_pi_cycle_data(
     payload: PiCycleDataReplace,
 ) -> PiCycleDataRead:
     events, teams, goals, tags = await _data_rows(session, cycle.id)
+    events_by_id = {row.id: row for row in events}
+    teams_by_id = {row.id: row for row in teams}
+    goals_by_id = {row.id: row for row in goals}
+    tags_by_id = {row.id: row for row in tags}
     _validate_snapshot_ids(payload.pirs, events, "PIR")
     _validate_snapshot_ids(payload.teams, teams, "cycle team")
     _validate_snapshot_ids(payload.goal_options, goals, "goal option")
@@ -995,6 +1009,46 @@ async def replace_pi_cycle_data(
     for row in tags:
         if row.id not in keep_tag_ids:
             await delete_tag(session, cycle, row.id, commit=False)
+
+    temporary_teams: list[Team] = []
+    temporary_tribes: list[Tribe] = []
+    initiatives = list(
+        (await session.scalars(select(Initiative).where(Initiative.cycle_id == cycle.id))).all()
+    )
+    for item in payload.pirs:
+        if item.id and events_by_id[item.id].name.casefold() != item.name.strip().casefold():
+            events_by_id[item.id].name = f"__pi_bulk_{uuid.uuid4().hex}"
+    for item in payload.goal_options:
+        if item.id and goals_by_id[item.id].name.casefold() != item.name.strip().casefold():
+            goals_by_id[item.id].name = f"__pi_bulk_{uuid.uuid4().hex}"
+    for item in payload.tags:
+        if item.id and tags_by_id[item.id].name.casefold() != item.name.strip().casefold():
+            row = tags_by_id[item.id]
+            old_name = row.name
+            temporary_name = f"__pi_bulk_{uuid.uuid4().hex}"
+            row.name = temporary_name
+            for initiative in initiatives:
+                initiative.tags = [
+                    temporary_name if value == old_name else value
+                    for value in initiative.tags or []
+                ]
+    for item in payload.teams:
+        if item.id is None:
+            continue
+        row = teams_by_id[item.id]
+        current_key = (row.team.tribe.name.casefold(), row.team.name.casefold())
+        target_key = (item.tribe.strip().casefold(), item.name.strip().casefold())
+        if current_key == target_key:
+            continue
+        temporary_tribe, temporary_team = await _resolve_tribe_team(
+            session,
+            f"__pi_bulk_{uuid.uuid4().hex}",
+            f"__pi_bulk_{uuid.uuid4().hex}",
+        )
+        temporary_tribes.append(temporary_tribe)
+        temporary_teams.append(temporary_team)
+        await _relink_cycle_team(session, cycle, row, temporary_team)
+    await session.flush()
 
     await update_cycle_data(
         session,
@@ -1052,6 +1106,12 @@ async def replace_pi_cycle_data(
         else:
             await update_tag(session, cycle, item.id, command, commit=False)
 
+    await session.flush()
+    for temporary_team in temporary_teams:
+        await session.delete(temporary_team)
+    await session.flush()
+    for temporary_tribe in temporary_tribes:
+        await session.delete(temporary_tribe)
     await session.flush()
     final_events, final_teams, final_goals, final_tags = await _data_rows(session, cycle.id)
     event_by_id = {row.id: row for row in final_events}
