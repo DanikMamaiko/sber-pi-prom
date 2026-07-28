@@ -86,6 +86,172 @@ class PiCycleSetupRead(PiCycleSetupData):
     version: int
 
 
+class PiCycleDataCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=0)
+
+
+class PiCycleDataUpdate(PiCycleDataCommand):
+    start_date: date | None = None
+    sprint_count: int = Field(ge=1, le=20)
+    cascade_policy: str | None = Field(
+        default=None,
+        pattern="^(unassign_out_of_range)$",
+    )
+
+
+class PiEventDataCreate(PiCycleDataCommand):
+    name: str = Field(min_length=1, max_length=180)
+    date: date
+
+
+class PiEventDataUpdate(PiCycleDataCommand):
+    name: str = Field(min_length=1, max_length=180)
+    date: date
+
+
+class PiCycleTeamDataCreate(PiCycleDataCommand):
+    tribe: str = Field(min_length=1, max_length=180)
+    name: str = Field(min_length=1, max_length=180)
+    team_type: str = Field(default="Agile", pattern="^(Agile|ИТ-проект)$")
+    excluded_from_goals: bool = False
+    competencies: list[str] = Field(min_length=1)
+
+
+class PiCycleTeamDataUpdate(PiCycleTeamDataCreate):
+    cascade_policy: str | None = Field(
+        default=None,
+        pattern="^(remove_competency_usage)$",
+    )
+
+
+class PiCycleTeamDelete(PiCycleDataCommand):
+    confirm_cascade: bool = False
+
+
+class PiGoalOptionDataCreate(PiCycleDataCommand):
+    name: str = Field(min_length=1, max_length=260)
+
+
+class PiGoalOptionDataUpdate(PiCycleDataCommand):
+    name: str = Field(min_length=1, max_length=260)
+
+
+class PiTagDataCreate(PiCycleDataCommand):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class PiTagDataUpdate(PiCycleDataCommand):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class PiEventDataWrite(BaseModel):
+    id: uuid.UUID | None = None
+    name: str = Field(min_length=1, max_length=180)
+    date: date
+
+
+class PiCycleTeamDataWrite(BaseModel):
+    id: uuid.UUID | None = None
+    tribe: str = Field(min_length=1, max_length=180)
+    name: str = Field(min_length=1, max_length=180)
+    team_type: str = Field(default="Agile", pattern="^(Agile|ИТ-проект)$")
+    excluded_from_goals: bool = False
+    competencies: list[str] = Field(min_length=1)
+
+
+class PiNamedDataWrite(BaseModel):
+    id: uuid.UUID | None = None
+    name: str = Field(min_length=1, max_length=260)
+
+
+class PiTagDataWrite(BaseModel):
+    id: uuid.UUID | None = None
+    name: str = Field(min_length=1, max_length=120)
+
+
+class PiCycleDataReplace(PiCycleDataCommand):
+    start_date: date | None = None
+    sprint_count: int = Field(ge=1, le=20)
+    pirs: list[PiEventDataWrite] = Field(default_factory=list)
+    teams: list[PiCycleTeamDataWrite] = Field(default_factory=list)
+    goal_options: list[PiNamedDataWrite] = Field(default_factory=list)
+    tags: list[PiTagDataWrite] = Field(default_factory=list)
+    confirm_cascade: bool = False
+
+
+class PiEventDataRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    date: date
+    sort_order: int
+
+
+class PiCycleTeamDataRead(BaseModel):
+    id: uuid.UUID
+    team_id: uuid.UUID
+    tribe_id: uuid.UUID
+    tribe: str
+    name: str
+    team_type: str
+    excluded_from_goals: bool
+    competencies: list[str] = Field(default_factory=list)
+    sort_order: int
+
+
+class PiGoalOptionDataRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    sort_order: int
+
+
+class PiTagDataRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    sort_order: int
+
+
+class PiScheduleWeekRead(BaseModel):
+    index: int
+    start_date: date
+    end_date: date
+    workdays: int
+
+
+class PiScheduleSprintRead(BaseModel):
+    index: int
+    title: str
+    start_date: date
+    end_date: date
+    workdays: int
+    weeks: list[PiScheduleWeekRead] = Field(default_factory=list)
+    pirs: list[PiEventDataRead] = Field(default_factory=list)
+
+
+class PiScheduleRead(BaseModel):
+    end_date: date | None
+    total_workdays: int
+    sprints: list[PiScheduleSprintRead] = Field(default_factory=list)
+
+
+class PiCycleReferenceDataRead(BaseModel):
+    team_types: list[str]
+    competencies: list[str]
+    sprint_count_min: int
+    sprint_count_max: int
+
+
+class PiCycleDataRead(BaseModel):
+    cycle: PiCycleRead
+    schedule: PiScheduleRead
+    pirs: list[PiEventDataRead] = Field(default_factory=list)
+    teams: list[PiCycleTeamDataRead] = Field(default_factory=list)
+    goal_options: list[PiGoalOptionDataRead] = Field(default_factory=list)
+    tags: list[PiTagDataRead] = Field(default_factory=list)
+    reference_data: PiCycleReferenceDataRead
+
+
 class TribeCreate(BaseModel):
     name: str = Field(min_length=1, max_length=180)
 

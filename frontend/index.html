@@ -889,72 +889,9 @@ const BUDGET_TABS = [
   {id:'budgetVadarodTeams', name:'Состав команд Vadarod'},
 ];
 
-// Цели PI, которые по умолчанию всегда присутствуют в разделе «Цели PI» любого цикла.
-const DEFAULT_PI_GOALS = ['Тех. повестка','Регуляторные требования','Задачи для других команд'];
-
-// Демо-данные первого PI-цикла (2026-Q1). Каждый квартал хранит независимый набор данных.
-const demoCycleData = {
-  pi:{
-    startDate:'2026-07-06',
-    sprintCount:6,
-    pirs:[{name:'ПИР8',date:'2026-08-08'},{name:'ПИР9',date:'2026-09-12'}],
-    // Справочник целей PI — единый список, используется как варианты в столбце «Цель» на Pre PI Planning
-    goals:[...DEFAULT_PI_GOALS,'Ускорить расчёты','Повысить конверсию','Снизить операционные издержки'],
-    tags:['Клиентский путь','Интеграция','Техдолг'],
-    teams:[
-      {tribe:'Корпоративный бизнес', name:'Продажи',        excluded:false},
-      {tribe:'Корпоративный бизнес', name:'Расчеты',        excluded:false},
-      {tribe:'Розничный бизнес',     name:'Модуль расчетов',excluded:false},
-      {tribe:'Розничный бизнес',     name:'СБОЛ',           excluded:false},
-      {tribe:'Сопровождение',        name:'Сопровождение',  excluded:true},
-    ],
-  },
-  goals:{
-    'Корпоративный бизнес||Расчеты':[
-      {num:1,cel:'Ускорить расчёты',product:'Расчётный модуль',initNum:'Corporate-12345',
-       init:'Оптимизация расчётов',metric:'Время расчёта',fact:'8 ч',plan:'4 ч',hypo:'Кэширование',redesign:'Нет'},
-    ],
-  },
-  capacity:{
-    'Корпоративный бизнес||Расчеты':[
-      {fio:'Иванов', role:'SA',  vacation:'20.07-01.08', ceremonyPct:5, riskPct:10},
-      {fio:'Петров', role:'DEV', vacation:'', ceremonyPct:5, riskPct:10},
-      {fio:'Сидоров',role:'QA',  vacation:'', ceremonyPct:5, riskPct:5},
-    ],
-  },
-  issues:[
-    {id:'Corporate-12345', owner:'Расчеты', executor:'Расчеты', type:'Доработка',
-     name:'Оптимизация расчётов', cel:'Ускорить расчёты', metric:'Время расчёта', fact:'8 ч', plan:'4 ч',
-     hypo:'Кэширование', redesign:'Нет',
-     sa:5, dev:7, qa:1, comment:'', sprint:2,
-     tags:['Интеграция'],
-     prePlanned:true, onBoard:true, agreed:false, attractions:[],
-     subtasks:[
-       {uid:'a1',fio:'Иванов',role:'SA',cap:5,sprint:0},
-       {uid:'a2',fio:'Петров',role:'DEV',cap:4,sprint:0},
-       {uid:'a3',fio:'Петров',role:'DEV',cap:3,sprint:2},
-       {uid:'a4',fio:'Сидоров',role:'QA',cap:1,sprint:2},
-     ]},
-    {id:'Corporate-12346', owner:'СБОЛ', executor:'Расчеты', type:'Интеграция',
-     name:'Интеграция с СБОЛ', cel:'', metric:'', fact:'', plan:'',
-     hypo:'', redesign:'',
-     sa:2, dev:5, qa:1, comment:'', sprint:5,
-     tags:['Клиентский путь','Интеграция'],
-     prePlanned:true, onBoard:true, agreed:false, attractions:[],
-     subtasks:[
-       {uid:'b1',fio:'Иванов',role:'SA',cap:3,sprint:4},
-       {uid:'b2',fio:'Петров',role:'DEV',cap:2,sprint:4},
-       {uid:'b3',fio:'Сидоров',role:'QA',cap:1,sprint:4},
-     ]},
-  ],
-  risks:{
-    general:[],
-    teams:{},
-  },
-};
 const defaultState = {
   // Данные по каждому PI-циклу, ключ — «<год>-<квартал>», напр. «2026-Q1».
-  cycles: { '2026-Q1': demoCycleData },
+  cycles: {},
   // Данные бюджетирования по годам.
   budgets: {},
   // Бэклог трайбов — общий, кросс-квартальный (вне циклов). Ключ — имя трайба.
@@ -981,7 +918,7 @@ const defaultState = {
 
 let state;
 const STORAGE_VERSION = 4;
-const API_BASE = (window.SBERPI_API_BASE || localStorage.getItem('sberpiApiBase') ||
+const API_BASE = (window.SBERPI_API_BASE ||
   (location.protocol==='http:' || location.protocol==='https:'
     ? (location.port==='8000' ? location.origin+'/api' : location.protocol+'//'+location.hostname+':8000/api')
     : 'http://localhost:8000/api')).replace(/\/$/,'');
@@ -989,6 +926,7 @@ let cyclesApiReady=false;
 let cyclesApiUnavailable=false;
 let cycleBackendIds={};
 let cycleVersions={};
+let piDataViews={};
 let persistedCycleMetadata={};
 let cycleSyncTimer=null;
 let cycleSyncChain=Promise.resolve();
@@ -1157,7 +1095,7 @@ function ensureBudgetYear(year){
 }
 // Гарантировать наличие всех структур в объекте цикла.
 function ensureCycleShape(c){
-  if(!c.pi) c.pi={startDate:'',sprintCount:6,pirs:[],goals:DEFAULT_PI_GOALS.slice(),teams:[]};
+  if(!c.pi) c.pi={startDate:'',sprintCount:6,pirs:[],goals:[],tags:[],teams:[]};
   if(!Array.isArray(c.pi.tags)) c.pi.tags=[];
   if(!c.goals || typeof c.goals!=='object') c.goals={};
   if(!c.capacity || typeof c.capacity!=='object') c.capacity={};
@@ -1167,9 +1105,7 @@ function ensureCycleShape(c){
   if(!c.meta) c.meta={};
   return c;
 }
-// Пустой независимый PI-цикл для впервые выбранного квартала.
-// meta.sbolDemo=true — чтобы демо-данные СБОЛ не подсеивались в чистый цикл.
-function blankCycle(){ return ensureCycleShape({meta:{sbolDemo:true}}); }
+function blankCycle(){ return ensureCycleShape({}); }
 // Связать «активные» ссылки верхнего уровня (state.pi, state.issues, …) с выбранным циклом.
 function activateCycle(id){
   const c=state.cycles[id]; if(!c) return;
@@ -1177,42 +1113,27 @@ function activateCycle(id){
   CYCLE_KEYS.forEach(k=>{ state[k]=c[k]; });
 }
 function loadState(){
+  let saved={};
   try{
     const s = sessionStorage.getItem('piPlanning');
-    state = s ? JSON.parse(s) : structuredClone(defaultState);
-  }catch(e){ state = structuredClone(defaultState); }
-  // Начиная с версии 4 business data циклов не читаются из sessionStorage.
-  if(state.storageVersion>=STORAGE_VERSION && !state.cycles) state.cycles={};
-  migrateToCycles();
-}
-// Миграция старого «плоского» формата (данные лежали в корне state) в state.cycles.
-function migrateToCycles(){
-  if(state.cycles && typeof state.cycles==='object') return;
-  const c={};
-  CYCLE_KEYS.forEach(k=>{ if(k in state){ c[k]=state[k]; delete state[k]; } });
-  ensureCycleShape(c);
-  state.cycles={ '2026-Q1': c };
-  if(!state.ui) state.ui=structuredClone(defaultState.ui);
-  // старый формат не знал про выбор цикла — начинаем со стартовой страницы
-  state.ui.year=null; state.ui.quarter=null;
-  if(!('landingYear' in state.ui)) state.ui.landingYear=2026;
+    saved = s ? JSON.parse(s) : {};
+  }catch(e){}
+  state=structuredClone(defaultState);
+  if(saved.budgets&&typeof saved.budgets==='object') state.budgets=saved.budgets;
+  if(saved.ui&&typeof saved.ui==='object') state.ui={...state.ui,...saved.ui};
 }
 function save(syncCycles=true){
   try{
-    // В sessionStorage остаются только настройки экрана и пока не перенесённые
-    // глобальные разделы. Business data PI-циклов сохраняются только через API.
-    const out={storageVersion:STORAGE_VERSION};
-    for(const k in state){
-      if(!CYCLE_KEYS.includes(k) && k!=='cycles' && !(k==='tribeBacklog' && backlogBackendAdopted)) out[k]=state[k];
-    }
+    // В браузере сохраняются только UI-настройки и пока не разрабатываемый бюджет.
+    // Любые PI business data загружаются заново из backend.
+    const out={storageVersion:STORAGE_VERSION,ui:state.ui,budgets:state.budgets};
     sessionStorage.setItem('piPlanning', JSON.stringify(out));
   }catch(e){}
   // save(false) используется только при редактировании setup. Пока пользователь
   // не нажал «Сохранить», команды ещё не входят в нормализованный PI, поэтому
   // синхронизация зависимых агрегатов дала бы ложные 422 и могла бы затереть
   // незавершённый ввод ответом от более раннего запроса.
-  if(syncCycles){
-    if(cyclesApiReady) queueCycleSync();
+  if(syncCycles && state.ui.mode==='pi' && state.ui.tab!=='data'){
     if(backlogApiReady) queueBacklogSync();
     if(prePiApiReady) queuePrePiSync();
     if(goalsApiReady) queueGoalsSync();
@@ -1367,7 +1288,7 @@ function flushCycleSync(){
 async function loadCyclesFromApi(){
   const remote=await cycleApi('/pi-cycles');
   const loaded={};
-  cycleBackendIds={}; cycleVersions={}; persistedCycleMetadata={};
+  cycleBackendIds={}; cycleVersions={}; persistedCycleMetadata={}; piDataViews={};
 
   for(const rec of remote){
     const id=cycleId(rec.year,rec.quarter);
@@ -1433,6 +1354,54 @@ async function loadCycleSetups(){
     if(setup.initialized) applyCycleSetup(state.cycles[id],setup);
     else await persistCycleSetup(id); // инициализация нового пустого агрегата
   }
+}
+function applyPiDataView(id,view){
+  if(!view||!view.cycle) throw new Error('Backend returned an invalid PI data view');
+  piDataViews[id]=view;
+  cycleBackendIds[id]=view.cycle.id;
+  cycleVersions[id]=view.cycle.version;
+  persistedCycleMetadata[id]=JSON.stringify([view.cycle.start_date||null,view.cycle.sprint_count]);
+  const c=state.cycles[id]||blankCycle();
+  ensureCycleShape(c);
+  c.pi={
+    startDate:view.cycle.start_date||'',
+    sprintCount:view.cycle.sprint_count,
+    pirs:(view.pirs||[]).map(row=>({_backendId:row.id,name:row.name,date:row.date})),
+    teams:(view.teams||[]).map(row=>({
+      _cycleTeamId:row.id,_teamId:row.team_id,_tribeId:row.tribe_id,
+      tribe:row.tribe,name:row.name,type:row.team_type,
+      excluded:!!row.excluded_from_goals,comps:(row.competencies||[]).slice(),
+    })),
+    goals:(view.goal_options||[]).map(row=>row.name),
+    tags:(view.tags||[]).map(row=>row.name),
+  };
+  state.cycles[id]=c;
+  if(currentCycleId()===id) activateCycle(id);
+  return view;
+}
+async function loadPiDataView(id){
+  const backendId=cycleBackendIds[id];
+  if(!backendId) throw new Error(`PI cycle is not loaded: ${id}`);
+  return applyPiDataView(id,await cycleApi(`/pi-cycles/${backendId}/data`));
+}
+async function loadPiDataViews(){
+  for(const id of Object.keys(state.cycles||{})) await loadPiDataView(id);
+}
+function piDataCommand(path,options={}){
+  const id=currentCycleId();
+  const backendId=id&&cycleBackendIds[id];
+  if(!id||!piDataViews[id]||!backendId) return Promise.reject(new Error('PI data is not loaded'));
+  const run=aggregateMutationChain.then(async()=>{
+    const view=piDataViews[id];
+    if(!view) throw new Error('PI data is not loaded');
+    const result=await cycleApi(`/pi-cycles/${backendId}${path}`,{
+      method:options.method||'POST',
+      body:{...(options.body||{}),expected_version:view.cycle.version},
+    });
+    return applyPiDataView(id,result);
+  });
+  aggregateMutationChain=run.catch(()=>{});
+  return run;
 }
 function backlogBoardPayload(){
   const items=[];
@@ -1555,16 +1524,8 @@ function flushBacklogSync(){
 async function loadBacklogBoard(){
   const board=await cycleApi('/backlog-board');
   backlogVersion=board.version;
-  if(board.initialized){
-    applyBacklogBoard(board);
-    persistedBacklogSnapshot=backlogSnapshotHash();
-  }else{
-    await persistBacklogBoard(true);
-    const imported=await cycleApi('/backlog-board');
-    backlogVersion=imported.version;
-    applyBacklogBoard(imported);
-    persistedBacklogSnapshot=backlogSnapshotHash();
-  }
+  applyBacklogBoard(board);
+  persistedBacklogSnapshot=backlogSnapshotHash();
 }
 function prePiPayload(id,c){
   ensureCycleShape(c);
@@ -1719,12 +1680,7 @@ async function loadPrePiCycles(){
   persistedPrePiSnapshots={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id]; if(!backendId)continue;
-    let aggregate=await cycleRead(id,`/pi-cycles/${backendId}/pre-pi`);
-    if(!aggregate.initialized){
-      aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/pre-pi`,{
-        method:'PUT',body:prePiPayload(id,state.cycles[id]),
-      });
-    }
+    const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/pre-pi`);
     applyPrePi(state.cycles[id],aggregate);
     persistedPrePiSnapshots[id]=prePiSnapshotHash(id,state.cycles[id]);
   }
@@ -1842,20 +1798,12 @@ function flushGoalsSync(){
 }
 async function loadGoalsCycles(){
   persistedGoalsSnapshots={};
-  let imported=false;
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id]; if(!backendId)continue;
-    let aggregate=await cycleRead(id,`/pi-cycles/${backendId}/goals-board`);
-    if(!aggregate.initialized){
-      aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/goals-board`,{
-        method:'PUT',body:goalsPayload(id,state.cycles[id]),
-      });
-      imported=true;
-    }
+    const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/goals-board`);
     applyGoals(state.cycles[id],aggregate);
     persistedGoalsSnapshots[id]=goalsSnapshotHash(id,state.cycles[id]);
   }
-  if(imported)await loadPrePiCycles();
   const active=currentCycleId();
   if(active&&state.cycles[active])activateCycle(active);
 }
@@ -1999,12 +1947,7 @@ async function loadTeamBoardsCycles(){
   persistedTeamBoardSnapshots={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id];if(!backendId)continue;
-    let aggregate=await cycleRead(id,`/pi-cycles/${backendId}/team-boards`);
-    if(!aggregate.initialized){
-      aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/team-boards`,{
-        method:'PUT',body:teamBoardsPayload(id,state.cycles[id]),
-      });
-    }
+    const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/team-boards`);
     applyTeamBoards(state.cycles[id],aggregate);
     persistedTeamBoardSnapshots[id]=teamBoardsSnapshotHash(id,state.cycles[id]);
   }
@@ -2162,12 +2105,7 @@ async function loadCapacityCycles(){
   persistedCapacitySnapshots={};capacityComputedCycles={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id];if(!backendId)continue;
-    let aggregate=await cycleRead(id,`/pi-cycles/${backendId}/capacity`);
-    if(!aggregate.initialized){
-      aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/capacity`,{
-        method:'PUT',body:capacityPayload(id,state.cycles[id]),
-      });
-    }
+    const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/capacity`);
     applyCapacity(state.cycles[id],aggregate,id);
     persistedCapacitySnapshots[id]=capacitySnapshotHash(id,state.cycles[id]);
   }
@@ -2277,12 +2215,7 @@ async function loadProgramBoardCycles(){
   persistedProgramBoardSnapshots={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id];if(!backendId)continue;
-    let aggregate=await cycleRead(id,`/pi-cycles/${backendId}/program-board`);
-    if(!aggregate.initialized){
-      aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/program-board`,{
-        method:'PUT',body:programBoardPayload(id,state.cycles[id]),
-      });
-    }
+    const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/program-board`);
     applyProgramBoard(state.cycles[id],aggregate);
     persistedProgramBoardSnapshots[id]=programBoardSnapshotHash(id,state.cycles[id]);
   }
@@ -2393,12 +2326,7 @@ async function loadRisksCycles(){
   persistedRisksSnapshots={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id];if(!backendId)continue;
-    let aggregate=await cycleRead(id,`/pi-cycles/${backendId}/risks-board`);
-    if(!aggregate.initialized){
-      aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/risks-board`,{
-        method:'PUT',body:risksPayload(id,state.cycles[id]),
-      });
-    }
+    const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/risks-board`);
     applyRisks(state.cycles[id],aggregate);
     persistedRisksSnapshots[id]=risksSnapshotHash(id,state.cycles[id]);
   }
@@ -3468,7 +3396,7 @@ function bindLanding(){
     state.ui.landingYear=year;
     state.ui.budgetTab=state.ui.budgetTab||'budgetData';
     ensureBudgetYear(year);
-    save(); render();
+    save(false); render();
   };
   document.querySelectorAll('.q-btn').forEach(b=>b.onclick=async()=>{
     if(!cyclesApiReady){
@@ -3481,8 +3409,15 @@ function bindLanding(){
     const year=+((ys&&ys.value)||state.ui.landingYear||2026);
     const q=b.dataset.q;
     const id=cycleId(year,q);
-    if(!state.cycles[id]) state.cycles[id]=blankCycle();
-    try{ await persistCycle(id); }
+    try{
+      if(state.cycles[id]){
+        if(!piDataViews[id]) await loadPiDataView(id);
+      }else{
+        applyPiDataView(id,await cycleApi('/pi-cycle-data',{
+          method:'POST',body:{year,quarter:q,start_date:null,sprint_count:6},
+        }));
+      }
+    }
     catch(error){ reportCycleSyncError(error); return; }
     state.ui.mode='pi';
     state.ui.landingYear=year;
@@ -3495,7 +3430,9 @@ function bindLanding(){
 /* =====================================================================
    ВКЛАДКА 1 — Данные PI-цикла
 ===================================================================== */
-function viewData(){
+// Исторический renderer оставлен только как временная справка для переноса остальных вкладок.
+// Он не подключён к render() и не участвует в runtime.
+function legacyViewData(){
   const ed=state.ui.dataEdit;
   const ro=ed?'':'readonly';
   const dis=ed?'':'disabled';
@@ -3619,7 +3556,7 @@ function commitDataInputs(){
   state.pi.tags=nextTags.map(t=>String(t||'').trim());
   cleanIssueTags();
 }
-function bindData(){
+function legacyBindData(){
   const ed=state.ui.dataEdit;
   if(!ed){ $('#editData').onclick=()=>{state.ui.dataEdit=true;save(false);render();}; return; }
   $('#saveData').onclick=async()=>{
@@ -3659,6 +3596,213 @@ function bindData(){
     const picked=[]; dd.querySelectorAll('.t-comp').forEach(x=>{ if(x.checked) picked.push(x.dataset.c); });
     chips.innerHTML = COMPS.filter(c=>picked.includes(c)).map(c=>`<span class="comp-tag">${c}</span>`).join('') || '<span class="comp-cells-empty">выберите…</span>';
   });
+}
+
+// Каноническая вкладка PI Data: DOM строится только из read-model backend.
+function commandViewDataV1(){
+  const view=piDataViews[currentCycleId()];
+  if(!view) return `<div class="card"><h2>Данные PI-цикла</h2><div class="note">Данные backend не загружены. Локальная копия PI-цикла не используется.</div></div>`;
+  const refs=view.reference_data||{team_types:[],competencies:[],sprint_count_min:1,sprint_count_max:20};
+  const pirs=(view.pirs||[]).map(row=>`
+    <div class="row pi-data-row" data-pir-id="${esc(row.id)}">
+      <input class="pir-name" value="${esc(row.name)}" placeholder="ПИР">
+      <input type="date" class="pir-date" value="${esc(row.date)}">
+      <button class="sm primary" data-save-pir="${esc(row.id)}">Сохранить</button>
+      <button class="icon danger sm" data-delete-pir="${esc(row.id)}">✕</button>
+    </div>`).join('');
+  const teams=(view.teams||[]).map(row=>{
+    const selected=new Set(row.competencies||[]);
+    const typeOptions=(refs.team_types||[]).map(type=>`<option value="${esc(type)}" ${type===row.team_type?'selected':''}>${esc(type)}</option>`).join('');
+    const competencyOptions=(refs.competencies||[]).map(code=>`<label class="dd-opt"><input type="checkbox" class="team-comp" data-code="${esc(code)}" ${selected.has(code)?'checked':''}>${esc(code)}</label>`).join('');
+    const chips=(row.competencies||[]).map(code=>`<span class="comp-tag">${esc(code)}</span>`).join('')||'<span class="comp-cells-empty">—</span>';
+    return `<tr data-cycle-team-id="${esc(row.id)}">
+      <td><input class="team-tribe" value="${esc(row.tribe)}" style="width:190px"></td>
+      <td><input class="team-name" value="${esc(row.name)}" style="width:190px"></td>
+      <td><select class="team-type" style="width:140px">${typeOptions}</select></td>
+      <td><label class="switch"><input type="checkbox" class="team-has-goal" ${row.excluded_from_goals?'':'checked'}><span class="track"></span><span class="switch-lab">${row.excluded_from_goals?'Нет цели':'Есть цель'}</span></label></td>
+      <td><details class="comp-dd"><summary><span class="dd-chips">${chips}</span><span class="dd-caret">▾</span></summary><div class="dd-panel">${competencyOptions}</div></details></td>
+      <td><button class="sm primary" data-save-team="${esc(row.id)}">Сохранить</button> <button class="icon danger sm" data-delete-team="${esc(row.id)}">✕</button></td>
+    </tr>`;
+  }).join('');
+  const goals=(view.goal_options||[]).map(row=>`<div class="row pi-data-row" data-goal-id="${esc(row.id)}"><input class="goal-name" value="${esc(row.name)}" style="width:400px"><button class="sm primary" data-save-goal="${esc(row.id)}">Сохранить</button><button class="icon danger sm" data-delete-goal="${esc(row.id)}">✕</button></div>`).join('');
+  const tags=(view.tags||[]).map(row=>`<div class="row pi-data-row" data-tag-id="${esc(row.id)}"><input class="tag-name" value="${esc(row.name)}"><button class="sm primary" data-save-tag="${esc(row.id)}">Сохранить</button><button class="icon danger sm" data-delete-tag="${esc(row.id)}">✕</button></div>`).join('');
+  const schedule=(view.schedule&&view.schedule.sprints||[]).map(sprint=>`<tr><td>${esc(sprint.title)}</td><td>${esc(sprint.start_date)}</td><td>${esc(sprint.end_date)}</td><td>${esc(sprint.workdays)}</td><td>${(sprint.pirs||[]).map(p=>esc(p.name)).join(', ')||'—'}</td></tr>`).join('');
+  const addTypeOptions=(refs.team_types||[]).map(type=>`<option value="${esc(type)}">${esc(type)}</option>`).join('');
+  const addCompetencies=(refs.competencies||[]).map(code=>`<label class="dd-opt"><input type="checkbox" class="new-team-comp" data-code="${esc(code)}" checked>${esc(code)}</label>`).join('');
+  return `<div class="card">
+    <h2>Данные PI-цикла ${cycleBadge()}</h2>
+    <div class="row">
+      <label class="fld"><span class="lab">Дата старта PI-цикла</span><input type="date" id="piStartDate" value="${esc(view.cycle.start_date||'')}"></label>
+      <label class="fld"><span class="lab">Количество спринтов</span><input type="number" id="piSprintCount" min="${esc(refs.sprint_count_min)}" max="${esc(refs.sprint_count_max)}" value="${esc(view.cycle.sprint_count)}" style="width:90px"></label>
+      <button class="primary" id="savePiCycleData">Сохранить параметры</button>
+    </div>
+    <h3>Расписание backend</h3>
+    <div class="hint">Конец цикла: ${esc(view.schedule.end_date||'—')}. Рабочих дней: ${esc(view.schedule.total_workdays)}.</div>
+    <table><thead><tr><th>Спринт</th><th>Начало</th><th>Окончание</th><th>Рабочие дни</th><th>ПИРы</th></tr></thead><tbody>${schedule||'<tr><td colspan="5" class="muted">Укажите дату старта</td></tr>'}</tbody></table>
+    <h3>Данные ПИРов</h3>${pirs||'<div class="muted">Нет данных</div>'}
+    <div class="row"><input id="newPirName" placeholder="ПИР"><input type="date" id="newPirDate"><button class="plus" id="createPir">+</button></div>
+    <h3>Данные по командам</h3>
+    <table class="data-teams"><thead><tr><th>Трайб</th><th>Команда</th><th>Тип</th><th>Наличие цели</th><th>Компетенции</th><th></th></tr></thead><tbody>${teams||'<tr><td colspan="6" class="muted">Нет данных</td></tr>'}</tbody></table>
+    <div class="row" id="newTeamRow"><input id="newTeamTribe" placeholder="Трайб"><input id="newTeamName" placeholder="Команда"><select id="newTeamType">${addTypeOptions}</select><label class="switch"><input type="checkbox" id="newTeamHasGoal" checked><span class="track"></span><span class="switch-lab">Есть цель</span></label><details class="comp-dd"><summary>Компетенции ▾</summary><div class="dd-panel">${addCompetencies}</div></details><button class="plus" id="createTeam">+</button></div>
+    <h3>Цели PI</h3>${goals||'<div class="muted">Целей пока нет</div>'}<div class="row"><input id="newGoalName" placeholder="Название цели" style="width:400px"><button class="plus" id="createGoal">+</button></div>
+    <h3>Тэги стикеров</h3>${tags||'<div class="muted">Тэгов пока нет</div>'}<div class="row"><input id="newTagName" placeholder="Название тэга"><button class="plus" id="createTag">+</button></div>
+    <div class="note" style="margin-top:14px">Все строки имеют стабильные backend ID. Любое сохранение, добавление или удаление — отдельная транзакционная команда; после неё вкладка целиком перестраивается из ответа backend.</div>
+  </div>`;
+}
+function piCascadeMessage(detail){
+  const affected=detail&&detail.affected||{};
+  const summary=Object.entries(affected).filter(([,count])=>count).map(([name,count])=>`${name}: ${count}`).join(', ');
+  return `Изменение требует каскадной обработки связанных данных${summary?` (${summary})`:''}. Продолжить?`;
+}
+async function refreshPiProjectionsAfterDataCommand(){
+  const reads=[];
+  if(backlogApiReady) reads.push(loadBacklogBoard());
+  if(prePiApiReady) reads.push(loadPrePiCycles());
+  if(goalsApiReady) reads.push(loadGoalsCycles());
+  if(teamBoardsApiReady) reads.push(loadTeamBoardsCycles());
+  if(capacityApiReady) reads.push(loadCapacityCycles());
+  if(programBoardApiReady) reads.push(loadProgramBoardCycles());
+  if(risksApiReady) reads.push(loadRisksCycles());
+  await Promise.all(reads);
+}
+async function executePiDataCommand(path,options={},cascadeBody=null){
+  try{
+    await piDataCommand(path,options);
+  }catch(error){
+    const cascade=error&&error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required';
+    if(cascade&&cascadeBody&&window.confirm(piCascadeMessage(error.detail))){
+      await piDataCommand(path,{...options,body:{...(options.body||{}),...cascadeBody}});
+    }else{
+      if(error&&error.status===409&&!cascade){
+        reportOptimisticConflict(error);
+        await loadPiDataView(currentCycleId()).catch(()=>{});
+        render();
+      }
+      throw error;
+    }
+  }
+  await refreshPiProjectionsAfterDataCommand().catch(error=>console.error('Projection refresh failed',error));
+  render();
+  toast('Изменения сохранены в backend',{type:'success'});
+}
+function commandBindDataV1(){
+  if(!piDataViews[currentCycleId()]) return;
+  const invoke=(button,action)=>button.onclick=async()=>{
+    button.disabled=true;
+    try{await action();}
+    catch(error){
+      if(!(error&&error.status===409)) toast(error.message||'Backend не выполнил команду',{type:'warn',timeout:7000});
+      button.disabled=false;
+    }
+  };
+  invoke($('#savePiCycleData'),()=>executePiDataCommand('/data',{method:'PATCH',body:{start_date:$('#piStartDate').value||null,sprint_count:+$('#piSprintCount').value}}, {cascade_policy:'unassign_out_of_range'}));
+  invoke($('#createPir'),()=>executePiDataCommand('/pirs',{body:{name:$('#newPirName').value.trim(),date:$('#newPirDate').value}}));
+  document.querySelectorAll('[data-save-pir]').forEach(button=>invoke(button,()=>{const row=button.closest('[data-pir-id]');return executePiDataCommand(`/pirs/${button.dataset.savePir}`,{method:'PATCH',body:{name:row.querySelector('.pir-name').value.trim(),date:row.querySelector('.pir-date').value}});}));
+  document.querySelectorAll('[data-delete-pir]').forEach(button=>invoke(button,()=>executePiDataCommand(`/pirs/${button.dataset.deletePir}`,{method:'DELETE'})));
+  invoke($('#createTeam'),()=>executePiDataCommand('/cycle-teams',{body:{tribe:$('#newTeamTribe').value.trim(),name:$('#newTeamName').value.trim(),team_type:$('#newTeamType').value,excluded_from_goals:!$('#newTeamHasGoal').checked,competencies:[...document.querySelectorAll('.new-team-comp:checked')].map(el=>el.dataset.code)}}));
+  document.querySelectorAll('[data-save-team]').forEach(button=>invoke(button,()=>{const row=button.closest('[data-cycle-team-id]');return executePiDataCommand(`/cycle-teams/${button.dataset.saveTeam}`,{method:'PATCH',body:{tribe:row.querySelector('.team-tribe').value.trim(),name:row.querySelector('.team-name').value.trim(),team_type:row.querySelector('.team-type').value,excluded_from_goals:!row.querySelector('.team-has-goal').checked,competencies:[...row.querySelectorAll('.team-comp:checked')].map(el=>el.dataset.code)}},{cascade_policy:'remove_competency_usage'});}));
+  document.querySelectorAll('[data-delete-team]').forEach(button=>invoke(button,()=>executePiDataCommand(`/cycle-teams/${button.dataset.deleteTeam}`,{method:'DELETE'},{confirm_cascade:true})));
+  invoke($('#createGoal'),()=>executePiDataCommand('/goal-options',{body:{name:$('#newGoalName').value.trim()}}));
+  document.querySelectorAll('[data-save-goal]').forEach(button=>invoke(button,()=>{const row=button.closest('[data-goal-id]');return executePiDataCommand(`/goal-options/${button.dataset.saveGoal}`,{method:'PATCH',body:{name:row.querySelector('.goal-name').value.trim()}});}));
+  document.querySelectorAll('[data-delete-goal]').forEach(button=>invoke(button,()=>executePiDataCommand(`/goal-options/${button.dataset.deleteGoal}`,{method:'DELETE'})));
+  invoke($('#createTag'),()=>executePiDataCommand('/tags',{body:{name:$('#newTagName').value.trim()}}));
+  document.querySelectorAll('[data-save-tag]').forEach(button=>invoke(button,()=>{const row=button.closest('[data-tag-id]');return executePiDataCommand(`/tags/${button.dataset.saveTag}`,{method:'PATCH',body:{name:row.querySelector('.tag-name').value.trim()}});}));
+  document.querySelectorAll('[data-delete-tag]').forEach(button=>invoke(button,()=>executePiDataCommand(`/tags/${button.dataset.deleteTag}`,{method:'DELETE'})));
+  document.querySelectorAll('.team-has-goal').forEach(el=>el.onchange=()=>{const lab=el.parentElement.querySelector('.switch-lab');if(lab)lab.textContent=el.checked?'Есть цель':'Нет цели';});
+}
+
+function prototypePirRow(row,editable){
+  const ro=editable?'':'readonly', dis=editable?'':'disabled';
+  return `<div class="row" data-pir-row data-pir-id="${esc(row.id||'')}">
+    <input class="pir-name" value="${esc(row.name||'')}" ${ro} placeholder="ПИР">
+    <input type="date" class="pir-date" value="${esc(row.date||'')}" ${dis}>
+    ${editable?'<button class="icon danger sm" data-delete-pir>✕</button>':''}
+  </div>`;
+}
+function prototypeTeamRow(row,editable,refs){
+  const ro=editable?'':'readonly', dis=editable?'':'disabled';
+  const competencies=row.competencies||[];
+  const compCell=editable
+    ? `<details class="comp-dd"><summary><span class="dd-chips">${competencies.map(code=>`<span class="comp-tag">${esc(code)}</span>`).join('')||'<span class="comp-cells-empty">выберите…</span>'}</span><span class="dd-caret">▾</span></summary><div class="dd-panel">${(refs.competencies||[]).map(code=>`<label class="dd-opt"><input type="checkbox" class="t-comp" data-c="${esc(code)}" ${competencies.includes(code)?'checked':''}>${esc(code)}</label>`).join('')}</div></details>`
+    : `<span class="dd-chips">${competencies.map(code=>`<span class="comp-tag">${esc(code)}</span>`).join('')||'<span class="comp-cells-empty">—</span>'}</span>`;
+  return `<tr data-team-row data-team-id="${esc(row.id||'')}">
+    <td><input class="t-tribe" value="${esc(row.tribe||'')}" ${ro} placeholder="Трайб" style="width:200px"></td>
+    <td><input class="t-name" value="${esc(row.name||'')}" ${ro} placeholder="Команда" style="width:200px"></td>
+    <td><select class="t-type" ${dis} style="width:140px" title="Тип команды">${(refs.team_types||[]).map(type=>`<option value="${esc(type)}" ${type===(row.team_type||'Agile')?'selected':''}>${esc(type)}</option>`).join('')}</select></td>
+    <td><label class="switch" title="Есть ли у команды цель (попадает ли на вкладку «Цели»)"><input type="checkbox" class="t-plan" ${row.excluded_from_goals?'':'checked'} ${dis}><span class="track"></span><span class="switch-lab">${row.excluded_from_goals?'Нет цели':'Есть цель'}</span></label></td>
+    <td>${compCell}</td>
+    <td>${editable?'<button class="icon danger sm" data-delete-team>✕</button>':''}</td>
+  </tr>`;
+}
+function prototypeNamedRow(kind,row,editable){
+  const isGoal=kind==='goal';
+  const ro=editable?'':'readonly';
+  return `<div class="row${isGoal?'':' tag-row'}" data-${kind}-row data-${kind}-id="${esc(row.id||'')}"><input class="${isGoal?'g-name':'tag-name'}" value="${esc(row.name||'')}" ${ro} placeholder="${isGoal?'Название цели':'Название тэга'}" ${isGoal?'style="width:400px"':''}>${editable?`<button class="icon danger sm" data-delete-${kind}>✕</button>`:''}</div>`;
+}
+function viewData(){
+  const view=piDataViews[currentCycleId()];
+  if(!view) return `<div class="card"><h2>Данные PI-цикла</h2><div class="note">Данные backend не загружены. Локальная копия PI-цикла не используется.</div></div>`;
+  const editable=!!state.ui.dataEdit;
+  const dis=editable?'':'disabled';
+  const refs=view.reference_data||{team_types:['Agile','ИТ-проект'],competencies:['SA','DEV','QA','FE','BE','DES'],sprint_count_min:1,sprint_count_max:20};
+  const pirs=(view.pirs||[]).map(row=>prototypePirRow(row,editable)).join('');
+  const teamRows=(view.teams||[]).map(row=>prototypeTeamRow(row,editable,refs)).join('');
+  const goals=(view.goal_options||[]).map(row=>prototypeNamedRow('goal',row,editable)).join('');
+  const tags=(view.tags||[]).map(row=>prototypeNamedRow('tag',row,editable)).join('');
+  return `<div class="card" id="piDataCard">
+    <div class="flex-between"><h2>Данные PI-цикла ${cycleBadge()}</h2><div>${editable?'<button class="primary" id="saveData">Сохранить</button>':'<button id="editData">Редактировать</button>'}</div></div>
+    <label class="fld"><span class="lab">Дата старта PI-цикла</span><input type="date" id="startDate" value="${esc(view.cycle.start_date||'')}" ${dis}></label>
+    <label class="fld"><span class="lab">Количество спринтов</span><input type="number" min="${esc(refs.sprint_count_min)}" max="${esc(refs.sprint_count_max)}" id="sprintCount" value="${esc(view.cycle.sprint_count)}" ${dis} style="width:90px"></label>
+    <h3>Данные ПИРов ${editable?'<button class="plus" id="addPir">+</button>':''}</h3><div id="pirRows">${pirs||'<div class="muted" data-empty>Нет данных</div>'}</div>
+    <h3>Данные по командам ${editable?'<button class="plus" id="addTeam">+</button>':''}</h3>
+    <table class="data-teams"><thead><tr><th>Трайб</th><th>Команда</th><th>Тип</th><th>Наличие цели</th><th>Компетенции</th><th></th></tr></thead><tbody id="teamRows">${teamRows||'<tr data-empty><td colspan="6" class="muted">Нет данных</td></tr>'}</tbody></table>
+    <h3>Цели PI ${editable?'<button class="plus" id="addGoal">+</button>':''}</h3><div id="goalRows">${goals||'<div class="muted" data-empty>Целей пока нет</div>'}</div>
+    <div class="hint" style="margin-top:4px">Список целей используется на вкладке «Pre PI Planning» — в столбце «Цель» инициативы выбираются из этого списка.</div>
+    <h3>Тэги стикеров ${editable?'<button class="plus" id="addTag">+</button>':''}</h3><div id="tagRows">${tags||'<div class="muted" data-empty>Тэгов пока нет</div>'}</div>
+    <div class="hint" style="margin-top:4px">Список тэгов используется в карточке стикера. Выбранные тэги отображаются на «Program Board» и «Командных досках».</div>
+    <div class="note" style="margin-top:14px">Переключатель <b>«Наличие цели»</b>: команды со статусом «Нет цели» не попадают на вкладку «Цели». На «Program Board» и «Командные доски» выводятся <b>все</b> трайбы и команды. Спринты формируются автоматически от даты старта (по 2 недели).<br><b>Компетенции команды</b> (SA/DEV/QA/FE/BE/DES) выбираются выпадающим списком и используются на вкладках «Бэклог команд» и «Pre PI Planning»: у команды-исполнителя показываются <b>только выбранные здесь</b> компетенции.</div>
+  </div>`;
+}
+function piDataFormPayload(){
+  return {
+    start_date:$('#startDate').value||null,
+    sprint_count:+$('#sprintCount').value,
+    pirs:[...document.querySelectorAll('[data-pir-row]')].map(row=>({id:row.dataset.pirId||null,name:row.querySelector('.pir-name').value.trim(),date:row.querySelector('.pir-date').value})).filter(row=>row.name&&row.date),
+    teams:[...document.querySelectorAll('[data-team-row]')].map(row=>({id:row.dataset.teamId||null,tribe:row.querySelector('.t-tribe').value.trim(),name:row.querySelector('.t-name').value.trim(),team_type:row.querySelector('.t-type').value,excluded_from_goals:!row.querySelector('.t-plan').checked,competencies:[...row.querySelectorAll('.t-comp:checked')].map(el=>el.dataset.c)})).filter(row=>row.tribe&&row.name),
+    goal_options:[...document.querySelectorAll('[data-goal-row]')].map(row=>({id:row.dataset.goalId||null,name:row.querySelector('.g-name').value.trim()})).filter(row=>row.name),
+    tags:[...document.querySelectorAll('[data-tag-row]')].map(row=>({id:row.dataset.tagId||null,name:row.querySelector('.tag-name').value.trim()})).filter(row=>row.name),
+  };
+}
+function bindData(){
+  const view=piDataViews[currentCycleId()]; if(!view)return;
+  const root=$('#piDataCard'); if(!root)return;
+  const refs=view.reference_data;
+  root.onclick=async event=>{
+    const button=event.target.closest('button'); if(!button)return;
+    if(button.id==='editData'){state.ui.dataEdit=true;save(false);render();return;}
+    if(button.id==='addPir'){const box=$('#pirRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypePirRow({},true));return;}
+    if(button.id==='addTeam'){const box=$('#teamRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeTeamRow({team_type:'Agile',competencies:BASE_TEAM_COMPS.slice()},true,refs));return;}
+    if(button.id==='addGoal'){const box=$('#goalRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeNamedRow('goal',{},true));return;}
+    if(button.id==='addTag'){const box=$('#tagRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeNamedRow('tag',{},true));return;}
+    if(button.hasAttribute('data-delete-pir')){button.closest('[data-pir-row]').remove();return;}
+    if(button.hasAttribute('data-delete-team')){button.closest('[data-team-row]').remove();return;}
+    if(button.hasAttribute('data-delete-goal')){button.closest('[data-goal-row]').remove();return;}
+    if(button.hasAttribute('data-delete-tag')){button.closest('[data-tag-row]').remove();return;}
+    if(button.id==='saveData'){
+      button.disabled=true;
+      try{
+        await executePiDataCommand('/data',{method:'PUT',body:piDataFormPayload()},{confirm_cascade:true});
+        state.ui.dataEdit=false;save(false);render();
+      }catch(error){
+        if(!(error&&error.status===409))toast(error.message||'Backend не выполнил команду',{type:'warn',timeout:7000});
+        button.disabled=false;
+      }
+    }
+  };
+  root.onchange=event=>{
+    if(event.target.matches('.t-plan')){const lab=event.target.parentElement.querySelector('.switch-lab');if(lab)lab.textContent=event.target.checked?'Есть цель':'Нет цели';}
+    if(event.target.matches('.t-comp')){const dd=event.target.closest('.comp-dd'),chips=dd&&dd.querySelector('.dd-chips');if(!chips)return;const picked=[...dd.querySelectorAll('.t-comp:checked')].map(el=>el.dataset.c);chips.innerHTML=picked.map(code=>`<span class="comp-tag">${esc(code)}</span>`).join('')||'<span class="comp-cells-empty">выберите…</span>';}
+  };
 }
 
 /* =====================================================================
@@ -7580,12 +7724,10 @@ function enableDrag(scope,onDrop,targetSel,targetVal){
 })();
 async function boot(){
   loadState();
-  normalize();
   render();
   try{
     await loadCyclesFromApi();
-    await loadCycleSetups();
-    normalize();
+    await loadPiDataViews();
     cyclesApiReady=true;
     cyclesApiUnavailable=false;
   }catch(error){
@@ -7647,7 +7789,7 @@ async function boot(){
   render();
 }
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='hidden' && cyclesApiReady) flushCycleSync().catch(()=>{});
+  if(state.ui.mode!=='pi' || state.ui.tab==='data') return;
   if(document.visibilityState==='hidden' && backlogApiReady) flushBacklogSync().catch(()=>{});
   if(document.visibilityState==='hidden' && prePiApiReady) flushPrePiSync().catch(()=>{});
   if(document.visibilityState==='hidden' && goalsApiReady) flushGoalsSync().catch(()=>{});

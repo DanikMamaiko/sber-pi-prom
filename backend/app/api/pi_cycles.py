@@ -34,9 +34,22 @@ from app.schemas.pi_cycle import (
     InitiativeRead,
     OverviewRead,
     PiCycleCreate,
+    PiCycleDataCommand,
+    PiCycleDataRead,
+    PiCycleDataReplace,
+    PiCycleDataUpdate,
     PiCycleRead,
+    PiCycleTeamDataCreate,
+    PiCycleTeamDataUpdate,
+    PiCycleTeamDelete,
+    PiEventDataCreate,
+    PiEventDataUpdate,
+    PiGoalOptionDataCreate,
+    PiGoalOptionDataUpdate,
     PiCycleSetupRead,
     PiCycleSetupWrite,
+    PiTagDataCreate,
+    PiTagDataUpdate,
     PiCycleUpdate,
     PrePiRead,
     PrePiSubmitRead,
@@ -79,6 +92,24 @@ from app.services.program_board import read_program_board, replace_program_board
 from app.services.risks import read_risks, replace_risks
 from app.services.validation import cycle_team_context, normalized_effort
 from app.services.optimistic_locking import lock_backlog, lock_cycle
+from app.services.pi_cycle_data import (
+    CascadeRequired,
+    create_cycle_team,
+    create_goal_option,
+    create_pir,
+    create_tag,
+    delete_cycle_team,
+    delete_goal_option,
+    delete_pir,
+    delete_tag,
+    read_pi_cycle_data,
+    replace_pi_cycle_data,
+    update_cycle_data,
+    update_cycle_team,
+    update_goal_option,
+    update_pir,
+    update_tag,
+)
 
 
 router = APIRouter(tags=["PI Cycle"])
@@ -110,10 +141,42 @@ async def create_pi_cycle(payload: PiCycleCreate, session: AsyncSession = Depend
     if existing:
         return existing
     cycle = PiCycle(**payload.model_dump())
+    cycle.setup_initialized = True
     session.add(cycle)
     await session.commit()
     await session.refresh(cycle)
     return cycle
+
+
+@router.post(
+    "/pi-cycle-data",
+    response_model=PiCycleDataRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_pi_cycle_data(
+    payload: PiCycleCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await session.scalar(
+        select(PiCycle).where(PiCycle.year == payload.year, PiCycle.quarter == payload.quarter)
+    )
+    if cycle is None:
+        cycle = PiCycle(**payload.model_dump(), setup_initialized=True)
+        session.add(cycle)
+        await session.commit()
+        await session.refresh(cycle)
+    return await read_pi_cycle_data(session, cycle)
+
+
+async def _run_pi_data_command(session: AsyncSession, operation):
+    try:
+        return await operation
+    except CascadeRequired as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.detail)
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
 
 
 @router.patch("/pi-cycles/{cycle_id}", response_model=PiCycleRead)
@@ -152,6 +215,184 @@ async def put_pi_cycle_setup(
         return await replace_cycle_setup(session, cycle, payload)
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+
+
+@router.get("/pi-cycles/{cycle_id}/data", response_model=PiCycleDataRead)
+async def get_pi_cycle_data(
+    cycle_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await get_cycle_or_404(session, cycle_id)
+    return await read_pi_cycle_data(session, cycle)
+
+
+@router.patch("/pi-cycles/{cycle_id}/data", response_model=PiCycleDataRead)
+async def patch_pi_cycle_data(
+    cycle_id: uuid.UUID,
+    payload: PiCycleDataUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, update_cycle_data(session, cycle, payload))
+
+
+@router.put("/pi-cycles/{cycle_id}/data", response_model=PiCycleDataRead)
+async def put_pi_cycle_data(
+    cycle_id: uuid.UUID,
+    payload: PiCycleDataReplace,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, replace_pi_cycle_data(session, cycle, payload))
+
+
+@router.post("/pi-cycles/{cycle_id}/pirs", response_model=PiCycleDataRead)
+async def post_pi_cycle_pir(
+    cycle_id: uuid.UUID,
+    payload: PiEventDataCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, create_pir(session, cycle, payload))
+
+
+@router.patch("/pi-cycles/{cycle_id}/pirs/{pir_id}", response_model=PiCycleDataRead)
+async def patch_pi_cycle_pir(
+    cycle_id: uuid.UUID,
+    pir_id: uuid.UUID,
+    payload: PiEventDataUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, update_pir(session, cycle, pir_id, payload))
+
+
+@router.delete("/pi-cycles/{cycle_id}/pirs/{pir_id}", response_model=PiCycleDataRead)
+async def remove_pi_cycle_pir(
+    cycle_id: uuid.UUID,
+    pir_id: uuid.UUID,
+    payload: PiCycleDataCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, delete_pir(session, cycle, pir_id))
+
+
+@router.post("/pi-cycles/{cycle_id}/cycle-teams", response_model=PiCycleDataRead)
+async def post_pi_cycle_team(
+    cycle_id: uuid.UUID,
+    payload: PiCycleTeamDataCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, create_cycle_team(session, cycle, payload))
+
+
+@router.patch(
+    "/pi-cycles/{cycle_id}/cycle-teams/{cycle_team_id}",
+    response_model=PiCycleDataRead,
+)
+async def patch_pi_cycle_team(
+    cycle_id: uuid.UUID,
+    cycle_team_id: uuid.UUID,
+    payload: PiCycleTeamDataUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(
+        session,
+        update_cycle_team(session, cycle, cycle_team_id, payload),
+    )
+
+
+@router.delete(
+    "/pi-cycles/{cycle_id}/cycle-teams/{cycle_team_id}",
+    response_model=PiCycleDataRead,
+)
+async def remove_pi_cycle_team(
+    cycle_id: uuid.UUID,
+    cycle_team_id: uuid.UUID,
+    payload: PiCycleTeamDelete,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(
+        session,
+        delete_cycle_team(session, cycle, cycle_team_id, payload),
+    )
+
+
+@router.post("/pi-cycles/{cycle_id}/goal-options", response_model=PiCycleDataRead)
+async def post_pi_cycle_goal_option(
+    cycle_id: uuid.UUID,
+    payload: PiGoalOptionDataCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, create_goal_option(session, cycle, payload))
+
+
+@router.patch(
+    "/pi-cycles/{cycle_id}/goal-options/{option_id}",
+    response_model=PiCycleDataRead,
+)
+async def patch_pi_cycle_goal_option(
+    cycle_id: uuid.UUID,
+    option_id: uuid.UUID,
+    payload: PiGoalOptionDataUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(
+        session,
+        update_goal_option(session, cycle, option_id, payload),
+    )
+
+
+@router.delete(
+    "/pi-cycles/{cycle_id}/goal-options/{option_id}",
+    response_model=PiCycleDataRead,
+)
+async def remove_pi_cycle_goal_option(
+    cycle_id: uuid.UUID,
+    option_id: uuid.UUID,
+    payload: PiCycleDataCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, delete_goal_option(session, cycle, option_id))
+
+
+@router.post("/pi-cycles/{cycle_id}/tags", response_model=PiCycleDataRead)
+async def post_pi_cycle_tag(
+    cycle_id: uuid.UUID,
+    payload: PiTagDataCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, create_tag(session, cycle, payload))
+
+
+@router.patch("/pi-cycles/{cycle_id}/tags/{tag_id}", response_model=PiCycleDataRead)
+async def patch_pi_cycle_tag(
+    cycle_id: uuid.UUID,
+    tag_id: uuid.UUID,
+    payload: PiTagDataUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, update_tag(session, cycle, tag_id, payload))
+
+
+@router.delete("/pi-cycles/{cycle_id}/tags/{tag_id}", response_model=PiCycleDataRead)
+async def remove_pi_cycle_tag(
+    cycle_id: uuid.UUID,
+    tag_id: uuid.UUID,
+    payload: PiCycleDataCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(session, delete_tag(session, cycle, tag_id))
 
 
 @router.get("/pi-cycles/{cycle_id}/overview", response_model=OverviewRead)

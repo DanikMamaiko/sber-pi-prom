@@ -648,3 +648,209 @@ async def test_optimistic_locking_rejects_stale_cycle_and_backlog_updates(api_cl
     assert assert_ok(await api_client.get("/backlog-board"))["items"][0]["title"] == (
         "First backlog value"
     )
+
+
+@pytest.mark.asyncio
+async def test_pi_cycle_data_commands_return_canonical_server_view(api_client):
+    data = assert_ok(
+        await api_client.post(
+            "/pi-cycle-data",
+            json={
+                "year": 2031,
+                "quarter": "Q2",
+                "start_date": "2031-04-07",
+                "sprint_count": 2,
+            },
+        ),
+        201,
+    )
+    path = f"/pi-cycles/{data['cycle']['id']}"
+    assert data["cycle"]["setup_initialized"] is True
+    assert data["schedule"]["end_date"] == "2031-05-04"
+    assert data["schedule"]["total_workdays"] == 20
+    assert len(data["schedule"]["sprints"][0]["weeks"]) == 2
+    assert data["pirs"] == []
+
+    data = assert_ok(
+        await api_client.raw.post(
+            f"{path}/pirs",
+            json={
+                "expected_version": data["cycle"]["version"],
+                "name": "PIR 1",
+                "date": "2031-04-21",
+            },
+        )
+    )
+    pir_id = data["pirs"][0]["id"]
+    assert data["schedule"]["sprints"][1]["pirs"][0]["id"] == pir_id
+
+    data = assert_ok(
+        await api_client.raw.post(
+            f"{path}/cycle-teams",
+            json={
+                "expected_version": data["cycle"]["version"],
+                "tribe": "Data tribe",
+                "name": "Data team",
+                "team_type": "Agile",
+                "excluded_from_goals": False,
+                "competencies": ["sa", "DEV", "SA"],
+            },
+        )
+    )
+    assert data["teams"][0]["competencies"] == ["SA", "DEV"]
+
+    data = assert_ok(
+        await api_client.raw.post(
+            f"{path}/goal-options",
+            json={"expected_version": data["cycle"]["version"], "name": "Growth"},
+        )
+    )
+    data = assert_ok(
+        await api_client.raw.post(
+            f"{path}/tags",
+            json={"expected_version": data["cycle"]["version"], "name": "Client"},
+        )
+    )
+    version_before_bulk = data["cycle"]["version"]
+    stable_ids = {
+        "pir": data["pirs"][0]["id"],
+        "team": data["teams"][0]["id"],
+        "goal": data["goal_options"][0]["id"],
+        "tag": data["tags"][0]["id"],
+    }
+    data = assert_ok(
+        await api_client.raw.put(
+            f"{path}/data",
+            json={
+                "expected_version": version_before_bulk,
+                "start_date": "2031-04-07",
+                "sprint_count": 3,
+                "pirs": [
+                    {
+                        "id": stable_ids["pir"],
+                        "name": "PIR bulk",
+                        "date": "2031-04-22",
+                    }
+                ],
+                "teams": [
+                    {
+                        "id": stable_ids["team"],
+                        "tribe": "Data tribe",
+                        "name": "Data team renamed",
+                        "team_type": "Agile",
+                        "excluded_from_goals": True,
+                        "competencies": ["SA", "DEV"],
+                    }
+                ],
+                "goal_options": [{"id": stable_ids["goal"], "name": "Growth bulk"}],
+                "tags": [{"id": stable_ids["tag"], "name": "Client bulk"}],
+            },
+        )
+    )
+    assert data["cycle"]["version"] == version_before_bulk + 1
+    assert data["pirs"][0]["id"] == stable_ids["pir"]
+    assert data["teams"][0]["id"] == stable_ids["team"]
+    assert data["goal_options"][0]["id"] == stable_ids["goal"]
+    assert data["tags"][0]["id"] == stable_ids["tag"]
+    assert data["teams"][0]["excluded_from_goals"] is True
+    reloaded = assert_ok(await api_client.get(f"{path}/data"))
+    assert reloaded == data
+
+    rejected = await api_client.raw.patch(
+        f"{path}/pirs/{pir_id}",
+        json={
+            "expected_version": data["cycle"]["version"],
+            "name": "PIR outside",
+            "date": "2031-06-01",
+        },
+    )
+    assert rejected.status_code == 422
+    after_rejected = assert_ok(await api_client.get(f"{path}/data"))
+    assert after_rejected["cycle"]["version"] == data["cycle"]["version"]
+    assert after_rejected["pirs"][0]["name"] == "PIR bulk"
+
+
+@pytest.mark.asyncio
+async def test_pi_cycle_team_delete_requires_confirmation_and_cascades(api_client):
+    cycle = assert_ok(
+        await api_client.post(
+            "/pi-cycles",
+            json={
+                "year": 2031,
+                "quarter": "Q3",
+                "start_date": "2031-07-07",
+                "sprint_count": 2,
+            },
+        ),
+        201,
+    )
+    path = f"/pi-cycles/{cycle['id']}"
+    data = assert_ok(await api_client.get(f"{path}/data"))
+    data = assert_ok(
+        await api_client.raw.post(
+            f"{path}/cycle-teams",
+            json={
+                "expected_version": data["cycle"]["version"],
+                "tribe": "Cascade tribe",
+                "name": "Cascade team",
+                "competencies": ["SA"],
+            },
+        )
+    )
+    cycle_team_id = data["teams"][0]["id"]
+    capacity = assert_ok(
+        await api_client.put(
+            f"{path}/capacity",
+            json={
+                "teams": [
+                    {
+                        "tribe": "Cascade tribe",
+                        "team": "Cascade team",
+                        "members": [
+                            {
+                                "client_uid": "cascade-person",
+                                "full_name": "Person",
+                                "competency": "SA",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    risks = assert_ok(
+        await api_client.put(
+            f"{path}/risks-board",
+            json={
+                "risks": [
+                    {
+                        "client_uid": "cascade-risk",
+                        "scope": "team",
+                        "team": {"tribe": "Cascade tribe", "name": "Cascade team"},
+                        "description": "Risk",
+                    }
+                ]
+            },
+        )
+    )
+    assert capacity["teams"][0]["members"]
+    current_version = risks["version"]
+
+    confirmation = await api_client.raw.request(
+        "DELETE",
+        f"{path}/cycle-teams/{cycle_team_id}",
+        json={"expected_version": current_version, "confirm_cascade": False},
+    )
+    assert confirmation.status_code == 409
+    assert confirmation.json()["detail"]["code"] == "cascade_confirmation_required"
+
+    deleted = assert_ok(
+        await api_client.raw.request(
+            "DELETE",
+            f"{path}/cycle-teams/{cycle_team_id}",
+            json={"expected_version": current_version, "confirm_cascade": True},
+        )
+    )
+    assert deleted["teams"] == []
+    assert assert_ok(await api_client.get(f"{path}/capacity"))["teams"] == []
+    assert assert_ok(await api_client.get(f"{path}/risks-board"))["risks"] == []
