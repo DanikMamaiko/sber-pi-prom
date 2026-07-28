@@ -1,11 +1,8 @@
-from pathlib import Path
-
-
-FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "index.html"
+from _frontend_source import frontend_source
 
 
 def test_pi_business_data_is_not_persisted_in_browser_storage():
-    source = FRONTEND.read_text(encoding="utf-8")
+    source = frontend_source()
 
     assert "localStorage" not in source
     assert "const out={storageVersion:STORAGE_VERSION,ui:state.ui,budgets:state.budgets};" in source
@@ -13,7 +10,7 @@ def test_pi_business_data_is_not_persisted_in_browser_storage():
 
 
 def test_active_pi_data_boot_uses_backend_read_model_without_frontend_migration():
-    source = FRONTEND.read_text(encoding="utf-8")
+    source = frontend_source()
     boot = source[source.index("async function boot(){") : source.index("boot();", source.index("async function boot(){"))]
 
     assert "await loadPiDataViews();" in boot
@@ -25,7 +22,7 @@ def test_active_pi_data_boot_uses_backend_read_model_without_frontend_migration(
 
 
 def test_pi_data_legacy_implementations_cannot_return_to_active_bundle():
-    source = FRONTEND.read_text(encoding="utf-8")
+    source = frontend_source()
 
     forbidden_legacy_symbols = (
         "legacyViewData",
@@ -44,7 +41,7 @@ def test_pi_data_legacy_implementations_cannot_return_to_active_bundle():
 
 
 def test_active_pi_data_view_keeps_prototype_layout_contract():
-    source = FRONTEND.read_text(encoding="utf-8")
+    source = frontend_source()
     start = source.rindex("function viewData(){")
     view = source[start : source.index("function piDataFormPayload(){", start)]
 

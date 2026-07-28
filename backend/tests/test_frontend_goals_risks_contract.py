@@ -1,7 +1,4 @@
-from pathlib import Path
-
-
-FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "index.html"
+from _frontend_source import frontend_source
 
 
 def _last_function(source: str, name: str, next_name: str) -> str:
@@ -10,7 +7,7 @@ def _last_function(source: str, name: str, next_name: str) -> str:
 
 
 def test_goals_view_keeps_prototype_layout_with_backend_commands():
-    source = FRONTEND.read_text(encoding="utf-8")
+    source = frontend_source()
     view = _last_function(source, "viewGoals", "bindGoals")
     bind = _last_function(source, "bindGoals", "bindGoalRowDrag")
 
@@ -28,7 +25,7 @@ def test_goals_view_keeps_prototype_layout_with_backend_commands():
 
 
 def test_risks_view_keeps_prototype_navigation_and_fields():
-    source = FRONTEND.read_text(encoding="utf-8")
+    source = frontend_source()
     view = _last_function(source, "viewRisks", "bindRisks")
     bind = _last_function(source, "bindRisks", "riskPayloadFromModal")
     modal_start = source.rindex("function openRiskModal(riskId){")

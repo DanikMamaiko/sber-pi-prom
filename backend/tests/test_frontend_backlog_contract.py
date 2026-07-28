@@ -1,11 +1,8 @@
-from pathlib import Path
-
-
-FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "index.html"
+from _frontend_source import frontend_source
 
 
 def _source() -> str:
-    return FRONTEND.read_text(encoding="utf-8")
+    return frontend_source()
 
 
 def test_backlog_has_one_backend_read_model_and_no_browser_business_copy():

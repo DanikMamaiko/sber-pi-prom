@@ -1,18 +1,15 @@
-from pathlib import Path
-
-
-FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "index.html"
+from _frontend_source import frontend_source
 
 
 def pre_pi_source() -> str:
-    source = FRONTEND.read_text(encoding="utf-8")
+    source = frontend_source()
     start = source.index("ВКЛАДКА 2 — Pre PI Planning")
     end = source.index("ВКЛАДКА 2 — Цели", start)
     return source[start:end]
 
 
 def test_pre_pi_has_one_command_driven_frontend_implementation():
-    source = FRONTEND.read_text(encoding="utf-8")
+    source = frontend_source()
     section = pre_pi_source()
     for legacy in (
         "rolePlanTotal",
