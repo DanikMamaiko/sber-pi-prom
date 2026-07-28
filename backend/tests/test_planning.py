@@ -20,6 +20,7 @@ from app.schemas.pi_cycle import (
 )
 from app.services.planning import compute_sprints
 from app.services.capacity import calculate_member_capacity
+from app.services.pre_pi import _scope_metrics, validate_status_transition
 
 
 def test_compute_sprints_uses_two_week_periods():
@@ -257,6 +258,34 @@ def test_capacity_formula_matches_prototype():
     assert available == pytest.approx(2)
     assert sprints[0].vacation_days == 2
     assert sprints[0].extra_unavailable_days == 1
+
+
+def test_pre_pi_status_transitions_are_server_owned():
+    validate_status_transition("backlog", "planned")
+    validate_status_transition("planned", "on_board")
+    with pytest.raises(ValueError):
+        validate_status_transition("backlog", "done")
+    with pytest.raises(ValueError):
+        validate_status_transition("on_board", "backlog")
+
+
+def test_pre_pi_server_metrics_handle_zero_denominator_and_over_capacity():
+    metrics = _scope_metrics(
+        [
+            {
+                "team": "Команда Альфа",
+                "calendar_capacity": 10,
+                "available_capacity": 0,
+                "planned_effort": 3,
+                "available_by_competency": {"SA": 0},
+                "planned_by_competency": {"SA": 3},
+            }
+        ],
+        {"Команда Альфа": {"common": 2, "team": 1}},
+    )
+    assert metrics["over_capacity"] is True
+    assert metrics["competencies"]["SA"]["over_capacity"] is True
+    assert metrics["tech_agenda"]["total_percent"] is None
 
 
 def test_program_board_accepts_endpoints_and_relative_bend():

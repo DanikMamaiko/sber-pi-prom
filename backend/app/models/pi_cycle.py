@@ -353,6 +353,48 @@ class InitiativeExecutor(Base):
 
     initiative: Mapped[Initiative] = relationship(back_populates="executors")
     team: Mapped[Team] = relationship()
+    attraction_requests: Mapped[list["InitiativeAttraction"]] = relationship(
+        back_populates="executor", cascade="all, delete-orphan"
+    )
+
+
+class InitiativeAttraction(Base, TimestampMixin):
+    __tablename__ = "initiative_attractions"
+    __table_args__ = (
+        UniqueConstraint(
+            "executor_id",
+            "target_initiative_id",
+            "target_team_id",
+            "sprint_index",
+            name="uq_initiative_attraction_target",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    executor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("initiative_executors.id", ondelete="CASCADE"), nullable=False
+    )
+    target_initiative_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("initiatives.id", ondelete="CASCADE"), nullable=False
+    )
+    target_team_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("teams.id"), nullable=False
+    )
+    sprint_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    approval_status: Mapped[str] = mapped_column(
+        String(32), default="pending", nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    executor: Mapped[InitiativeExecutor] = relationship(
+        back_populates="attraction_requests"
+    )
+    target_initiative: Mapped[Initiative] = relationship(
+        foreign_keys=[target_initiative_id]
+    )
+    target_team: Mapped[Team] = relationship(foreign_keys=[target_team_id])
 
 
 class Story(Base, TimestampMixin):

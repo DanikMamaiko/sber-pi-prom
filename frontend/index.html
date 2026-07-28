@@ -934,9 +934,7 @@ let backlogApiReady=false;
 let backlogBoard=null;
 let lastBacklogSyncErrorAt=0;
 let prePiApiReady=false;
-let persistedPrePiSnapshots={};
-let prePiSyncTimer=null;
-let prePiSyncChain=Promise.resolve();
+let prePiViews={};
 let lastPrePiSyncErrorAt=0;
 let goalsApiReady=false;
 let persistedGoalsSnapshots={};
@@ -1128,7 +1126,6 @@ function save(syncCycles=true){
   // синхронизация зависимых агрегатов дала бы ложные 422 и могла бы затереть
   // незавершённый ввод ответом от более раннего запроса.
   if(syncCycles && state.ui.mode==='pi' && state.ui.tab!=='data'){
-    if(prePiApiReady) queuePrePiSync();
     if(goalsApiReady) queueGoalsSync();
     if(teamBoardsApiReady) queueTeamBoardsSync();
     if(capacityApiReady) queueCapacitySync();
@@ -1354,70 +1351,22 @@ function reportBacklogSyncError(error){
 async function loadBacklogBoard(){
   applyBacklogBoard(await cycleApi('/backlog-board'));
 }
-function prePiPayload(id,c){
-  ensureCycleShape(c);
-  return {initiatives:(c.issues||[]).map((it,sortOrder)=>{
-    const owner=String(it.owner||'').trim();
-    const ownerTeam=(c.pi.teams||[]).find(t=>t.name===owner);
-    return {
-      id:it._backendId||null,
-      issue_key:String(it.id||'').trim(),
-      title:String(it.name||''),
-      description:String(it.description||''),
-      product:String(it.product||''),
-      owner_team:owner,
-      owner_tribe:ownerTeam ? String(ownerTeam.tribe||'') : '',
-      initiative_type:String(it.type||''),
-      status:String(it.status||(it.onBoard?'on_board':it.prePlanned?'planned':'backlog')),
-      goal_text:String(it.cel||''),
-      metric:String(it.metric||''),
-      current_value:String(it.fact||''),
-      target_value:String(it.plan||''),
-      hypothesis:String(it.hypo||''),
-      redesign:String(it.redesign||''),
-      customer_priority:String(it.custPrio||''),
-      team_priority:String(it.teamPrio||''),
-      estimate:String(it.estimate||''),
-      comment:String(it.comment||''),
-      pre_planned:!!it.prePlanned,
-      on_board:!!it.onBoard,
-      agreed:!!it.agreed,
-      tags:normalizeTags(it.tags),
-      sprint_index:Number.isInteger(it.sprint)?it.sprint:null,
-      week_index:Number.isInteger(it.week)?it.week:null,
-      sort_order:sortOrder,
-      executors:(Array.isArray(it.executors)?it.executors:[])
-        .filter(ex=>String(ex.team||'').trim())
-        .map((ex,executorOrder)=>{
-          const team=String(ex.team||'').trim();
-          const teamRow=(c.pi.teams||[]).find(t=>t.name===team);
-          return {
-            team,
-            tribe:teamRow ? String(teamRow.tribe||'') : '',
-            effort_by_competency:ex.comps&&typeof ex.comps==='object'?ex.comps:{},
-            attractions:(ex.attractions||[])
-              .filter(a=>String(a.id||'').trim())
-              .map(a=>({
-                issue_key:String(a.id).trim(),
-                team:String(a.team||''),
-                sprint_index:Number.isInteger(a.sprint)?a.sprint:null,
-              })),
-            sort_order:executorOrder,
-          };
-        }),
-    };
-  }).filter(row=>row.issue_key)};
-}
-function prePiSnapshotHash(id,c){ return stablePayloadHash(prePiPayload(id,c)); }
 function prePiIssueFromApi(row,prior){
   const it=prior||{};
   const executors=(row.executors||[]).map(ex=>({
+    _backendId:ex.id,
+    teamId:ex.team_id,
     team:ex.team,
     comps:ex.effort_by_competency||{},
     attractions:(ex.attractions||[]).map(a=>({
+      _backendId:a.id,
+      targetInitiativeId:a.target_initiative_id,
+      targetTeamId:a.target_team_id,
       id:a.issue_key,
       team:a.team||'',
       sprint:a.sprint_index===null||a.sprint_index===undefined?null:+a.sprint_index,
+      status:a.approval_status||'pending',
+      visualState:a.visual_state||'purple',
     })),
   }));
   Object.assign(it,{
@@ -1447,10 +1396,14 @@ function prePiIssueFromApi(row,prior){
     tags:Array.isArray(row.tags)?row.tags:[],
     sprint:row.sprint_index===null||row.sprint_index===undefined?null:+row.sprint_index,
     week:row.week_index===null||row.week_index===undefined?null:+row.week_index,
+    sortOrder:+row.sort_order||0,
+    totalEstimate:+row.total_estimate||0,
+    allowedActions:Array.isArray(row.allowed_actions)?row.allowed_actions:[],
+    requiredFields:Array.isArray(row.required_fields)?row.required_fields:[],
   });
   return it;
 }
-function applyPrePi(c,aggregate){
+function applyPrePi(c,aggregate,id=currentCycleId()){
   const priorById={},priorByKey={};
   (c.issues||[]).forEach(it=>{
     if(it._backendId) priorById[it._backendId]=it;
@@ -1458,17 +1411,16 @@ function applyPrePi(c,aggregate){
   });
   c.issues=(aggregate.initiatives||[]).map(row=>
     prePiIssueFromApi(row,priorById[row.id]||priorByKey[String(row.issue_key).toLowerCase()]));
-}
-function applyPrePiIdentity(c,aggregate){
-  const byKey={};
-  (c.issues||[]).forEach(it=>{if(it.id)byKey[String(it.id).toLowerCase()]=it;});
-  (aggregate.initiatives||[]).forEach(row=>{
-    const it=byKey[String(row.issue_key).toLowerCase()];
-    if(it) it._backendId=row.id;
-  });
+  if(id){
+    prePiViews[id]=aggregate;
+    if(Number.isInteger(aggregate.version)){
+      cycleVersions[id]=aggregate.version;
+      if(piDataViews[id]&&piDataViews[id].cycle)piDataViews[id].cycle.version=aggregate.version;
+    }
+  }
 }
 function reportPrePiSyncError(error){
-  console.error('Pre PI API sync failed',error);
+  console.error('Pre PI API command failed',error);
   if(reportOptimisticConflict(error))return;
   const now=Date.now();
   if(now-lastPrePiSyncErrorAt>5000 && typeof toast==='function'){
@@ -1476,40 +1428,21 @@ function reportPrePiSyncError(error){
     toast('Не удалось сохранить Pre PI Planning в backend.',{type:'warn',timeout:5000});
   }
 }
-async function persistPrePiCycle(id,force=false){
-  const c=state.cycles[id]; if(!c)return;
-  if(!cycleBackendIds[id]) await persistCycle(id);
-  const hash=prePiSnapshotHash(id,c);
-  if(!force && persistedPrePiSnapshots[id]===hash)return;
-  const aggregate=await cycleMutation(id,`/pi-cycles/${cycleBackendIds[id]}/pre-pi`,{
-    method:'PUT',body:prePiPayload(id,c),
-  });
-  applyPrePiIdentity(c,aggregate);
-  persistedPrePiSnapshots[id]=prePiSnapshotHash(id,c);
-}
-async function syncAllPrePi(){
-  for(const id of Object.keys(state.cycles||{})) await persistPrePiCycle(id);
-}
-function runPrePiSync(){
-  const run=prePiSyncChain.then(syncAllPrePi);
-  prePiSyncChain=run.catch(reportPrePiSyncError);
-  return run;
-}
-function queuePrePiSync(){
-  clearTimeout(prePiSyncTimer);
-  prePiSyncTimer=setTimeout(()=>{prePiSyncTimer=null;runPrePiSync().catch(()=>{});},350);
-}
-function flushPrePiSync(){
-  if(prePiSyncTimer){clearTimeout(prePiSyncTimer);prePiSyncTimer=null;}
-  return runPrePiSync();
+async function prePiCommand(path,method='POST',body={}){
+  const id=currentCycleId(), backendId=id&&cycleBackendIds[id];
+  if(!id||!backendId||!prePiViews[id])throw new Error('Pre PI ещё не загружен');
+  const result=await cycleMutation(id,`/pi-cycles/${backendId}/pre-pi${path}`,{method,body});
+  applyPrePi(state.cycles[id],result,id);
+  activateCycle(id);
+  render();
+  return result;
 }
 async function loadPrePiCycles(){
-  persistedPrePiSnapshots={};
+  prePiViews={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id]; if(!backendId)continue;
     const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/pre-pi`);
-    applyPrePi(state.cycles[id],aggregate);
-    persistedPrePiSnapshots[id]=prePiSnapshotHash(id,state.cycles[id]);
+    applyPrePi(state.cycles[id],aggregate,id);
   }
   // applyPrePi заменяет массив c.issues. Обновляем активную ссылку state.issues,
   // чтобы удаление и новый порядок с backend были видны сразу, без смены вкладки.
@@ -1914,7 +1847,6 @@ async function syncAllCapacity(){
 }
 function runCapacitySync(){
   const run=capacitySyncChain.then(async()=>{
-    if(prePiApiReady)await flushPrePiSync();
     await syncAllCapacity();
   });
   capacitySyncChain=run.catch(reportCapacitySyncError);
@@ -2174,335 +2106,8 @@ function cleanIssueTags(){
     i.tags=normalizeTags(i.tags).filter(t=>allowed.includes(t));
   });
 }
-// Нормализация/миграции применяются к КАЖДОМУ PI-циклу по очереди: активируем цикл
-// (state.pi/issues/… указывают на него) и прогоняем через normalizeCycle().
-function normalize(){
-  if(!state.cycles) migrateToCycles();
-  if(!state.ui) state.ui=structuredClone(defaultState.ui);
-  if(!('mode' in state.ui)) state.ui.mode=null;
-  if(!('landingYear' in state.ui)) state.ui.landingYear=2026;
-  if(!('budgetYear' in state.ui)) state.ui.budgetYear=null;
-  if(!('budgetTab' in state.ui)) state.ui.budgetTab='budgetData';
-  if(!('budgetScopeTribe' in state.ui)) state.ui.budgetScopeTribe=null;
-  if(!('budgetScopeTeam' in state.ui)) state.ui.budgetScopeTeam=null;
-  if(!Array.isArray(state.ui.budgetStatuses)) state.ui.budgetStatuses=['Одобрена','На рассмотрении'];
-  if(!('budgetEffectOpen' in state.ui)) state.ui.budgetEffectOpen=false;
-  if(!('budgetEffectKey' in state.ui)) state.ui.budgetEffectKey=null;
-  if(!('budgetAssessMode' in state.ui)) state.ui.budgetAssessMode='vadarod';
-  if(!('budgetVadarodView' in state.ui)) state.ui.budgetVadarodView='tribe';
-  if(!('budgetCompositionDate' in state.ui)) state.ui.budgetCompositionDate=null;
-  if(!state.budgets || typeof state.budgets!=='object') state.budgets={};
-  Object.keys(state.budgets).forEach(y=>{ state.budgets[y]=ensureBudgetShape(state.budgets[y]); });
-  const keep=currentCycleId();
-  Object.keys(state.cycles).forEach(id=>{
-    activateCycle(id);
-    normalizeCycle();
-  });
-  if(keep && state.cycles[keep]) activateCycle(keep);
-}
-function normalizeCycle(){
-  delete state.ui.connectMode; delete state.ui.connectFrom;
-  if(!('teamsTribe' in state.ui)) state.ui.teamsTribe=null;
-  if(!('selectedArrow' in state.ui)) state.ui.selectedArrow=null;
-  if(!('pbOwnerFilter' in state.ui)) state.ui.pbOwnerFilter=null;
-  if(!('pbExecutorFilter' in state.ui)) state.ui.pbExecutorFilter=null;
-  if(!('boardLayout' in state.ui)) state.ui.boardLayout='columns';
-  if(!('boardWeeks' in state.ui)) state.ui.boardWeeks=false;
-  if(!('showEffortFio' in state.ui)) state.ui.showEffortFio=false;
-  if(!('prepTribe' in state.ui)) state.ui.prepTribe=null;
-  if(!('prepSel' in state.ui)) state.ui.prepSel=null;
-  if(!('prepTeamFilter' in state.ui)) state.ui.prepTeamFilter=null;
-  if(!('backlogTribe' in state.ui)) state.ui.backlogTribe=null;
-  if(!('backlogTeamFilter' in state.ui)) state.ui.backlogTeamFilter=null;
-  if(!('backlogQuarter' in state.ui)) state.ui.backlogQuarter=null;
-  if(!('backlogYear' in state.ui)) state.ui.backlogYear=null;
-  if(!state.ui.colFilters || typeof state.ui.colFilters!=='object') state.ui.colFilters={};
-  if(!state.ui.colSort || typeof state.ui.colSort!=='object') state.ui.colSort={};
-  // справочник целей PI (единый список)
-  if(!Array.isArray(state.pi.goals)) state.pi.goals=[];
-  // справочник тэгов стикеров (единый список для текущего PI-цикла)
-  state.pi.tags=normalizeTags(state.pi.tags);
-  // одноразовый досев целей по умолчанию в существующие циклы (потом их можно удалить крестиком)
-  if(!state.meta) state.meta={};
-  if(!state.meta.defaultGoalsSeeded){
-    const missing=DEFAULT_PI_GOALS.filter(g=>!state.pi.goals.includes(g));
-    if(missing.length) state.pi.goals=[...missing,...state.pi.goals];
-    state.meta.defaultGoalsSeeded=true;
-  }
-  // риски
-  if(!state.risks) state.risks={general:[],teams:{}};
-  if(!Array.isArray(state.risks.general)) state.risks.general=[];
-  if(!state.risks.teams || typeof state.risks.teams!=='object') state.risks.teams={};
-  if(!('riskView' in state.ui)) state.ui.riskView='general';
-  if(!('riskTribe' in state.ui)) state.ui.riskTribe=null;
-  if(!('riskTeam' in state.ui)) state.ui.riskTeam=null;
-  // тип команды: Agile (по умолчанию) / ИТ-проект; компетенции команды
-  (state.pi.teams||[]).forEach(t=>{
-    if(!('type' in t)) t.type='Agile';
-    if(!Array.isArray(t.comps) || !t.comps.length) t.comps=defaultCompsFor(t.name);
-  });
-  // миграция полей issue (Pre PI Planning)
-  (state.issues||[]).forEach(i=>{
-    if(!('prePlanned' in i)) i.prePlanned = i.sprint!==null && i.sprint!==undefined; // взятые в спринт считаем запланированными
-    if(!('onBoard' in i))    i.onBoard = true;            // прежние демо-issue уже на доске
-    if(!('agreed' in i))     i.agreed = false;
-    if(!Array.isArray(i.attractions)) i.attractions=[];
-    // привлечения: миграция строк-id в объекты {id, sprint}
-    i.attractions=i.attractions.map(a=> typeof a==='string' ? {id:a, sprint:null} : a);
-    if(!('custPrio' in i)) i.custPrio='';   // Приоритет заказчика (ручное)
-    if(!('teamPrio' in i)) i.teamPrio='';   // Приоритет трайба/команды (ручное)
-    i.tags=normalizeTags(i.tags).filter(t=>state.pi.tags.includes(t));
-    // модель компетенций: executors[] вместо жёстких sa/dev/qa
-    migrateIssueExecutors(i);
-    // привлечения теперь привязаны к конкретному исполнителю (executor.attractions)
-    i.executors.forEach(e=>{ if(!Array.isArray(e.attractions)) e.attractions=[]; });
-    if(Array.isArray(i.attractions) && i.attractions.length && i.executors[0]){
-      i.executors[0].attractions=i.executors[0].attractions.concat(i.attractions);
-    }
-    i.attractions=[];
-    ['name','cel','metric','fact','plan','hypo','redesign','estimate','product'].forEach(k=>{ if(!(k in i)) i[k]=''; });
-    // Единая таблица Pre PI для Agile и «ИТ-проект»: прежние ИТ-поля переезжают в общие.
-    // Веха ИТ-проекта → «Цель/Веха» (cel, вводится вручную), Метрика ИТ-проекта → Метрика,
-    // Значение → TO BE (прогноз). Отдельных ИТ-столбцов больше нет.
-    migrateItFields(i);
-    // базлайн трудозатрат «из Jira»: существующие значения считаем подтянутыми из Jira,
-    // чтобы отличать их от внесённых/изменённых вручную (подсветка на Pre PI Planning)
-    if(!('jira' in i)) i.jira={sa:(+i.sa||0), dev:(+i.dev||0), qa:(+i.qa||0)};
-    // слой «Историй» (бледно-зелёные стикеры) между задачей и белыми подзадачами.
-    // Белая подзадача с непустым storyUid принадлежит Истории, иначе — напрямую задаче.
-    if(!Array.isArray(i.stories)) i.stories=[];
-    (i.stories||[]).forEach(sy=>{ if(!sy.comps || typeof sy.comps!=='object') sy.comps={SA:+sy.sa||0,DEV:+sy.dev||0,QA:+sy.qa||0}; });
-    (i.subtasks||[]).forEach(st=>{ if(!st.uid) st.uid=uid(); });
-  });
-  // строки вкладки «Цели» — те же ИТ-поля переезжают в общие
-  Object.values(state.goals||{}).forEach(rows=>rows.forEach(g=>migrateItFields(g)));
-  // миграция полей ёмкости
-  Object.values(state.capacity||{}).forEach(rows=>rows.forEach(p=>{
-    if(!p.uid) p.uid=uid();
-    if(!('rate' in p)) p.rate=1;
-    if(!('extraUnavailable' in p)) p.extraUnavailable='';
-    if(!('ceremonyPct' in p)) p.ceremonyPct=0;
-    if(!('riskPct' in p)) p.riskPct=0;
-    if(!('efficiency' in p)) p.efficiency='';
-  }));
-  // одноразовый демо-пул для команды СБОЛ (показывает разделение задач/декомпозиции)
-  if(!state.meta) state.meta={};
-  if(!state.meta.sbolDemo){ state.meta.sbolDemo=true; seedSbolDemo(); save(); }
-  // идемпотентный демо-сид инициатив тех. повестки СБОЛ (досеивается и в существующей сессии)
-  seedSbolTechAgenda();
-  // идемпотентный демо-сид задачи со слоем «Историй» (задача → зелёные Истории → белые)
-  seedSbolStoryDemo();
-  // идемпотентный демо-сид команды типа «ИТ-проект» (ML 360)
-  seedMl360Demo();
-  // идемпотентный демо-сид Pre PI для команды СБОЛ (наглядный пример матрицы компетенций)
-  seedSbolPrepDemo();
-  // Единый список связей (рёбер). Один стикер может иметь сколько угодно связей.
-  // Одноразовая миграция из старой модели «одна стрелка на подзадачу» (st.arrow).
-  if(!Array.isArray(state.connections)){
-    state.connections=[];
-    (state.issues||[]).forEach(i=>(i.subtasks||[]).forEach(st=>{
-      if(st.arrow && st.arrow.from && st.arrow.to){
-        state.connections.push({id:newConnId(), from:st.arrow.from, to:st.arrow.to});
-      }else if(!st.noArrow){
-        // дефолтная связь декомпозиции: белый стикер → его цветной родитель
-        state.connections.push({id:newConnId(), from:{kind:'w',uid:st.uid}, to:{kind:'c',id:i.id}});
-      }
-      delete st.arrow; delete st.noArrow;
-    }));
-    save();
-  }
-  // финальный проход: гарантировать модель компетенций и на досеянных демо-инициативах
-  (state.issues||[]).forEach(i=>{
-    if(!Array.isArray(i.executors)) migrateIssueExecutors(i);
-    if(!('custPrio' in i)) i.custPrio='';
-    if(!('teamPrio' in i)) i.teamPrio='';
-    if(!Array.isArray(i.attractions)) i.attractions=[];
-    i.attractions=i.attractions.map(a=> typeof a==='string' ? {id:a, sprint:null} : a);
-    i.executors.forEach(e=>{ if(!Array.isArray(e.attractions)) e.attractions=[]; });
-    if(i.attractions.length && i.executors[0]){ i.executors[0].attractions=i.executors[0].attractions.concat(i.attractions); i.attractions=[]; }
-    (i.stories||[]).forEach(sy=>{ if(!sy.comps || typeof sy.comps!=='object') sy.comps={SA:+sy.sa||0,DEV:+sy.dev||0,QA:+sy.qa||0}; });
-  });
-}
+// Идентификатор новой связи создаётся только для пользовательской команды.
 function newConnId(){ return 'cn_'+uid(); }
-// Идемпотентный демо-сид Pre PI (верхний/нижний блок) для команды СБОЛ.
-function seedSbolPrepDemo(){
-  if(!state.pi.teams || !state.pi.teams.some(t=>t.name==='СБОЛ')) return;
-  const base=(o)=>Object.assign({
-    cel:'',metric:'',fact:'',plan:'',hypo:'',redesign:'',product:'',
-    custPrio:'',teamPrio:'',comment:'',sprint:null,onBoard:false,agreed:false,
-    attractions:[],subtasks:[],stories:[]
-  },o);
-  const add=(iss)=>{ if(!findIssue(iss.id)) state.issues.push(base(iss)); };
-  add({id:'SBOL-4001', owner:'СБОЛ', executor:'СБОЛ',
-    executors:[{team:'СБОЛ',comps:{SA:3,FE:6,DES:4,BE:2}}],
-    name:'Биометрия входа', type:'Развитие функционала', product:'Мобильный банк',
-    custPrio:'1', teamPrio:'1', prePlanned:true});
-  add({id:'SBOL-4002', owner:'СБОЛ', executor:'СБОЛ',
-    executors:[{team:'СБОЛ',comps:{SA:2,FE:4}},{team:'Модуль расчетов',comps:{SA:1,DEV:3,QA:1}}],
-    name:'История операций', type:'Доработка', product:'Мобильный банк',
-    custPrio:'2', teamPrio:'3', prePlanned:false});
-}
-// Идемпотентный демо-сид: инициативы тех. повестки для команды СБОЛ (общая/командная).
-// Добавляются по id (findIssue), поэтому досеиваются даже в уже сохранённой сессии
-// и не дублируются при повторном вызове. Нужны для демонстрации блока «Тех.повестка».
-function seedSbolTechAgenda(){
-  if(!state.pi.teams || !state.pi.teams.some(t=>t.name==='СБОЛ')) return;
-  const defs=[
-    {id:'SBOL-2005', type:TECH_TYPE_COMMON, name:'Обновление платформенных библиотек', sa:1,dev:6,qa:2, sprint:1},
-    {id:'SBOL-2007', type:TECH_TYPE_COMMON, name:'Переход на новую версию сборочного конвейера', sa:2,dev:4,qa:1, sprint:3},
-    {id:'SBOL-2006', type:TECH_TYPE_TEAM,   name:'Устранение технического долга витрины', sa:0,dev:4,qa:1, sprint:2},
-    {id:'SBOL-2008', type:TECH_TYPE_TEAM,   name:'Рефакторинг модуля уведомлений', sa:1,dev:3,qa:1, sprint:4},
-  ];
-  let added=0;
-  defs.forEach(d=>{
-    if(findIssue(d.id)) return;
-    state.issues.push({id:d.id, owner:'СБОЛ', executor:'СБОЛ', type:d.type,
-      name:d.name, cel:'', metric:'', fact:'', plan:'', hypo:'', redesign:'',
-      sa:d.sa, dev:d.dev, qa:d.qa, comment:'', sprint:d.sprint,
-      jira:{sa:d.sa,dev:d.dev,qa:d.qa},
-      prePlanned:true, onBoard:true, agreed:false, attractions:[], subtasks:[]});
-    added++;
-  });
-  if(added) save();
-}
-// Идемпотентный демо-сид: команда типа «ИТ-проект» — ML 360 (трайб «Технологии»).
-// Таблица Pre PI у неё та же, что у Agile-команд: веха вписывается вручную в «Цель/Веха»,
-// метрика заполняется, AS IS / TO BE / Гипотезы / Редизайн — необязательны (в демо частично пустые).
-// Досеивается в демо-цикл (где есть СБОЛ) и не дублируется (findIssue по id).
-function seedMl360Demo(){
-  // сеем только в демо-цикл, чтобы не засорять пустые пользовательские кварталы
-  if(!state.pi.teams || !state.pi.teams.some(t=>t.name==='СБОЛ')) return;
-  if(!state.pi.teams.some(t=>t.name==='ML 360')){
-    state.pi.teams.push({tribe:'Технологии', name:'ML 360', excluded:false, type:'ИТ-проект',
-      comps:defaultCompsFor('ML 360')});
-  }
-  // cel — веха проекта (ручной ввод), metric/plan — метрика и её целевое значение.
-  const defs=[
-    {id:'ML360-1001', prePlanned:true,  cel:'MVP модели',                name:'Сбор и разметка обучающего датасета', metric:'Полнота датасета', fact:'40%',  plan:'80%',    product:'ML-платформа', comps:{SA:3,DEV:6,QA:2}},
-    {id:'ML360-1002', prePlanned:true,  cel:'MVP модели',                name:'Обучение baseline-модели',            metric:'ROC-AUC',          fact:'0.71', plan:'0.82',   product:'ML-платформа', comps:{SA:2,DEV:8,QA:2}},
-    {id:'ML360-1003', prePlanned:true,  cel:'Промышленная эксплуатация', name:'Сервис онлайн-инференса',             metric:'p95 задержки',     fact:'',     plan:'120 мс', product:'ML-платформа', comps:{SA:2,DEV:7,QA:3}},
-    {id:'ML360-2001', prePlanned:false, cel:'',                          name:'Мониторинг дрейфа данных',            metric:'',                 fact:'',     plan:'',       product:'ML-платформа', comps:{SA:1,DEV:4,QA:1}},
-    {id:'ML360-2002', prePlanned:false, cel:'',                          name:'A/B-тест новой версии модели',        metric:'',                 fact:'',     plan:'',       product:'ML-платформа', comps:{SA:1,DEV:3,QA:2}},
-  ];
-  let added=0;
-  defs.forEach(d=>{
-    if(findIssue(d.id)) return;
-    state.issues.push({id:d.id, owner:'ML 360', executor:'ML 360', type:'',
-      name:d.name, cel:d.cel, metric:d.metric, fact:d.fact, plan:d.plan, hypo:'', redesign:'',
-      product:d.product, custPrio:'', teamPrio:'',
-      executors:[{team:'ML 360', comps:{...d.comps}, attractions:[]}],
-      comment:'', sprint:d.prePlanned?0:null,
-      prePlanned:d.prePlanned, onBoard:false, agreed:false, attractions:[], stories:[], subtasks:[]});
-    added++;
-  });
-  // демо-цели: плановые инициативы ML 360 (как будто уже отправлены на доски),
-  // чтобы на вкладке «Цели» сразу была видна группировка по вехам ИТ-проекта.
-  const gkey='Технологии'+'||'+'ML 360'; // формат teamKey (объявлен ниже — избегаем TDZ в normalize)
-  if(!state.goals[gkey]) state.goals[gkey]=[];
-  const existG=new Set(state.goals[gkey].map(g=>g.initNum));
-  defs.filter(d=>d.prePlanned).forEach(d=>{
-    if(existG.has(d.id)) return;
-    state.goals[gkey].push({cel:d.cel, product:d.product, initNum:d.id, init:d.name,
-      metric:d.metric, fact:d.fact, plan:d.plan, hypo:'', redesign:''});
-    added++;
-  });
-  if(added) save();
-}
-// Идемпотентный демо-сид: задача СБОЛ, декомпозированная через слой «Историй».
-// Задача (голубая) → две Истории (зелёные) → белые подзадачи. Показывает вариант 2:
-//   Главная задача → зелёные стикеры → белые стикеры. Досеивается и в существующей сессии.
-function seedSbolStoryDemo(){
-  if(!state.pi.teams || !state.pi.teams.some(t=>t.name==='СБОЛ')) return;
-  if(findIssue('SBOL-2010')) return;
-  state.issues.push({
-    id:'SBOL-2010', owner:'СБОЛ', executor:'СБОЛ', type:'Доработка',
-    name:'Личный кабинет: раздел «История заявок»', cel:'', metric:'', fact:'', plan:'', hypo:'', redesign:'',
-    sa:1, dev:5, qa:2, comment:'', sprint:2,
-    jira:{sa:1,dev:5,qa:2}, prePlanned:true, onBoard:true, agreed:false, attractions:[],
-    stories:[
-      {uid:'sbst_s1', id:'SBOL-2010-S1', name:'Бэкенд истории заявок', sa:1, dev:3, qa:1, sprint:1},
-      {uid:'sbst_s2', id:'SBOL-2010-S2', name:'Витрина и фильтры',      sa:0, dev:2, qa:1, sprint:3},
-    ],
-    subtasks:[
-      // белые под Историей S1
-      {uid:'sbst_w1', storyUid:'sbst_s1', fio:'Орлов',   role:'SA',  cap:1, sprint:1},
-      {uid:'sbst_w2', storyUid:'sbst_s1', fio:'Зайцев',  role:'DEV', cap:3, sprint:2},
-      {uid:'sbst_w3', storyUid:'sbst_s1', fio:'Волкова', role:'QA',  cap:1, sprint:2},
-      // белые под Историей S2
-      {uid:'sbst_w4', storyUid:'sbst_s2', fio:'Морозов', role:'DEV', cap:2, sprint:3},
-      {uid:'sbst_w5', storyUid:'sbst_s2', fio:'Волкова', role:'QA',  cap:1, sprint:3},
-    ],
-  });
-  save();
-}
-// Демо-пул СБОЛ: 4 задачи разных статусов, разнесённые по спринтам, с богатой
-// декомпозицией и стрелками порядка (SA→DEV→DEV) — чтобы продемонстрировать,
-// как цвета, группировка и фокус разделяют задачи на доске.
-function seedSbolDemo(){
-  if(!state.pi.teams.some(t=>t.name==='СБОЛ'))
-    state.pi.teams.push({tribe:'Розничный бизнес',name:'СБОЛ',excluded:false});
-  const teamObj=state.pi.teams.find(t=>t.name==='СБОЛ');
-  const tribe=teamObj?teamObj.tribe:'Розничный бизнес';
-  const key=tribe+'||СБОЛ';
-  if(!state.capacity[key] || !state.capacity[key].length){
-    state.capacity[key]=[
-      {fio:'Орлов',  role:'SA', vacation:'', ceremonyPct:5, riskPct:10},
-      {fio:'Зайцев', role:'DEV',vacation:'', ceremonyPct:5, riskPct:10},
-      {fio:'Морозов',role:'DEV',vacation:'', ceremonyPct:5, riskPct:10},
-      {fio:'Волкова',role:'QA', vacation:'', ceremonyPct:5, riskPct:5},
-    ];
-  }
-  if(state.issues.some(i=>String(i.id).startsWith('SBOL-'))) return;
-  const W=(uid,fio,role,cap,sprint,arrow)=>({uid,fio,role,cap,sprint,...(arrow?{arrow}:{})});
-  const demo=[
-    // своя задача (голубая)
-    {id:'SBOL-2001', owner:'СБОЛ', executor:'СБОЛ', type:'Доработка',
-     name:'Витрина истории операций', metric:'', fact:'', plan:'', hypo:'', redesign:'',
-     sa:3, dev:7, qa:2, comment:'', sprint:2, prePlanned:true, onBoard:true, agreed:false, attractions:[],
-     subtasks:[
-       W('sb1_a1','Орлов','SA',3,0),
-       W('sb1_a2','Зайцев','DEV',4,1,{from:{kind:'w',uid:'sb1_a1'},to:{kind:'w',uid:'sb1_a2'}}),
-       W('sb1_a3','Морозов','DEV',3,2,{from:{kind:'w',uid:'sb1_a2'},to:{kind:'w',uid:'sb1_a3'}}),
-       W('sb1_a4','Волкова','QA',2,2),
-     ]},
-    // своя задача (голубая)
-    {id:'SBOL-2002', owner:'СБОЛ', executor:'СБОЛ', type:'Интеграция',
-     name:'Пуш-уведомления по платежам', metric:'', fact:'', plan:'', hypo:'', redesign:'',
-     sa:2, dev:5, qa:1, comment:'', sprint:3, prePlanned:true, onBoard:true, agreed:false, attractions:[],
-     subtasks:[
-       W('sb2_b1','Орлов','SA',2,1),
-       W('sb2_b2','Зайцев','DEV',5,2,{from:{kind:'w',uid:'sb2_b1'},to:{kind:'w',uid:'sb2_b2'}}),
-       W('sb2_b3','Волкова','QA',1,3),
-     ]},
-    // привлечение, не согласовано (фиолетовая)
-    {id:'SBOL-2003', owner:'Расчеты', executor:'СБОЛ', type:'Доработка',
-     name:'Обмен данными с расчётным модулем', metric:'', fact:'', plan:'', hypo:'', redesign:'',
-     sa:3, dev:7, qa:2, comment:'', sprint:4, prePlanned:true, onBoard:true, agreed:false, attractions:[],
-     subtasks:[
-       W('sb3_c1','Орлов','SA',3,2),
-       W('sb3_c2','Морозов','DEV',4,3,{from:{kind:'w',uid:'sb3_c1'},to:{kind:'w',uid:'sb3_c2'}}),
-       W('sb3_c3','Зайцев','DEV',3,4,{from:{kind:'w',uid:'sb3_c2'},to:{kind:'w',uid:'sb3_c3'}}),
-       W('sb3_c4','Волкова','QA',2,4),
-     ]},
-    // привлечение согласовано (красная)
-    {id:'SBOL-2004', owner:'Модуль расчетов', executor:'СБОЛ', type:'Доработка',
-     name:'Единый профиль клиента', metric:'', fact:'', plan:'', hypo:'', redesign:'',
-     sa:2, dev:3, qa:0, comment:'', sprint:1, prePlanned:true, onBoard:true, agreed:true, attractions:[],
-     subtasks:[
-       W('sb4_d1','Орлов','SA',2,0),
-       W('sb4_d2','Зайцев','DEV',3,1,{from:{kind:'w',uid:'sb4_d1'},to:{kind:'w',uid:'sb4_d2'}}),
-     ]},
-  ];
-  // подстраховка: проставить дефолтную стрелку белым без явной + базлайн трудозатрат «из Jira»
-  demo.forEach(i=>{
-    if(!('jira' in i)) i.jira={sa:(+i.sa||0), dev:(+i.dev||0), qa:(+i.qa||0)};
-    (i.subtasks||[]).forEach(st=>{
-      if(!st.uid) st.uid=uid();
-      if(!st.arrow) st.arrow={from:{kind:'w',uid:st.uid}, to:{kind:'c',id:i.id}};
-    });
-  });
-  state.issues.push(...demo);
-}
 /* =====================================================================
    ВСПОМОГАТЕЛЬНЫЕ
 ===================================================================== */
@@ -2823,23 +2428,6 @@ function compFieldsHTML(avail, comps, kind, id, ei){
     const v=(comps&&comps[c])||0;
     return `<label class="comp-cell"><span class="cc-lab">${c}</span><input type="number" min="0" ${attr(c)} value="${esc(v)}"></label>`;
   }).join('')+`</div>`;
-}
-// Перенести прежние поля представления «ИТ-проект» в общие поля единой таблицы Pre PI.
-// Работает и для инициативы (state.issues), и для строки вкладки «Цели» (state.goals) —
-// набор полей у них совпадает. Идемпотентно: после переноса старые ключи удаляются.
-function migrateItFields(o){
-  if(o.milestone && !o.cel)   o.cel=o.milestone;    // Веха ИТ-проекта   → Цель/Веха
-  if(o.itMetric && !o.metric) o.metric=o.itMetric;  // Метрика ИТ-проекта → Метрика
-  if(o.value && !o.plan)      o.plan=o.value;       // Значение          → TO BE (прогноз)
-  delete o.milestone; delete o.itMetric; delete o.value;
-}
-// Мигрировать инициативу со старых полей sa/dev/qa на executors.
-function migrateIssueExecutors(iss){
-  if(Array.isArray(iss.executors)) return;
-  const team=iss.executor||iss.owner||'';
-  const comps={};
-  ['sa','dev','qa'].forEach(k=>{ const v=+iss[k]||0; if(v||k in iss) comps[k.toUpperCase()]=v; });
-  iss.executors=[{team, comps}];
 }
 // Цвет стикера/чипа привлечения:
 //  голубой   — владелец = исполнитель (своя задача);
@@ -4908,7 +4496,7 @@ function bindBudget(){}
 ===================================================================== */
 // Столбцы Pre PI — единые для обоих типов команд (Agile и «ИТ-проект»).
 // Тип команды на набор столбцов не влияет: разница только в обязательности полей
-// перед отправкой на доски (см. REQUIRED_DEV_FIELDS / REQUIRED_DEV_FIELDS_IT).
+// Обязательность полей приходит с backend в requiredFields.
 //  upperOnly — только в верхнем блоке «Запланировано»;
 //  lowerHide — скрыть в нижнем блоке «Бэклог инициатив».
 const PREP_COLS=[
@@ -4944,67 +4532,20 @@ function prepTribeBoardData(tribe,filter){
   const all=state.issues.filter(inScope);
   return {upper:all.filter(i=>i.prePlanned), lower:all.filter(i=>!i.prePlanned)};
 }
-function rolePlanTotal(team,role){
-  return computeSprints().reduce((s,sp)=>s+rolePlan(team,role,sp),0);
-}
-// Запланированные (fact) чел/дн команды по компетенции — из матрицы взятых инициатив.
-function roleFact(teamName,comp){
-  return state.issues.filter(i=>issueOnTeam(i,teamName) && i.prePlanned)
-    .reduce((s,i)=>s+issueTeamEffort(i,teamName,comp),0);
-}
-// «Календарная» ёмкость команды = плановые рабочие дни PI по всем сотрудникам,
-// без вычета отпусков / agile-церемоний / рисков.
-function teamCalendarCap(team){
-  const cap=state.capacity[teamKey(team.tribe,team.name)]||[];
-  const totalWD=computeSprints().reduce((s,sp)=>s+sp.workdays,0);
-  return cap.reduce((s,p)=>s+totalWD*personRate(p),0);
-}
-// «Запланированная» ёмкость = сумма чел/дн по всем компетенциям взятых инициатив (верхний блок).
-function teamPlannedCap(teamName){
-  return teamComps(teamName).reduce((s,r)=>s+roleFact(teamName,r),0);
-}
-// Сумма чел/дн команды по взятым инициативам (верхний блок) с указанными типами (тех.повестка).
-function techAgendaSum(teamName,types){
-  return state.issues.filter(i=>issueOnTeam(i,teamName) && i.prePlanned &&
-      types.includes(String(i.type||'').trim()))
-    .reduce((s,i)=>s+issueTeamTotal(i,teamName),0);
-}
-// Процент тех. повестки от доступной ёмкости; «—» при нулевой доступной ёмкости.
-function techAgendaPct(sum,avail){
-  if(!(avail>0)) return '—';
-  return Math.round(sum/avail*100)+'%';
-}
 // Команды трайба, по которым считаются блоки «Емкость / Доступность компетенций / Тех.повестка».
 // Тип команды роли не играет: у «ИТ-проекта» тоже есть исполнители с компетенциями.
 function prepCapTeams(tribe){ return prepTribeTeams(tribe); }
 // Агрегат блоков «Емкость / Доступность компетенций / Тех.повестка» по набору команд.
 // Одна команда — показатели этой команды; весь трайб — сумма по всем его командам-исполнителям.
-function capPanelData(teams){
-  const comps=COMPS.filter(c=>teams.some(t=>teamComps(t.name).includes(c)));
-  // Команда участвует в компетенции, только если компетенция у неё настроена — так же,
-  // как в представлении одной команды. Иначе чел/дн, оставшиеся у инициатив от неактуальных
-  // компетенций, попали бы в сумму трайба, хотя в самой команде они не показываются
-  // (и не входят в её «Запланированную» ёмкость).
-  const has=(t,r)=>teamComps(t.name).includes(r);
-  const rows=comps.map(r=>({
-    role:r,
-    plan:teams.reduce((s,t)=>s+(has(t,r)?rolePlanTotal(t,r):0),0),
-    fact:teams.reduce((s,t)=>s+(has(t,r)?roleFact(t.name,r):0),0),
-  }));
-  const sum=(fn)=>teams.reduce((s,t)=>s+fn(t),0);
-  return {
-    rows,
-    calCap:   sum(t=>teamCalendarCap(t)),
-    totalPlan:rows.reduce((s,r)=>s+r.plan,0),
-    planCap:  sum(t=>teamPlannedCap(t.name)),
-    techTotal: sum(t=>techAgendaSum(t.name,[TECH_TYPE_COMMON,TECH_TYPE_TEAM])),
-    techCommon:sum(t=>techAgendaSum(t.name,[TECH_TYPE_COMMON])),
-    techTeam:  sum(t=>techAgendaSum(t.name,[TECH_TYPE_TEAM])),
-  };
-}
 // scope: 'team' — выбрана команда (с кнопкой «Рассчитать/изменить»); 'tribe' — весь трайб (без кнопки).
-function capPanelHTML(teams,scope){
-  const d=capPanelData(teams);
+function prePiServerMetrics(teams,scope){
+  const capacity=(prePiViews[currentCycleId()]||{}).capacity||{};
+  if(scope==='team')return (capacity.teams||{})[teams[0]._teamId]||{};
+  return (capacity.tribes||{})[teams[0]._tribeId]||{};
+}
+function prePiServerPercent(value){return value===null||value===undefined?'—':round1(value)+'%';}
+function prePiCapacityPanelHTML(teams,scope){
+  const d=prePiServerMetrics(teams,scope),competencies=d.competencies||{},tech=d.tech_agenda||{};
   const isTeam=scope==='team';
   return `<div class="cap-panel">
     <div class="cap-group">
@@ -5013,30 +4554,32 @@ function capPanelHTML(teams,scope){
         ${isTeam?`<button class="cap-calc" id="prepCalc">Рассчитать/изменить</button>`:''}
       </div>
       <div class="cap-row">
-        <div class="cap-box"><div class="cap-lab">Календарная</div><div class="cap-val">${round1(d.calCap)} дн.</div></div>
-        <div class="cap-box"><div class="cap-lab">Доступная</div><div class="cap-val">${round1(d.totalPlan)} дн.</div></div>
-        <div class="cap-box"><div class="cap-lab">Запланированная</div><div class="cap-val"><span class="fact">${round1(d.planCap)} дн.</span></div></div>
+        <div class="cap-box"><div class="cap-lab">Календарная</div><div class="cap-val">${round1(d.calendar_capacity||0)} дн.</div></div>
+        <div class="cap-box"><div class="cap-lab">Доступная</div><div class="cap-val">${round1(d.available_capacity||0)} дн.</div></div>
+        <div class="cap-box"><div class="cap-lab">Запланированная</div><div class="cap-val"><span class="fact ${d.over_capacity?'over':''}">${round1(d.planned_capacity||0)} дн.</span></div></div>
       </div>
     </div>
     <div class="cap-group cap-group-roles">
       <div class="cap-group-head"><span class="cap-group-title">Доступность компетенций</span></div>
       <div class="cap-row">`+
-        d.rows.map(r=>`<div class="cap-box"><div class="cap-lab">${r.role} · доступно | запланировано</div>
-          <div class="cap-val">${round1(r.plan)} | <span class="fact ${r.fact>r.plan?'over':''}">${round1(r.fact)}</span></div></div>`).join('')+
+        Object.entries(competencies).map(([role,row])=>`<div class="cap-box"><div class="cap-lab">${role} · доступно | запланировано</div>
+          <div class="cap-val">${round1(row.available||0)} | <span class="fact ${row.over_capacity?'over':''}">${round1(row.planned||0)}</span></div></div>`).join('')+
       `</div>
     </div>
     <div class="cap-group">
       <div class="cap-group-head"><span class="cap-group-title">Тех.повестка</span></div>
       <div class="cap-row">
-        <div class="cap-box"><div class="cap-lab">Всего</div><div class="cap-val">${techAgendaPct(d.techTotal,d.totalPlan)}</div></div>
-        <div class="cap-box"><div class="cap-lab">Общая</div><div class="cap-val">${techAgendaPct(d.techCommon,d.totalPlan)}</div></div>
-        <div class="cap-box"><div class="cap-lab">Командная</div><div class="cap-val">${techAgendaPct(d.techTeam,d.totalPlan)}</div></div>
+        <div class="cap-box"><div class="cap-lab">Всего</div><div class="cap-val">${prePiServerPercent(tech.total_percent)}</div></div>
+        <div class="cap-box"><div class="cap-lab">Общая</div><div class="cap-val">${prePiServerPercent(tech.common_percent)}</div></div>
+        <div class="cap-box"><div class="cap-lab">Командная</div><div class="cap-val">${prePiServerPercent(tech.team_percent)}</div></div>
       </div>
     </div>
   </div>`;
 }
 
 function viewPrep(){
+  const id=currentCycleId();
+  if(!id||!prePiViews[id])return `<div class="card"><h2>Pre PI Planning ${cycleBadge()}</h2><div class="muted">${prePiApiReady?'Нет данных Pre PI':'Загрузка данных Pre PI…'}</div></div>`;
   if(!state.ui.prepTribe) return viewPrepSelect();
   if(!allTribes().includes(state.ui.prepTribe)){ state.ui.prepTribe=null; return viewPrepSelect(); }
   return viewPrepBoard(state.ui.prepTribe);
@@ -5079,11 +4622,11 @@ function viewPrepBoard(tribe){
   if(!filterTeam){
     const capTeams=prepCapTeams(tribe);
     if(capTeams.length){
-      html+=capPanelHTML(capTeams,'tribe');
+      html+=prePiCapacityPanelHTML(capTeams,'tribe');
       html+=`<div class="note" style="margin:8px 0">Показатели трайба — сумма по всем его командам-исполнителям (${capTeams.map(t=>esc(t.name)).join(', ')}). Выберите команду сверху, чтобы увидеть её показатели и рассчитать ёмкость.</div>`;
     }
   } else {
-    html+=capPanelHTML([filterTeam],'team');
+    html+=prePiCapacityPanelHTML([filterTeam],'team');
   }
 
   html+=goalDatalistHTML();
@@ -5117,7 +4660,7 @@ function goalInputHTML(i){
 // «Команды-исполнителя и компетенций») + расчётная «Общая оценка».
 function prepFilterCols(cols,withEffort){
   const fcols=cols.map(c=>({k:c.k,label:c.label}));
-  if(withEffort) fcols.push({k:'effort',label:'Общая оценка (чел/дн)',val:i=>round1(issueTotalEffort(i))});
+  if(withEffort) fcols.push({k:'effort',label:'Общая оценка (чел/дн)',val:i=>round1(i.totalEstimate||0)});
   return fcols;
 }
 function prepScope(isUpper){ return 'prep:'+(isUpper?'upper':'lower'); }
@@ -5152,8 +4695,7 @@ function prepTable(rows,isUpper){
   }else{
     const opts=allTeamNames();
     rows.forEach(i=>{
-      if(!Array.isArray(i.executors)||!i.executors.length) migrateIssueExecutors(i);
-      const exs=i.executors, span=exs.length;
+      const exs=Array.isArray(i.executors)&&i.executors.length?i.executors:[{team:'',comps:{},attractions:[]}], span=exs.length;
       const lead=`
         <td class="stik1" rowspan="${span}"><div class="id-cell">
           <span class="row-drag" title="${sorted?'Перетащите, чтобы перенести в другой блок (порядок внутри блока задаёт сортировка)':'Перетащите, чтобы изменить порядок или перенести в другой блок'}">⠿</span>
@@ -5166,7 +4708,7 @@ function prepTable(rows,isUpper){
           ? `<td rowspan="${span}">${goalInputHTML(i)}</td>`
           : `<td rowspan="${span}"><input data-pi="${esc(i.id)}" data-pk="${c.k}" value="${esc(i[c.k])}" class="${c.k==='custPrio'||c.k==='teamPrio'?'w-narrow':''}"></td>`
         ).join('')+
-        `<td rowspan="${span}" style="text-align:center;font-weight:700">${round1(issueTotalEffort(i))}</td>`;
+        `<td rowspan="${span}" style="text-align:center;font-weight:700">${round1(i.totalEstimate||0)}</td>`;
       const delCell=`<td class="row-del-cell" rowspan="${span}">${rowDelBtnHTML(i.id,isUpper)}</td>`;
       exs.forEach((ex,ei)=>{
         const execCell=execBlockHTML(i, ex, ei, 'pi', opts);
@@ -5189,9 +4731,8 @@ function attractionsHTML(iss, ei){
   const list=(ex && ex.attractions) || [];
   let s=list.map(a=>{
     const aid=a.id;
-    const ref=findIssue(aid);
-    const col = ref && ref.agreed ? 'red' : 'purple';
-    const team = ref ? (issueExecTeams(ref)[0]||ref.executor||'—') : (a.team||'—');
+    const col=a.visualState||({approved:'red',rejected:'gray'}[a.status]||'purple');
+    const team=a.team||'—';
     const spr = (a.sprint!==null && a.sprint!==undefined) ? ` · Спринт ${(+a.sprint)+1}` : '';
     return `<span class="chip ${col}"><span class="chip-id">${esc(aid)}</span><span class="chip-team">${esc(team)}${spr}</span><span class="chip-x" data-attr-del="${esc(iss.id)}" data-attr-ei="${ei}" data-attr-aid="${esc(aid)}">✕</span></span>`;
   }).join('');
@@ -5200,6 +4741,46 @@ function attractionsHTML(iss, ei){
 }
 
 let prepDragId=null;
+function prePiExecutorPayload(iss,mutate){
+  const rows=(iss.executors||[]).map((ex,index)=>({
+    id:ex._backendId||null,
+    team_id:ex.teamId||null,
+    team:ex.team||'',
+    tribe:(state.pi.teams.find(t=>t.name===ex.team)||{}).tribe||'',
+    effort_by_competency:{...(ex.comps||{})},
+    attractions:(ex.attractions||[]).map((a,position)=>({
+      id:a._backendId||null,target_initiative_id:a.targetInitiativeId||null,
+      issue_key:a.id||'',target_team_id:a.targetTeamId||null,team:a.team||'',
+      sprint_index:Number.isInteger(a.sprint)?a.sprint:null,
+      approval_status:a.status||'pending',sort_order:position,
+    })),
+    sort_order:index,
+  }));
+  mutate(rows);
+  return rows;
+}
+async function runPrePiUiCommand(path,method,body,successMessage){
+  try{
+    await prePiCommand(path,method,body);
+    if(successMessage)toast(successMessage,{type:'success'});
+  }catch(error){
+    if(reportOptimisticConflict(error))return;
+    reportPrePiSyncError(error);render();
+  }
+}
+async function runPrePiCascadeCommand(path,method,body,successMessage){
+  try{return await prePiCommand(path,method,body);}
+  catch(error){
+    if(error.detail&&error.detail.code==='cascade_confirmation_required'){
+      if(window.confirm(error.detail.message||'Подтвердить каскадные изменения?')){
+        return prePiCommand(path,method,{...body,confirm_cascade:true});
+      }
+      render();return null;
+    }
+    if(reportOptimisticConflict(error))return null;
+    reportPrePiSyncError(error);render();return null;
+  }finally{if(successMessage){} }
+}
 function bindPrep(){
   // выбор трайба (7.0-подобный экран для Pre PI); фильтры по столбцам сбрасываем
   document.querySelectorAll('[data-prep-tribe]').forEach(el=>el.onclick=()=>{
@@ -5225,58 +4806,63 @@ function bindPrep(){
     save();render();
   };
 
-  // редактирование строковых полей инициатив (Цель/приоритеты/тип/продукт/ИТ-поля)
-  document.querySelectorAll('[data-pi]').forEach(el=>el.onchange=()=>{
-    const iss=findIssue(el.dataset.pi); if(!iss)return;
-    const k=el.dataset.pk;
-    iss[k]=el.value;
-    if(GOAL_SYNC_FIELDS.includes(k)) syncIssueToGoals(iss); // → вкладка «Цели»
-    save();render();
+  // Каждое изменение — одна backend-команда; сохранённый read model до ответа не меняется.
+  document.querySelectorAll('[data-pi]').forEach(el=>{
+    let committedValue=el.value;
+    const commit=()=>{
+      if(el.value===committedValue)return;
+      committedValue=el.value;
+      const iss=findIssue(el.dataset.pi); if(!iss)return;
+      const field={name:'title',description:'description',product:'product',type:'initiative_type',
+        cel:'goal_text',metric:'metric',fact:'current_value',plan:'target_value',hypo:'hypothesis',
+        redesign:'redesign',custPrio:'customer_priority',teamPrio:'team_priority',comment:'comment'}[el.dataset.pk];
+      if(!field||!iss._backendId)return;
+      runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{[field]:el.value});
+    };
+    el.onchange=commit;
+    // Enter завершает редактирование так же, как уход из поля, и отправляет ровно одну команду.
+    el.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commit();el.blur();}};
   });
   // выбор команды-исполнителя
   document.querySelectorAll('[data-pi-exec]').forEach(el=>el.onchange=()=>{
     const iss=findIssue(el.dataset.piExec); if(!iss)return;
-    const ei=+el.dataset.ei; if(!iss.executors[ei])return;
-    iss.executors[ei].team=el.value;
-    const avail=teamCompsFor(el.value);
-    const old=iss.executors[ei].comps||{}; const nc={};
-    avail.forEach(c=>{ nc[c]=+old[c]||0; });
-    iss.executors[ei].comps=nc;
-    iss.executor=(iss.executors[0]&&iss.executors[0].team)||iss.executor;
-    save();render();
+    const ei=+el.dataset.ei,team=state.pi.teams.find(t=>t.name===el.value); if(!iss.executors[ei]||!team)return;
+    const executors=prePiExecutorPayload(iss,rows=>{
+      rows[ei].team_id=team._teamId;rows[ei].team=team.name;rows[ei].tribe=team.tribe;
+      const allowed=new Set(team.comps||[]);
+      rows[ei].effort_by_competency=Object.fromEntries(Object.entries(rows[ei].effort_by_competency).filter(([key])=>allowed.has(key)));
+    });
+    runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
   });
   // ввод чел/дн по компетенции
   document.querySelectorAll('[data-pi-comp]').forEach(el=>el.onchange=()=>{
     const iss=findIssue(el.dataset.piComp); if(!iss)return;
-    const ei=+el.dataset.ei; if(!iss.executors[ei])return;
-    iss.executors[ei].comps=iss.executors[ei].comps||{};
-    iss.executors[ei].comps[el.dataset.c]=+el.value||0;
-    save();render();
+    const ei=+el.dataset.ei;if(!iss.executors[ei])return;
+    const executors=prePiExecutorPayload(iss,rows=>{rows[ei].effort_by_competency[el.dataset.c]=+el.value||0;});
+    runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
   });
   // добавить/убрать исполнителя
   document.querySelectorAll('[data-pi-execadd]').forEach(el=>el.onclick=()=>{
-    const iss=findIssue(el.dataset.piExecadd); if(!iss)return;
-    const first=(teams[0]&&teams[0].name)||allTeamNames()[0]||'';
-    iss.executors.push(makeExecutor(first)); save();render();
+    const iss=findIssue(el.dataset.piExecadd);if(!iss)return;
+    const first=teams.find(t=>!(iss.executors||[]).some(ex=>ex.team===t.name));if(!first)return;
+    const executors=prePiExecutorPayload(iss,rows=>rows.push({team_id:first._teamId,team:first.name,tribe:first.tribe,effort_by_competency:{},attractions:[],sort_order:rows.length}));
+    runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
   });
   document.querySelectorAll('[data-pi-execdel]').forEach(el=>el.onclick=()=>{
-    const iss=findIssue(el.dataset.piExecdel); if(!iss)return;
-    const ei=+el.dataset.ei; iss.executors.splice(ei,1);
-    if(!iss.executors.length) iss.executors.push(makeExecutor(iss.owner||''));
-    iss.executor=(iss.executors[0]&&iss.executors[0].team)||'';
-    save();render();
+    const iss=findIssue(el.dataset.piExecdel);if(!iss)return;
+    const ei=+el.dataset.ei,executors=prePiExecutorPayload(iss,rows=>rows.splice(ei,1));
+    runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
   });
 
   // Крестик строки: из верхнего блока — возврат в бэклог инициатив, из нижнего — удаление.
-  document.querySelectorAll('[data-pi-delrow]').forEach(el=>el.onclick=(e)=>{
+  document.querySelectorAll('[data-pi-delrow]').forEach(el=>el.onclick=async(e)=>{
     e.stopPropagation();
     const id=el.dataset.piDelrow;
     if(el.dataset.piDelblock==='upper'){
-      const iss=findIssue(id); if(iss){ iss.prePlanned=false; save(); render(); }
+      const iss=findIssue(id);if(iss)await runPrePiCascadeCommand(`/initiatives/${iss._backendId}/move`,'POST',{target_block:'backlog'});
       return;
     }
-    const idx=state.issues.findIndex(x=>x.id===id);
-    if(idx>=0){ state.issues.splice(idx,1); save(); render(); }
+    const iss=findIssue(id);if(iss)await runPrePiCascadeCommand(`/initiatives/${iss._backendId}`,'DELETE',{});
   });
 
   // привлечение (по конкретному исполнителю)
@@ -5284,8 +4870,9 @@ function bindPrep(){
   document.querySelectorAll('[data-attr-del]').forEach(b=>b.onclick=()=>{
     const iss=findIssue(b.dataset.attrDel); if(!iss)return;
     const ex=iss.executors[+b.dataset.attrEi]; if(!ex)return;
-    ex.attractions=(ex.attractions||[]).filter(a=>a.id!==b.dataset.attrAid);
-    save();render();
+    const ei=+b.dataset.attrEi;
+    const executors=prePiExecutorPayload(iss,rows=>{rows[ei].attractions=rows[ei].attractions.filter(a=>a.issue_key!==b.dataset.attrAid);});
+    runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
   });
 
   // drag строк
@@ -5344,53 +4931,28 @@ function clearPrepRowDropMarkers(scope=document){
     x.classList.remove('rowdragover-before','rowdragover-after');
   });
 }
-// Перенос строки между блоками (взять/вернуть в бэклог) и/или изменение её порядка.
-// Порядок меняем перестановкой в state.issues — это тот же массив, что и
-// state.cycles[…].issues, поэтому правим его на месте (splice), не подменяя ссылку.
 function prepMoveRow(draggedId,block,targetId,afterTarget=false){
   if(!draggedId || targetId===draggedId) return;
-  const from=state.issues.findIndex(i=>i.id===draggedId);
-  if(from<0) return;
-  const dragged=state.issues[from];
+  const dragged=findIssue(draggedId);if(!dragged||!dragged._backendId)return;
   const toUpper=(block==='upper');
   const blockChanged = dragged.prePlanned!==toUpper;
-  dragged.prePlanned = toUpper;
-  // Если целевой блок отсортирован, порядок строк в нём задаёт сортировка — перестановку
-  // пропускаем. Перенос между блоками («взять инициативу» / вернуть в бэклог) при этом работает.
   const sorted=!!colSort(prepScope(toUpper));
-  if(targetId && !sorted){
-    state.issues.splice(from,1);
-    const to=state.issues.findIndex(i=>i.id===targetId);
-    // цель не нашлась — возвращаем строку на прежнее место, меняется только блок
-    if(to<0) state.issues.splice(from,0,dragged);
-    else state.issues.splice(afterTarget?to+1:to,0,dragged);
-  }
-  // перетащили внутри отсортированного блока — не изменилось ничего, поясняем почему
   if(sorted && !blockChanged){ toast(SORT_DRAG_MSG,{type:'info'}); return; }
-  save();render();
+  let beforeId=null;
+  if(targetId&&!sorted){
+    const target=findIssue(targetId);beforeId=target&&target._backendId;
+    if(afterTarget){
+      const rows=state.issues.filter(i=>i.prePlanned===toUpper&&i.id!==draggedId);
+      const index=rows.findIndex(i=>i.id===targetId);
+      beforeId=rows[index+1]&&rows[index+1]._backendId||null;
+    }
+  }
+  runPrePiCascadeCommand(`/initiatives/${dragged._backendId}/move`,'POST',{
+    target_block:toUpper?'planned':'backlog',before_id:beforeId,
+  });
 }
 
 /* ---- Pre PI Planning: действия и модалки ---- */
-// Обязательные поля для инициатив типа «Развитие функционала» перед отправкой на доски.
-const DEV_FUNC_TYPE='Развитие функционала';
-const REQUIRED_DEV_FIELDS=[['cel','Цель/Веха'],['metric','Метрика'],['fact','AS IS'],['plan','TO BE']];
-// У команд «ИТ-проект» обязательна только «Цель/Веха»: метрика, AS IS и TO BE заполняются
-// по необходимости. Столбцы при этом те же — различается лишь проверка перед отправкой.
-const REQUIRED_DEV_FIELDS_IT=[['cel','Цель/Веха']];
-function requiredDevFields(t){ return teamType(t)==='ИТ-проект' ? REQUIRED_DEV_FIELDS_IT : REQUIRED_DEV_FIELDS; }
-// Проверка заполненности обязательных полей у плановых инициатив «Развитие функционала».
-// Набор обязательных полей определяет тип команды, чей Pre PI отправляется на доски.
-// Возвращает список проблем: [{id, missing:[{k,label}]}]. Пустой список — всё заполнено.
-function validateDevFuncInitiatives(t){
-  const req=requiredDevFields(t);
-  const problems=[];
-  state.issues.filter(i=>issueOnTeam(i,t.name) && i.prePlanned &&
-      String(i.type||'').trim()===DEV_FUNC_TYPE).forEach(i=>{
-    const missing=req.filter(([k])=>!String(i[k]||'').trim()).map(([k,label])=>({k,label}));
-    if(missing.length) problems.push({id:i.id,missing});
-  });
-  return problems;
-}
 // Подсветить незаполненные поля прямо в таблице (без ре-рендера — снимется при следующем render()).
 function highlightMissingFields(problems){
   document.querySelectorAll('.prep .field-missing').forEach(el=>el.classList.remove('field-missing'));
@@ -5403,25 +4965,14 @@ function highlightMissingFields(problems){
 // публикует инициативы на командных досках и отправляет привлечения.
 async function prepSubmitToBoards(targets){
   targets=Array.isArray(targets)?targets:[targets];
-  const problems=targets.flatMap(validateDevFuncInitiatives);
-  if(problems.length){
-    highlightMissingFields(problems);
-    const lines=problems.map(p=>`${p.id}: ${p.missing.map(m=>m.label).join(', ')}`).join('; ');
-    toast(`Заполните обязательные поля для инициатив «${DEV_FUNC_TYPE}» — ${lines}`,
-      {type:'warn',title:'Не все поля заполнены',duration:7000});
-    return;
-  }
   try{
-    await flushPrePiSync();
-    if(goalsApiReady)await flushGoalsSync();
     const id=currentCycleId(),backendId=cycleBackendIds[id];
     const result=await cycleMutation(id,`/pi-cycles/${backendId}/pre-pi/submit`,{
       method:'POST',body:{teams:targets.map(t=>({tribe:t.tribe,name:t.name}))},
     });
     const c=state.cycles[id];
-    applyPrePi(c,result.pre_pi);
+    applyPrePi(c,result.pre_pi,id);
     applyGoals(c,result.goals);
-    persistedPrePiSnapshots[id]=prePiSnapshotHash(id,c);
     persistedGoalsSnapshots[id]=goalsSnapshotHash(id,c);
     activateCycle(id);
     save();render();
@@ -5450,15 +5001,16 @@ function openAttractionModal(rowId, ei){
   const row=findIssue(rowId); if(!row)return;
   ei=+ei||0;
   const host=row.executors && row.executors[ei]; if(!host) return;
-  const sprints=computeSprints();
+  const sprintCount=+((prePiViews[currentCycleId()]||{}).cycle||{}).sprint_count||0;
+  const targets=state.issues.filter(issue=>issue._backendId&&issue._backendId!==row._backendId);
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>Привлечение ресурса · ${esc(row.id)} <span class="muted" style="font-size:12px;font-weight:400">(исполнитель: ${esc(host.team)})</span></h3>
-    <label><span>№ Issue (привлекаемая задача)</span><input id="am_id" placeholder="например, Retail-555"></label>
+    <label><span>№ Issue (привлекаемая задача)</span><select id="am_id"><option value="">— выберите инициативу —</option>${targets.map(issue=>`<option value="${esc(issue._backendId)}">${esc(issue.id)} · ${esc(issue.name)}</option>`).join('')}</select></label>
     <label><span>Команда-исполнитель (подтягивается из JSW)</span><select id="am_team">${allTeamNames().map(n=>`<option>${esc(n)}</option>`).join('')}</select></label>
     <label><span>Спринт (кол-во из данных PI-цикла)</span><select id="am_sprint">
       <option value="">— не выбран —</option>
-      ${sprints.map(s=>`<option value="${s.index}">Спринт ${s.index+1}</option>`).join('')}
+      ${Array.from({length:sprintCount},(_,index)=>`<option value="${index}">Спринт ${index+1}</option>`).join('')}
     </select></label>
     <div class="modal-actions">
       <button id="am_cancel">Отмена</button>
@@ -5467,24 +5019,18 @@ function openAttractionModal(rowId, ei){
   </div></div>`;
   $('#am_cancel').onclick=()=>root.innerHTML='';
   $('#am_save').onclick=()=>{
-    const id=($('#am_id').value||'').trim(); if(!id) return;
-    const team=$('#am_team').value;
+    const targetId=$('#am_id').value;if(!targetId)return;
+    const ref=state.issues.find(issue=>issue._backendId===targetId);if(!ref)return;
+    const team=$('#am_team').value,teamRow=state.pi.teams.find(value=>value.name===team);if(!teamRow)return;
     const sprVal=$('#am_sprint').value;
     const sprint = sprVal===''? null : (+sprVal);
-    let ref=findIssue(id);
-    if(!ref){
-      ref={id,owner:(state.ui.prepTeamFilter||row.owner||team),executor:team,executors:[makeExecutor(team)],
-        type:'',name:'',cel:'',metric:'',fact:'',plan:'',hypo:'',redesign:'',product:'',
-        custPrio:'',teamPrio:'',comment:'',sprint:null,
-        prePlanned:false,onBoard:false,agreed:false,attractions:[],subtasks:[],stories:[]};
-      state.issues.push(ref);
-    }else{
-      ref.executor=team;
-      if(!issueExecTeams(ref).includes(team)){ ref.executors=ref.executors||[]; ref.executors.push(makeExecutor(team)); }
-    }
-    host.attractions=host.attractions||[];
-    if(!host.attractions.some(a=>a.id===id)) host.attractions.push({id,team,sprint});
-    root.innerHTML='';save();render();
+    if(sprint===null){toast('Выберите спринт',{type:'warn'});return;}
+    const executors=prePiExecutorPayload(row,rows=>rows[ei].attractions.push({
+      target_initiative_id:ref._backendId,issue_key:ref.id,target_team_id:teamRow._teamId,
+      team:teamRow.name,sprint_index:sprint,approval_status:'pending',sort_order:rows[ei].attractions.length,
+    }));
+    root.innerHTML='';
+    runPrePiUiCommand(`/initiatives/${row._backendId}`,'PATCH',{executors},'Запрос на привлечение добавлен');
   };
 }
 
@@ -7329,7 +6875,6 @@ async function boot(){
 }
 document.addEventListener('visibilitychange',()=>{
   if(state.ui.mode!=='pi' || state.ui.tab==='data') return;
-  if(document.visibilityState==='hidden' && prePiApiReady) flushPrePiSync().catch(()=>{});
   if(document.visibilityState==='hidden' && goalsApiReady) flushGoalsSync().catch(()=>{});
   if(document.visibilityState==='hidden' && teamBoardsApiReady) flushTeamBoardsSync().catch(()=>{});
   if(document.visibilityState==='hidden' && capacityApiReady) flushCapacitySync().catch(()=>{});

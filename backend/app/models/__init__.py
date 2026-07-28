@@ -4,6 +4,7 @@ from app.models.pi_cycle import (  # noqa: F401
     BacklogItem,
     BoardConnection,
     Initiative,
+    InitiativeAttraction,
     InitiativeExecutor,
     PiCycle,
     PiCycleGoalOption,

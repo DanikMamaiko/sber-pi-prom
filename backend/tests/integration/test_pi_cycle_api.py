@@ -599,6 +599,7 @@ async def test_optimistic_locking_rejects_stale_cycle_and_backlog_updates(api_cl
     stale = await api_client.raw.put(f"/pi-cycles/{cycle_id}/setup", json=stale_payload)
     assert stale.status_code == 409
     assert stale.json()["detail"] == {
+        "code": "version_conflict",
         "message": "Aggregate was changed by another editor",
         "aggregate": "pi_cycle",
         "expected_version": editor_version,
@@ -1368,3 +1369,128 @@ async def test_bulk_pi_data_combined_cascades_are_confirmed_and_atomic(api_clien
     assert [row["team"] for row in capacity_teams] == ["Проект Бета"]
     assert capacity_teams[0]["members"] == []
     assert assert_ok(await api_client.get(f"{path}/risks-board"))["risks"] == []
+
+
+@pytest.mark.asyncio
+async def test_pre_pi_focused_commands_return_canonical_read_model(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2033, quarter="Q1")
+    path = f"/pi-cycles/{cycle['id']}"
+    created = assert_ok(
+        await api_client.put(
+            f"{path}/pre-pi",
+            json={
+                "initiatives": [
+                    {
+                        "issue_key": "CMD-1",
+                        "title": "Command source",
+                        "owner_team": "Команда Альфа",
+                        "owner_tribe": "Регрессия",
+                        "initiative_type": "Развитие функционала",
+                        "goal_text": "Цель регрессии",
+                        "metric": "Metric",
+                        "current_value": "0",
+                        "target_value": "1",
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "tribe": "Регрессия",
+                                "effort_by_competency": {"SA": 2, "DEV": 3},
+                            }
+                        ],
+                    },
+                    {
+                        "issue_key": "CMD-2",
+                        "title": "Attraction target",
+                        "owner_team": "Проект Бета",
+                        "owner_tribe": "Регрессия",
+                        "executors": [
+                            {
+                                "team": "Проект Бета",
+                                "tribe": "Регрессия",
+                                "effort_by_competency": {"SA": 1},
+                            }
+                        ],
+                    },
+                ]
+            },
+        )
+    )
+    first = next(row for row in created["backlog"] if row["issue_key"] == "CMD-1")
+    second = next(row for row in created["backlog"] if row["issue_key"] == "CMD-2")
+    alpha = next(row for row in created["teams"] if row["name"] == "Команда Альфа")
+    beta = next(row for row in created["teams"] if row["name"] == "Проект Бета")
+    assert created["cycle"]["id"] == cycle["id"]
+    assert created["goal_options"][0]["name"] == "Цель регрессии"
+    assert first["total_estimate"] == 5
+    assert str(alpha["id"]) in created["capacity"]["teams"]
+
+    edited = assert_ok(
+        await api_client.patch(
+            f"{path}/pre-pi/initiatives/{first['id']}",
+            json={
+                "description": "Edited atomically",
+                "executors": [
+                    {
+                        "id": first["executors"][0]["id"],
+                        "team_id": alpha["id"],
+                        "team": alpha["name"],
+                        "tribe": alpha["tribe"],
+                        "effort_by_competency": {"SA": 4, "DEV": 3},
+                        "attractions": [
+                            {
+                                "target_initiative_id": second["id"],
+                                "target_team_id": beta["id"],
+                                "sprint_index": 1,
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    )
+    edited_first = next(row for row in edited["initiatives"] if row["id"] == first["id"])
+    assert edited_first["id"] == first["id"]
+    assert edited_first["executors"][0]["id"] == first["executors"][0]["id"]
+    assert edited_first["total_estimate"] == 7
+    attraction = edited_first["executors"][0]["attractions"][0]
+    assert attraction["id"]
+    assert attraction["approval_status"] == "pending"
+    assert attraction["visual_state"] == "purple"
+
+    moved_second = assert_ok(
+        await api_client.post(
+            f"{path}/pre-pi/initiatives/{second['id']}/move",
+            json={"target_block": "planned"},
+        )
+    )
+    moved_first = assert_ok(
+        await api_client.post(
+            f"{path}/pre-pi/initiatives/{first['id']}/move",
+            json={"target_block": "planned", "before_id": second["id"]},
+        )
+    )
+    assert [row["issue_key"] for row in moved_first["planned"]] == ["CMD-1", "CMD-2"]
+    assert [row["sort_order"] for row in moved_first["planned"]] == [0, 1]
+
+    submitted = assert_ok(
+        await api_client.post(
+            f"{path}/pre-pi/submit",
+            json={"teams": [{"tribe": "Регрессия", "name": "Команда Альфа"}]},
+        )
+    )
+    assert submitted["board_added"] == 1
+    cascade = await api_client.post(
+        f"{path}/pre-pi/initiatives/{first['id']}/move",
+        json={"target_block": "backlog"},
+    )
+    assert cascade.status_code == 409
+    assert cascade.json()["detail"]["code"] == "cascade_confirmation_required"
+    returned = assert_ok(
+        await api_client.post(
+            f"{path}/pre-pi/initiatives/{first['id']}/move",
+            json={"target_block": "backlog", "confirm_cascade": True},
+        )
+    )
+    returned_first = next(row for row in returned["backlog"] if row["id"] == first["id"])
+    assert returned_first["on_board"] is False
+    assert returned_first["status"] == "backlog"

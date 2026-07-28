@@ -102,6 +102,16 @@
 
 - конкретное попадание бэклог-элемента в PI-цикл;
 - содержит поля Pre PI: цель/веха, метрика, AS IS, TO BE, гипотеза, редизайн;
+
+### InitiativeAttraction
+
+Нормализованный запрос на привлечение (`initiative_attractions`) принадлежит
+`InitiativeExecutor` и ссылается на целевую `Initiative` и `Team`. Хранит стабильный
+UUID, `sprint_index`, `approval_status` и `sort_order`. Уникальность цели в рамках
+исполнителя защищает от дублей; self-reference и принадлежность PI-циклу проверяет
+доменный сервис. Прежний JSONB `initiative_executors.attractions` сохранён только
+для безопасного аудита исторических повреждённых значений и активным кодом не
+используется.
 - имеет статус: `backlog`, `planned`, `on_board`, `done`;
 - может быть размещена на спринте через `sprint_index` и `week_index`.
 

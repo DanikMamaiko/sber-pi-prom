@@ -117,7 +117,9 @@ class VersionedApiClient:
         if path.startswith("/backlog-board/"):
             kwargs = await self._with_version(path, kwargs, backlog=True)
         elif path.startswith("/pi-cycles/") and (
-            path.endswith("/backlog/dispatch") or path.endswith("/pre-pi/submit")
+            path.endswith("/backlog/dispatch")
+            or path.endswith("/pre-pi/submit")
+            or ("/pre-pi/initiatives/" in path and path.endswith("/move"))
         ):
             kwargs = await self._with_version(path, kwargs)
         return await self.raw.post(path, **kwargs)
@@ -125,6 +127,8 @@ class VersionedApiClient:
     async def delete(self, path: str, **kwargs):
         if path.startswith("/backlog-board/"):
             kwargs = await self._with_version(path, kwargs, backlog=True)
+        elif path.startswith("/pi-cycles/") and "/pre-pi/initiatives/" in path:
+            kwargs = await self._with_version(path, kwargs)
         return await self.raw.request("DELETE", path, **kwargs)
 
 

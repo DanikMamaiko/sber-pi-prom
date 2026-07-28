@@ -73,6 +73,9 @@ PI-циклов список инициатив, разбивка по трай�
 - `GET /pi-cycles/{cycle_id}/pre-pi`
 - `PUT /pi-cycles/{cycle_id}/pre-pi`
 - `POST /pi-cycles/{cycle_id}/pre-pi/submit`
+- `PATCH /pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}`
+- `POST /pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}/move`
+- `DELETE /pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}`
 
 `pre-pi/submit` повторно проверяет обязательные поля и одной транзакцией создаёт
 цели команд, публикует инициативы на досках и размещает запросы на привлечение.
@@ -88,6 +91,12 @@ PI-циклов список инициатив, разбивка по трай�
 `goals-board` — агрегат вкладки «Цели». Строка связана с инициативой и командой;
 редактирование метрики, AS IS, TO BE, гипотезы и редизайна обновляет ту же
 инициативу, поэтому изменения сразу доступны в Pre PI.
+
+Агрегатный GET возвращает `planned`/`backlog`, справочники команд и целей,
+`total_estimate`, нормализованные привлечения, server-side capacity и техповестку.
+Focused-команды возвращают этот полный read model. Перенос опубликованной строки и
+удаление зависимой строки отвечают `409 cascade_confirmation_required` до явного
+повтора с `confirm_cascade: true`.
 
 Старые `/goals` пока сохранены для совместимости.
 

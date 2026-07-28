@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.pi_cycle import (
     Initiative,
+    InitiativeAttraction,
     InitiativeExecutor,
     PiCycle,
     PiCycleTeam,
@@ -237,6 +238,12 @@ async def submit_pre_pi(
                 select(Initiative)
                 .options(
                     selectinload(Initiative.executors).selectinload(InitiativeExecutor.team),
+                    selectinload(Initiative.executors)
+                    .selectinload(InitiativeExecutor.attraction_requests)
+                    .selectinload(InitiativeAttraction.target_initiative),
+                    selectinload(Initiative.executors)
+                    .selectinload(InitiativeExecutor.attraction_requests)
+                    .selectinload(InitiativeAttraction.target_team),
                     selectinload(Initiative.owner_team),
                 )
                 .where(Initiative.cycle_id == cycle.id)
@@ -302,8 +309,6 @@ async def submit_pre_pi(
             initiative.status = "on_board"
             board_added += 1
 
-    by_issue_key = {row.issue_key.casefold(): row for row in initiatives}
-    teams_by_key, teams_by_name, _ = await cycle_team_context(session, cycle.id)
     selected_ids = {team.id for team, _ in selected}
     selected_by_id = {team.id: team for team, _ in selected}
     attractions_added = 0
@@ -316,34 +321,20 @@ async def submit_pre_pi(
             continue
         fallback_owner = host.owner_team_id or selected_by_id[matching_executor.team_id].id
         for executor in host.executors:
-            for attraction in executor.attractions or []:
-                issue_key = str(attraction.get("issue_key") or "").strip()
-                referenced = by_issue_key.get(issue_key.casefold())
-                if referenced is None:
-                    raise ValueError(
-                        f"Attraction initiative is not found in this PI cycle: {issue_key}"
-                    )
-                attraction_sprint = attraction.get("sprint_index")
+            for attraction in executor.attraction_requests:
+                referenced = attraction.target_initiative
                 validate_sprint_position(
                     cycle,
-                    int(attraction_sprint) if attraction_sprint is not None else None,
+                    attraction.sprint_index,
                     None,
-                    f"Attraction {issue_key}",
+                    f"Attraction {referenced.issue_key}",
                 )
-                attraction_team = str(attraction.get("team") or "").strip()
-                if attraction_team:
-                    resolve_cycle_team(
-                        teams_by_key,
-                        teams_by_name,
-                        "",
-                        attraction_team,
-                    )
                 if referenced.owner_team_id is None:
                     referenced.owner_team_id = fallback_owner
                 if not referenced.on_board:
                     referenced.on_board = True
                     referenced.status = "on_board"
-                    referenced.sprint_index = attraction.get("sprint_index")
+                    referenced.sprint_index = attraction.sprint_index
                     referenced.week_index = None
                     attractions_added += 1
 

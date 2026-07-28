@@ -51,6 +51,9 @@ from app.schemas.pi_cycle import (
     PiTagDataUpdate,
     PiCycleUpdate,
     PrePiRead,
+    PrePiDeleteCommand,
+    PrePiInitiativeCommand,
+    PrePiMoveCommand,
     PrePiSubmitRead,
     PrePiSubmitWrite,
     PrePiWrite,
@@ -84,7 +87,14 @@ from app.services.backlog_board import (
     replace_backlog_board,
     update_backlog_item,
 )
-from app.services.pre_pi import read_pre_pi, replace_pre_pi
+from app.services.pre_pi import (
+    PrePiCascadeRequired,
+    delete_pre_pi_initiative,
+    move_pre_pi_initiative,
+    read_pre_pi,
+    replace_pre_pi,
+    update_pre_pi_initiative,
+)
 from app.services.goals import (
     PrePiValidationError,
     read_goals,
@@ -610,6 +620,80 @@ async def put_pre_pi(
     cycle = await lock_cycle(session, cycle_id, payload.expected_version)
     try:
         return await replace_pre_pi(session, cycle, payload)
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+
+
+@router.patch(
+    "/pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}",
+    response_model=PrePiRead,
+)
+async def patch_pre_pi_initiative(
+    cycle_id: uuid.UUID,
+    initiative_id: uuid.UUID,
+    payload: PrePiInitiativeCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    try:
+        return await update_pre_pi_initiative(session, cycle, initiative_id, payload)
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+
+
+@router.post(
+    "/pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}/move",
+    response_model=PrePiRead,
+)
+async def post_pre_pi_move(
+    cycle_id: uuid.UUID,
+    initiative_id: uuid.UUID,
+    payload: PrePiMoveCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    try:
+        return await move_pre_pi_initiative(session, cycle, initiative_id, payload)
+    except PrePiCascadeRequired as error:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "cascade_confirmation_required",
+                "message": error.message,
+                "affected": error.affected,
+            },
+        )
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+
+
+@router.delete(
+    "/pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}",
+    response_model=PrePiRead,
+)
+async def remove_pre_pi_initiative(
+    cycle_id: uuid.UUID,
+    initiative_id: uuid.UUID,
+    payload: PrePiDeleteCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    try:
+        return await delete_pre_pi_initiative(session, cycle, initiative_id, payload)
+    except PrePiCascadeRequired as error:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "cascade_confirmation_required",
+                "message": error.message,
+                "affected": error.affected,
+            },
+        )
     except ValueError as error:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))

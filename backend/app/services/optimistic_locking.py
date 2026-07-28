@@ -12,6 +12,7 @@ BACKLOG_STATE_ID = 1
 
 def _conflict_detail(aggregate: str, expected: int, current: int) -> dict[str, object]:
     return {
+        "code": "version_conflict",
         "message": "Aggregate was changed by another editor",
         "aggregate": aggregate,
         "expected_version": expected,
