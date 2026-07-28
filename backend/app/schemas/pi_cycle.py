@@ -400,6 +400,7 @@ class BacklogBoardItemRead(BacklogItemFields):
 
 
 class BacklogBoardRead(BaseModel):
+    cycle_id: uuid.UUID | None = None
     initialized: bool
     version: int
     items: list[BacklogBoardItemRead] = Field(default_factory=list)

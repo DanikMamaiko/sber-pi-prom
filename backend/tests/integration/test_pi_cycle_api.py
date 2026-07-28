@@ -734,6 +734,95 @@ def backlog_write_row(row: dict, **changes) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_backlog_references_and_commands_are_scoped_to_selected_pi_cycle(api_client):
+    first_cycle, first_setup = await create_cycle_with_setup(
+        api_client, year=2032, quarter="Q1"
+    )
+    second_cycle = assert_ok(
+        await api_client.post(
+            "/pi-cycles",
+            json={"year": 2032, "quarter": "Q2", "sprint_count": 2},
+        ),
+        201,
+    )
+    await api_client.put(
+        f"/pi-cycles/{second_cycle['id']}/setup",
+        json={
+            "start_date": "2032-04-05",
+            "sprint_count": 2,
+            "teams": [
+                {
+                    "tribe": "Risk Tribe",
+                    "name": "Outside Team",
+                    "team_type": "Agile",
+                    "competencies": ["BE"],
+                }
+            ],
+        },
+    )
+
+    first = assert_ok(
+        await api_client.get(
+            "/backlog-board", params={"cycle_id": first_cycle["id"]}
+        )
+    )
+    assert first["cycle_id"] == first_cycle["id"]
+    assert [row["name"] for row in first["reference_data"]["tribes"]] == [
+        "Регрессия"
+    ]
+    assert [row["name"] for row in first["reference_data"]["teams"]] == [
+        "Команда Альфа",
+        "Проект Бета",
+    ]
+    assert first["reference_data"]["teams"][0]["competencies"] == [
+        "SA",
+        "DEV",
+        "QA",
+    ]
+
+    second = assert_ok(
+        await api_client.get(
+            "/backlog-board", params={"cycle_id": second_cycle["id"]}
+        )
+    )
+    assert [row["name"] for row in second["reference_data"]["tribes"]] == [
+        "Risk Tribe"
+    ]
+    assert [row["name"] for row in second["reference_data"]["teams"]] == [
+        "Outside Team"
+    ]
+    assert second["reference_data"]["teams"][0]["competencies"] == ["BE"]
+
+    rejected = await api_client.post(
+        f"/backlog-board/items?cycle_id={first_cycle['id']}",
+        json={
+            "tribe": "Risk Tribe",
+            "issue_key": "OUTSIDE-1",
+            "owner_team": "Outside Team",
+        },
+    )
+    assert rejected.status_code == 422
+
+    reduced_setup = {
+        "start_date": first_setup["start_date"],
+        "sprint_count": first_setup["sprint_count"],
+        "pirs": first_setup["pirs"],
+        "teams": [first_setup["teams"][0]],
+        "goals": first_setup["goals"],
+        "tags": first_setup["tags"],
+    }
+    await api_client.put(f"/pi-cycles/{first_cycle['id']}/setup", json=reduced_setup)
+    refreshed = assert_ok(
+        await api_client.get(
+            "/backlog-board", params={"cycle_id": first_cycle["id"]}
+        )
+    )
+    assert [row["name"] for row in refreshed["reference_data"]["teams"]] == [
+        "Команда Альфа"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_backlog_item_commands_keep_ids_validate_and_return_canonical_view(api_client):
     await create_cycle_with_setup(api_client, year=2032, quarter="Q2")
     initial = assert_ok(await api_client.get("/backlog-board"))

@@ -44,17 +44,18 @@
 
 ## Бэклог
 
-- `GET /backlog-board`
-- `POST /backlog-board/items`
-- `PATCH /backlog-board/items/{item_id}`
+- `GET /backlog-board?cycle_id={cycle_id}`
+- `POST /backlog-board/items?cycle_id={cycle_id}`
+- `PATCH /backlog-board/items/{item_id}?cycle_id={cycle_id}`
 - `DELETE /backlog-board/items/{item_id}`
 - `PUT /backlog-board/order`
 - `PUT /backlog-board`
 - `POST /backlog-board/dispatch`
 
 `backlog-board` — основной агрегат вкладки «Бэклог команд»: общий для всех
-PI-циклов список инициатив, разбивка по трайбам, порядок строк, теги, системы АС,
-команды-исполнители и оценки по компетенциям. GET возвращает готовый read model:
+PI-циклов список инициатив, порядок строк, теги и системы АС. Активный frontend всегда
+передаёт `cycle_id`: справочники трайбов, владельцев, исполнителей и компетенций тогда
+формируются исключительно из `pi_cycle_teams` выбранного цикла. GET возвращает read model:
 версию, стабильные UUID, справочники, канонический порядок и серверную общую оценку.
 Каждая item/order-команда соответствует одному действию пользователя и возвращает
 полный новый read model. Bulk PUT оставлен как одна атомарная команда сохранения формы.

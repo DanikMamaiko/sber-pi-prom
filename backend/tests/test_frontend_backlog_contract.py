@@ -24,7 +24,8 @@ def test_backlog_has_one_backend_read_model_and_no_browser_business_copy():
         assert forbidden not in source
 
     assert "let backlogBoard=null;" in source
-    assert "applyBacklogBoard(await cycleApi('/backlog-board'))" in source
+    assert "applyBacklogBoard(await cycleApi(backlogScopedPath('/backlog-board',id)))" in source
+    assert "cycle_id=${encodeURIComponent(backendId)}" in source
 
 
 def test_each_backlog_action_uses_a_dedicated_command_and_server_response():
@@ -33,6 +34,7 @@ def test_each_backlog_action_uses_a_dedicated_command_and_server_response():
     mutation = source[start : source.index("function cycleApiPayload", start)]
 
     assert mutation.count("cycleApi(") == 1
+    assert "backlogScopedPath(path)" in mutation
     assert "expected_version:backlogBoard.version" in mutation
     assert "applyBacklogBoard(await backlogMutation" in source
     assert "'/backlog-board/items','POST'" in source

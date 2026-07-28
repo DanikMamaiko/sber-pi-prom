@@ -29,7 +29,12 @@ from app.schemas.pi_cycle import (
     BacklogTeamRef,
     BacklogTribeRef,
 )
-from app.services.validation import cycle_team_context, normalized_effort
+from app.services.validation import (
+    cycle_team_context,
+    normalize_name,
+    normalized_effort,
+    resolve_cycle_team,
+)
 
 
 BACKLOG_STATE_ID = 1
@@ -103,7 +108,58 @@ async def _items_query(session: AsyncSession) -> list[BacklogItem]:
     )
 
 
-async def _reference_data(session: AsyncSession) -> BacklogReferenceDataRead:
+async def _reference_data(
+    session: AsyncSession,
+    cycle_id: uuid.UUID | None = None,
+) -> BacklogReferenceDataRead:
+    if cycle_id is not None:
+        cycle_team_rows = list(
+            (
+                await session.scalars(
+                    select(PiCycleTeam)
+                    .options(
+                        selectinload(PiCycleTeam.team).selectinload(Team.tribe),
+                        selectinload(PiCycleTeam.competencies),
+                    )
+                    .where(PiCycleTeam.cycle_id == cycle_id)
+                    .order_by(PiCycleTeam.sort_order, PiCycleTeam.id)
+                )
+            ).all()
+        )
+        tribes: list[Tribe] = []
+        seen_tribes: set[uuid.UUID] = set()
+        competency_codes: list[str] = []
+        for cycle_team in cycle_team_rows:
+            team = cycle_team.team
+            if team.tribe and team.tribe.id not in seen_tribes:
+                seen_tribes.add(team.tribe.id)
+                tribes.append(team.tribe)
+            for competency in cycle_team.competencies:
+                code = competency.code.strip().upper()
+                if code and code not in competency_codes:
+                    competency_codes.append(code)
+        return BacklogReferenceDataRead(
+            tribes=[BacklogTribeRef(id=tribe.id, name=tribe.name) for tribe in tribes],
+            teams=[
+                BacklogTeamRef(
+                    id=cycle_team.team.id,
+                    tribe_id=cycle_team.team.tribe_id,
+                    tribe=(
+                        cycle_team.team.tribe.name if cycle_team.team.tribe else ""
+                    ),
+                    name=cycle_team.team.name,
+                    competencies=[
+                        value.code.strip().upper()
+                        for value in cycle_team.competencies
+                        if value.code.strip()
+                    ],
+                )
+                for cycle_team in cycle_team_rows
+            ],
+            statuses=list(BACKLOG_STATUSES),
+            competencies=competency_codes,
+        )
+
     tribes = list(
         (await session.scalars(select(Tribe).order_by(Tribe.name, Tribe.id))).all()
     )
@@ -159,7 +215,10 @@ async def _reference_data(session: AsyncSession) -> BacklogReferenceDataRead:
     )
 
 
-async def read_backlog_board(session: AsyncSession) -> BacklogBoardRead:
+async def read_backlog_board(
+    session: AsyncSession,
+    cycle_id: uuid.UUID | None = None,
+) -> BacklogBoardRead:
     marker = await session.get(BacklogBoardState, BACKLOG_STATE_ID)
     items = await _items_query(session)
     rows: list[BacklogBoardItemRead] = []
@@ -202,10 +261,11 @@ async def read_backlog_board(session: AsyncSession) -> BacklogBoardRead:
             )
         )
     return BacklogBoardRead(
+        cycle_id=cycle_id,
         initialized=bool(marker and marker.initialized),
         version=marker.version if marker else 0,
         items=rows,
-        reference_data=await _reference_data(session),
+        reference_data=await _reference_data(session, cycle_id),
     )
 
 
@@ -267,6 +327,12 @@ async def _apply_item_fields(
     source: BacklogItemFields,
     tribe_cache: dict[str, Tribe],
     team_cache: dict[tuple[str, uuid.UUID, bool], Team],
+    cycle_context: tuple[
+        dict[tuple[str, str], Team],
+        dict[str, list[Team]],
+        dict[uuid.UUID, set[str]],
+    ]
+    | None = None,
 ) -> None:
     issue_key = normalize_issue_key(source.issue_key)
     status = (source.status or "").strip() or "Нет оценки"
@@ -277,10 +343,29 @@ async def _apply_item_fields(
         raise ValueError("Sent status can only be assigned by the dispatch command")
     if current_status == SENT_STATUS and status != SENT_STATUS:
         raise ValueError("A dispatched initiative cannot be returned to an editable status")
-    tribe = await _resolve_tribe(session, source.tribe, tribe_cache)
-    owner = await _resolve_team(
-        session, source.owner_team, tribe, team_cache, allow_cross_tribe=False
-    )
+    if cycle_context is None:
+        tribe = await _resolve_tribe(session, source.tribe, tribe_cache)
+        owner = await _resolve_team(
+            session, source.owner_team, tribe, team_cache, allow_cross_tribe=False
+        )
+        competencies_by_team: dict[uuid.UUID, set[str]] | None = None
+    else:
+        teams_by_key, teams_by_name, competencies_by_team = cycle_context
+        tribe_key = normalize_name(source.tribe)
+        tribe_teams = [
+            team for (candidate_tribe, _), team in teams_by_key.items()
+            if candidate_tribe == tribe_key
+        ]
+        if not tribe_teams or not tribe_teams[0].tribe:
+            raise ValueError(f"Tribe is not included in this PI cycle: {source.tribe}")
+        tribe = tribe_teams[0].tribe
+        owner = (
+            resolve_cycle_team(
+                teams_by_key, teams_by_name, tribe.name, source.owner_team
+            )
+            if source.owner_team.strip()
+            else None
+        )
 
     item.tribe_id = tribe.id
     item.issue_key = issue_key
@@ -302,9 +387,14 @@ async def _apply_item_fields(
     executors: list[BacklogExecutor] = []
     executor_team_ids: set[uuid.UUID] = set()
     for executor_order, executor in enumerate(source.executors):
-        team = await _resolve_team(
-            session, executor.team, tribe, team_cache, allow_cross_tribe=True
-        )
+        if cycle_context is None:
+            team = await _resolve_team(
+                session, executor.team, tribe, team_cache, allow_cross_tribe=True
+            )
+        else:
+            team = resolve_cycle_team(
+                teams_by_key, teams_by_name, "", executor.team
+            )
         if team is None:
             continue
         if team.id in executor_team_ids:
@@ -321,24 +411,29 @@ async def _apply_item_fields(
             record = BacklogExecutor(team_id=team.id)
         record.team_id = team.id
         record.sort_order = executor_order
-        configured = list(
-            (
-                await session.scalars(
-                    select(PiCycleTeam)
-                    .where(PiCycleTeam.team_id == team.id)
-                    .options(selectinload(PiCycleTeam.competencies))
-                )
-            ).all()
-        )
-        allowed_competencies = {
-            value.code.strip().upper() for value in team.competencies if value.code.strip()
-        }
-        for cycle_team in configured:
-            allowed_competencies.update(
-                value.code.strip().upper()
-                for value in cycle_team.competencies
-                if value.code.strip()
+        if competencies_by_team is None:
+            configured = list(
+                (
+                    await session.scalars(
+                        select(PiCycleTeam)
+                        .where(PiCycleTeam.team_id == team.id)
+                        .options(selectinload(PiCycleTeam.competencies))
+                    )
+                ).all()
             )
+            allowed_competencies = {
+                value.code.strip().upper()
+                for value in team.competencies
+                if value.code.strip()
+            }
+            for cycle_team in configured:
+                allowed_competencies.update(
+                    value.code.strip().upper()
+                    for value in cycle_team.competencies
+                    if value.code.strip()
+                )
+        else:
+            allowed_competencies = competencies_by_team[team.id]
         record.effort_by_competency = normalized_effort(
             executor.effort_by_competency,
             allowed_competencies,
@@ -366,6 +461,7 @@ async def _mark_board_initialized(session: AsyncSession) -> None:
 async def create_backlog_item(
     session: AsyncSession,
     payload: BacklogItemCommand,
+    cycle_id: uuid.UUID | None = None,
 ) -> None:
     issue_key = normalize_issue_key(payload.issue_key)
     if await session.scalar(
@@ -381,7 +477,8 @@ async def create_backlog_item(
     )
     session.add(item)
     await session.flush()
-    await _apply_item_fields(session, item, payload, {}, {})
+    cycle_context = await cycle_team_context(session, cycle_id) if cycle_id else None
+    await _apply_item_fields(session, item, payload, {}, {}, cycle_context)
     await _mark_board_initialized(session)
 
 
@@ -389,6 +486,7 @@ async def update_backlog_item(
     session: AsyncSession,
     item_id: uuid.UUID,
     payload: BacklogItemCommand,
+    cycle_id: uuid.UUID | None = None,
 ) -> None:
     item = await session.scalar(
         select(BacklogItem)
@@ -406,7 +504,8 @@ async def update_backlog_item(
     )
     if duplicate is not None:
         raise ValueError(f"Issue ID already exists in the global backlog: {issue_key}")
-    await _apply_item_fields(session, item, payload, {}, {})
+    cycle_context = await cycle_team_context(session, cycle_id) if cycle_id else None
+    await _apply_item_fields(session, item, payload, {}, {}, cycle_context)
     await _mark_board_initialized(session)
 
 
@@ -492,6 +591,7 @@ async def reorder_backlog_items(
 async def replace_backlog_board(
     session: AsyncSession,
     payload: BacklogBoardWrite,
+    cycle_id: uuid.UUID | None = None,
 ) -> None:
     normalized_keys = [normalize_issue_key(item.issue_key).casefold() for item in payload.items]
     if len(normalized_keys) != len(set(normalized_keys)):
@@ -503,6 +603,7 @@ async def replace_backlog_board(
     used_ids: set[uuid.UUID] = set()
     tribe_cache: dict[str, Tribe] = {}
     team_cache: dict[tuple[str, uuid.UUID, bool], Team] = {}
+    cycle_context = await cycle_team_context(session, cycle_id) if cycle_id else None
 
     # Clear the unique namespace inside this transaction so UUID-stable swaps
     # such as ABC-1 <-> ABC-2 are not rejected by PostgreSQL mid-flush.
@@ -533,7 +634,9 @@ async def replace_backlog_board(
         used_ids.add(item.id)
         applied_by_index[position] = item
 
-        await _apply_item_fields(session, item, source, tribe_cache, team_cache)
+        await _apply_item_fields(
+            session, item, source, tribe_cache, team_cache, cycle_context
+        )
         item.sort_order = source.sort_order if source.sort_order is not None else position
 
     removed_ids = [item.id for item in existing if item.id not in used_ids]

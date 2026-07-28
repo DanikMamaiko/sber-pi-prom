@@ -1196,7 +1196,7 @@ function cycleMutation(id,path,options={}){
 function backlogMutation(path,method,body={}){
   const run=aggregateMutationChain.then(async()=>{
     if(!backlogBoard||!Number.isInteger(backlogBoard.version)) throw new Error('Read model бэклога ещё не загружен');
-    return cycleApi(path,{method,body:{...body,expected_version:backlogBoard.version}});
+    return cycleApi(backlogScopedPath(path),{method,body:{...body,expected_version:backlogBoard.version}});
   });
   aggregateMutationChain=run.catch(()=>{});
   return run;
@@ -1349,7 +1349,15 @@ function reportBacklogSyncError(error){
   }
 }
 async function loadBacklogBoard(){
-  applyBacklogBoard(await cycleApi('/backlog-board'));
+  const id=currentCycleId();
+  if(!id||!cycleBackendIds[id]){backlogBoard=null;return null;}
+  applyBacklogBoard(await cycleApi(backlogScopedPath('/backlog-board',id)));
+  return backlogBoard;
+}
+function backlogScopedPath(path,id=currentCycleId()){
+  const backendId=id&&cycleBackendIds[id];
+  if(!backendId)throw new Error('PI-цикл для бэклога не выбран');
+  return `${path}${path.includes('?')?'&':'?'}cycle_id=${encodeURIComponent(backendId)}`;
 }
 function prePiIssueFromApi(row,prior){
   const it=prior||{};
@@ -2794,6 +2802,13 @@ function bindLanding(){
     state.ui.landingYear=year;
     state.ui.year=year; state.ui.quarter=q;
     activateCycle(id);
+    try{
+      await loadBacklogBoard();
+      backlogApiReady=true;
+    }catch(error){
+      backlogApiReady=false;
+      reportBacklogSyncError(error);
+    }
     save(); render();
   });
 }
@@ -3163,8 +3178,8 @@ function bindColFilters(){
 
 /* =====================================================================
    ВКЛАДКА «Бэклог команд» (7.0 / 7.1)
-   Общий кросс-квартальный бэклог трайба. Команды расписывают инициативы,
-   затем по «Кварталу реализации» отправляют их на Pre PI выбранного цикла.
+   Инициативы могут быть кросс-квартальными, но справочник трайбов, команд и
+   компетенций всегда берётся из «Данных PI-цикла» активного цикла.
 ===================================================================== */
 function backlogRows(){ return backlogBoard&&Array.isArray(backlogBoard.items)?backlogBoard.items:[]; }
 function backlogRefs(){ return backlogBoard&&backlogBoard.reference_data||{tribes:[],teams:[],statuses:[],competencies:[]}; }
@@ -3237,7 +3252,7 @@ function viewBacklog(){
   if(!tribes.includes(state.ui.backlogTribe)){ state.ui.backlogTribe=null; return viewBacklogSelect(); }
   return viewBacklogBoard(state.ui.backlogTribe);
 }
-// 7.0 — выбор трайба (список трайбов — глобальный, не зависит от выбранного PI-цикла)
+// 7.0 — выбор трайба из состава активного PI-цикла.
 function viewBacklogSelect(){
   const isBudget=state.ui.mode==='budget';
   const tribes=backlogRefs().tribes.map(row=>row.name);
