@@ -748,9 +748,9 @@ class ProgramBoardRead(BaseModel):
 
 class GoalsItemWrite(BaseModel):
     id: uuid.UUID | None = None
-    tribe: str = Field(min_length=1, max_length=180)
-    team: str = Field(min_length=1, max_length=180)
-    issue_key: str = Field(min_length=1, max_length=80)
+    tribe: str = Field(default="", max_length=180)
+    team: str = Field(default="", max_length=180)
+    issue_key: str = Field(default="", max_length=80)
     initiative_title: str = Field(default="", max_length=260)
     goal_text: str = Field(default="", max_length=260)
     product: str = Field(default="", max_length=180)
@@ -759,6 +759,15 @@ class GoalsItemWrite(BaseModel):
     target_value: str = Field(default="", max_length=260)
     hypothesis: str = ""
     redesign: str = ""
+    tribe_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
+    initiative_id: uuid.UUID | None = None
+    initiative_ids: list[uuid.UUID] = Field(default_factory=list)
+    title: str = Field(default="", max_length=260)
+    owner: str = Field(default="", max_length=220)
+    business_value: int | None = Field(default=None, ge=0, le=100)
+    status: Literal["planned", "in_progress", "done", "cancelled"] = "planned"
+    category: Literal["committed", "stretch"] = "committed"
     sort_order: int = Field(default=0, ge=0)
 
 
@@ -775,6 +784,76 @@ class GoalsRead(BaseModel):
     initialized: bool
     version: int
     goals: list[GoalsItemRead] = Field(default_factory=list)
+    reference_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class GoalCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=0)
+
+
+class GoalFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tribe_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
+    title: str = Field(min_length=1, max_length=260)
+    product: str = Field(default="", max_length=180)
+    metric: str = Field(default="", max_length=260)
+    current_value: str = Field(default="", max_length=260)
+    target_value: str = Field(default="", max_length=260)
+    hypothesis: str = ""
+    redesign: str = ""
+    owner: str = Field(default="", max_length=220)
+    business_value: int | None = Field(default=None, ge=0, le=100)
+    status: Literal["planned", "in_progress", "done", "cancelled"] = "planned"
+    category: Literal["committed", "stretch"] = "committed"
+    initiative_ids: list[uuid.UUID] = Field(default_factory=list)
+    confirm_cascade: bool = False
+
+
+class GoalCreateCommand(GoalCommand, GoalFields):
+    pass
+
+
+class GoalUpdateCommand(GoalCommand):
+    tribe_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=260)
+    product: str | None = Field(default=None, max_length=180)
+    metric: str | None = Field(default=None, max_length=260)
+    current_value: str | None = Field(default=None, max_length=260)
+    target_value: str | None = Field(default=None, max_length=260)
+    hypothesis: str | None = None
+    redesign: str | None = None
+    owner: str | None = Field(default=None, max_length=220)
+    business_value: int | None = Field(default=None, ge=0, le=100)
+    status: Literal["planned", "in_progress", "done", "cancelled"] | None = None
+    category: Literal["committed", "stretch"] | None = None
+    initiative_ids: list[uuid.UUID] | None = None
+    confirm_cascade: bool = False
+
+
+class GoalDeleteCommand(GoalCommand):
+    confirm_cascade: bool = False
+
+
+class GoalReorderCommand(GoalCommand):
+    goal_ids: list[uuid.UUID] = Field(min_length=1)
+
+
+class GoalStatusCommand(GoalCommand):
+    status: Literal["planned", "in_progress", "done", "cancelled"]
+
+
+class GoalLinkCommand(GoalCommand):
+    initiative_id: uuid.UUID
+    confirm_cascade: bool = False
+
+
+class GoalUnlinkCommand(GoalCommand):
+    confirm_cascade: bool = False
 
 
 class PrePiSubmitTeam(BaseModel):
@@ -855,19 +934,31 @@ class RiskTeamRef(BaseModel):
 class RiskItemWrite(BaseModel):
     id: uuid.UUID | None = None
     client_uid: str = Field(min_length=1, max_length=80)
-    scope: str = Field(pattern="^(general|team)$")
+    scope: str = Field(pattern="^(general|team|tribe|initiative)$")
     team: RiskTeamRef | None = None
+    tribe_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
+    initiative_id: uuid.UUID | None = None
     is_shared: bool = False
     description: str = Field(min_length=1)
     owner: str = Field(default="", max_length=220)
     impact: str = ""
     control_point: str = Field(default="", max_length=220)
     mitigation_plan: str = ""
+    probability: int = Field(default=1, ge=1, le=5)
+    impact_level: int = Field(default=1, ge=1, le=5)
+    reaction_due_date: date | None = None
+    treatment_plan: str = ""
+    status: Literal["open", "watching", "closed"] = "open"
+    roam: Literal["resolved", "owned", "accepted", "mitigated"] | None = None
     sort_order: int = Field(default=0, ge=0)
 
 
 class RiskItemRead(RiskItemWrite):
     id: uuid.UUID
+    criticality: int = 1
+    criticality_label: str = "low"
+    link: dict[str, Any] | None = None
 
 
 class RisksWrite(BaseModel):
@@ -879,6 +970,80 @@ class RisksRead(BaseModel):
     initialized: bool
     version: int
     risks: list[RiskItemRead] = Field(default_factory=list)
+    reference_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class RiskCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=0)
+
+
+class RiskFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Literal["general", "team", "tribe", "initiative"] = "general"
+    tribe_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
+    initiative_id: uuid.UUID | None = None
+    is_shared: bool = False
+    description: str = Field(min_length=1)
+    owner: str = Field(default="", max_length=220)
+    impact: str = ""
+    control_point: str = Field(default="", max_length=220)
+    mitigation_plan: str = ""
+    probability: int = Field(default=1, ge=1, le=5)
+    impact_level: int = Field(default=1, ge=1, le=5)
+    reaction_due_date: date | None = None
+    treatment_plan: str = ""
+    status: Literal["open", "watching", "closed"] = "open"
+    roam: Literal["resolved", "owned", "accepted", "mitigated"] | None = None
+
+
+class RiskCreateCommand(RiskCommand, RiskFields):
+    pass
+
+
+class RiskUpdateCommand(RiskCommand):
+    scope: Literal["general", "team", "tribe", "initiative"] | None = None
+    tribe_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
+    initiative_id: uuid.UUID | None = None
+    is_shared: bool | None = None
+    description: str | None = Field(default=None, min_length=1)
+    owner: str | None = Field(default=None, max_length=220)
+    impact: str | None = None
+    control_point: str | None = Field(default=None, max_length=220)
+    mitigation_plan: str | None = None
+    probability: int | None = Field(default=None, ge=1, le=5)
+    impact_level: int | None = Field(default=None, ge=1, le=5)
+    reaction_due_date: date | None = None
+    treatment_plan: str | None = None
+    status: Literal["open", "watching", "closed"] | None = None
+    roam: Literal["resolved", "owned", "accepted", "mitigated"] | None = None
+
+
+class RiskDeleteCommand(RiskCommand):
+    pass
+
+
+class RiskReorderCommand(RiskCommand):
+    risk_ids: list[uuid.UUID] = Field(min_length=1)
+
+
+class RiskStatusCommand(RiskCommand):
+    status: Literal["open", "watching", "closed"]
+
+
+class RiskRoamCommand(RiskCommand):
+    roam: Literal["resolved", "owned", "accepted", "mitigated"] | None
+
+
+class RiskLinkCommand(RiskCommand):
+    scope: Literal["general", "team", "tribe", "initiative"]
+    tribe_id: uuid.UUID | None = None
+    team_id: uuid.UUID | None = None
+    initiative_id: uuid.UUID | None = None
 
 
 class SprintRead(BaseModel):

@@ -327,7 +327,7 @@
   /* ----- Modal ----- */
   .overlay{position:fixed;inset:0;background:rgba(8,8,14,.62);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:100;animation:fade .15s ease}
   @keyframes fade{from{opacity:0}to{opacity:1}}
-  .modal{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--border2);border-radius:var(--radius);padding:26px;width:380px;box-shadow:0 24px 60px -12px rgba(0,0,0,.6);animation:pop .18s cubic-bezier(.4,.1,.2,1)}
+  .modal{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--border2);border-radius:var(--radius);padding:26px;width:min(560px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:auto;box-shadow:0 24px 60px -12px rgba(0,0,0,.6);animation:pop .18s cubic-bezier(.4,.1,.2,1)}
   @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
   .modal h3{margin-top:0;color:var(--text);text-transform:none;letter-spacing:0;font-size:16px}
   .modal label{display:block;margin-bottom:14px}
@@ -937,9 +937,7 @@ let prePiApiReady=false;
 let prePiViews={};
 let lastPrePiSyncErrorAt=0;
 let goalsApiReady=false;
-let persistedGoalsSnapshots={};
-let goalsSyncTimer=null;
-let goalsSyncChain=Promise.resolve();
+let goalsBoards={};
 let lastGoalsSyncErrorAt=0;
 let teamBoardsApiReady=false;
 let persistedTeamBoardSnapshots={};
@@ -958,9 +956,7 @@ let programBoardSyncTimer=null;
 let programBoardSyncChain=Promise.resolve();
 let lastProgramBoardSyncErrorAt=0;
 let risksApiReady=false;
-let persistedRisksSnapshots={};
-let risksSyncTimer=null;
-let risksSyncChain=Promise.resolve();
+let risksBoards={};
 let lastRisksSyncErrorAt=0;
 // Ключи данных, относящиеся к конкретному PI-циклу. На верхнем уровне state.* они
 // служат «активными» ссылками на выбранный цикл (чтобы не переписывать все вьюхи),
@@ -1126,11 +1122,9 @@ function save(syncCycles=true){
   // синхронизация зависимых агрегатов дала бы ложные 422 и могла бы затереть
   // незавершённый ввод ответом от более раннего запроса.
   if(syncCycles && state.ui.mode==='pi' && state.ui.tab!=='data'){
-    if(goalsApiReady) queueGoalsSync();
     if(teamBoardsApiReady) queueTeamBoardsSync();
     if(capacityApiReady) queueCapacitySync();
     if(programBoardApiReady) queueProgramBoardSync();
-    if(risksApiReady) queueRisksSync();
   }
 }
 
@@ -1457,41 +1451,21 @@ async function loadPrePiCycles(){
   const active=currentCycleId();
   if(active && state.cycles[active]) activateCycle(active);
 }
-function goalsPayload(id,c){
-  ensureCycleShape(c);
-  const goals=[];
-  Object.keys(c.goals||{}).forEach(key=>{
-    const split=key.indexOf('||');
-    if(split<0)return;
-    const tribe=key.slice(0,split),team=key.slice(split+2);
-    (c.goals[key]||[]).forEach((g,sortOrder)=>{
-      const issueKey=String(g.initNum||'').trim();
-      if(!issueKey)return;
-      const issue=(c.issues||[]).find(i=>i.id===issueKey);
-      goals.push({
-        id:g._backendId||null,
-        tribe,
-        team,
-        issue_key:issueKey,
-        initiative_title:String(g.init||(issue&&issue.name)||''),
-        goal_text:String(g.cel||(issue&&issue.cel)||''),
-        product:String(g.product||(issue&&issue.product)||''),
-        metric:String(g.metric||(issue&&issue.metric)||''),
-        current_value:String(g.fact||(issue&&issue.fact)||''),
-        target_value:String(g.plan||(issue&&issue.plan)||''),
-        hypothesis:String(g.hypo||(issue&&issue.hypo)||''),
-        redesign:String(g.redesign||(issue&&issue.redesign)||''),
-        sort_order:sortOrder,
-      });
-    });
-  });
-  return {goals};
-}
-function goalsSnapshotHash(id,c){ return stablePayloadHash(goalsPayload(id,c)); }
 function goalFromApi(row,prior){
   const goal=prior||{};
   Object.assign(goal,{
     _backendId:row.id,
+    id:row.id,
+    tribeId:row.tribe_id||null,
+    teamId:row.team_id||null,
+    initiativeIds:Array.isArray(row.initiative_ids)?row.initiative_ids.slice():[],
+    title:row.title||row.goal_text||'',
+    owner:row.owner||'',
+    businessValue:row.business_value===null||row.business_value===undefined?'':row.business_value,
+    status:row.status||'planned',
+    category:row.category||'committed',
+    tribe:row.tribe||'',
+    team:row.team||'',
     cel:row.goal_text||'',
     product:row.product||'',
     initNum:row.issue_key,
@@ -1504,29 +1478,32 @@ function goalFromApi(row,prior){
   });
   return goal;
 }
-function applyGoals(c,aggregate){
+function applyGoals(c,aggregate,id=currentCycleId()){
   const priorById={},priorByPair={};
   Object.keys(c.goals||{}).forEach(key=>(c.goals[key]||[]).forEach(g=>{
     if(g._backendId)priorById[g._backendId]=g;
     if(g.initNum)priorByPair[key+'||'+String(g.initNum).toLowerCase()]=g;
   }));
+  (c.goalRows||[]).forEach(g=>{ if(g._backendId) priorById[g._backendId]=g; });
   const grouped={};
+  const flat=[];
   (aggregate.goals||[]).forEach(row=>{
     const key=teamKey(row.tribe,row.team);
     const prior=priorById[row.id]||priorByPair[key+'||'+String(row.issue_key).toLowerCase()];
-    (grouped[key]=grouped[key]||[]).push(goalFromApi(row,prior));
+    const goal=goalFromApi(row,prior);
+    flat.push(goal);
+    (grouped[key]=grouped[key]||[]).push(goal);
   });
   c.goals=grouped;
-}
-function applyGoalsIdentity(c,aggregate){
-  const byPair={};
-  Object.keys(c.goals||{}).forEach(key=>(c.goals[key]||[]).forEach(g=>{
-    if(g.initNum)byPair[key+'||'+String(g.initNum).toLowerCase()]=g;
-  }));
-  (aggregate.goals||[]).forEach(row=>{
-    const goal=byPair[teamKey(row.tribe,row.team)+'||'+String(row.issue_key).toLowerCase()];
-    if(goal)goal._backendId=row.id;
-  });
+  c.goalRows=flat;
+  c.goalReference=aggregate.reference_data||{};
+  if(id){
+    goalsBoards[id]=aggregate;
+    if(Number.isInteger(aggregate.version)){
+      cycleVersions[id]=aggregate.version;
+      if(piDataViews[id]&&piDataViews[id].cycle)piDataViews[id].cycle.version=aggregate.version;
+    }
+  }
 }
 function reportGoalsSyncError(error){
   console.error('Goals API sync failed',error);
@@ -1537,40 +1514,21 @@ function reportGoalsSyncError(error){
     toast('Не удалось сохранить вкладку «Цели» в backend.',{type:'warn',timeout:5000});
   }
 }
-async function persistGoalsCycle(id,force=false){
-  const c=state.cycles[id]; if(!c)return;
-  if(!cycleBackendIds[id])await persistCycle(id);
-  const hash=goalsSnapshotHash(id,c);
-  if(!force && persistedGoalsSnapshots[id]===hash)return;
-  const aggregate=await cycleMutation(id,`/pi-cycles/${cycleBackendIds[id]}/goals-board`,{
-    method:'PUT',body:goalsPayload(id,c),
-  });
-  applyGoalsIdentity(c,aggregate);
-  persistedGoalsSnapshots[id]=goalsSnapshotHash(id,c);
-}
-async function syncAllGoals(){
-  for(const id of Object.keys(state.cycles||{}))await persistGoalsCycle(id);
-}
-function runGoalsSync(){
-  const run=goalsSyncChain.then(syncAllGoals);
-  goalsSyncChain=run.catch(reportGoalsSyncError);
-  return run;
-}
-function queueGoalsSync(){
-  clearTimeout(goalsSyncTimer);
-  goalsSyncTimer=setTimeout(()=>{goalsSyncTimer=null;runGoalsSync().catch(()=>{});},350);
-}
-function flushGoalsSync(){
-  if(goalsSyncTimer){clearTimeout(goalsSyncTimer);goalsSyncTimer=null;}
-  return runGoalsSync();
+async function goalsBoardCommand(path,method='POST',body={}){
+  const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
+  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/goals-board${path}`,{method,body});
+  applyGoals(state.cycles[id],aggregate,id);
+  activateCycle(id);
+  render();
+  return aggregate;
 }
 async function loadGoalsCycles(){
-  persistedGoalsSnapshots={};
+  goalsBoards={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id]; if(!backendId)continue;
     const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/goals-board`);
-    applyGoals(state.cycles[id],aggregate);
-    persistedGoalsSnapshots[id]=goalsSnapshotHash(id,state.cycles[id]);
+    applyGoals(state.cycles[id],aggregate,id);
   }
   const active=currentCycleId();
   if(active&&state.cycles[active])activateCycle(active);
@@ -1988,53 +1946,38 @@ async function loadProgramBoardCycles(){
   }
   const active=currentCycleId();if(active&&state.cycles[active])activateCycle(active);
 }
-function risksPayload(id,c){
-  ensureCycleShape(c);
-  const rows=[];
-  const append=(risk,scope,team,sortOrder)=>{
-    if(!risk||!String(risk.desc||'').trim())return;
-    rows.push({
-      id:risk._backendId||null,
-      client_uid:String(risk.id||(risk.id=uid())),
-      scope,team,
-      is_shared:scope==='team'&&!!risk.shared,
-      description:String(risk.desc).trim(),
-      owner:String(risk.owner||''),
-      impact:String(risk.impact||''),
-      control_point:String(risk.control||''),
-      mitigation_plan:String(risk.plan||''),
-      sort_order:sortOrder,
-    });
-  };
-  (c.risks.general||[]).forEach((risk,index)=>append(risk,'general',null,index));
-  Object.keys(c.risks.teams||{}).sort().forEach(key=>{
-    const separator=key.indexOf('||');
-    const tribe=separator>=0?key.slice(0,separator):'';
-    const name=separator>=0?key.slice(separator+2):key;
-    if(!tribe.trim()||!name.trim())return;
-    (c.risks.teams[key]||[]).forEach((risk,index)=>append(risk,'team',{tribe,name},index));
+function riskFromApi(row,prior){
+  const risk=prior||{};
+  Object.assign(risk,{
+    _backendId:row.id,id:row.id,clientUid:row.client_uid,
+    scope:row.scope||'general',
+    tribeId:row.tribe_id||null,teamId:row.team_id||null,initiativeId:row.initiative_id||null,
+    desc:row.description||'',owner:row.owner||'',impact:row.impact||'',
+    control:row.control_point||'',plan:row.mitigation_plan||'',
+    probability:+row.probability||1,impactLevel:+row.impact_level||1,
+    criticality:+row.criticality||1,criticalityLabel:row.criticality_label||'low',
+    reactionDueDate:row.reaction_due_date||'',treatmentPlan:row.treatment_plan||'',
+    status:row.status||'open',roam:row.roam||'',
+    link:row.link||null,
+    shared:row.scope==='team'&&!!row.is_shared,
   });
-  return {risks:rows};
+  return risk;
 }
-function risksSnapshotHash(id,c){return stablePayloadHash(risksPayload(id,c));}
-function applyRisks(c,aggregate){
+function applyRisks(c,aggregate,id=currentCycleId()){
   ensureCycleShape(c);
   const priorById={},priorByUid={};
   const remember=risk=>{
     if(risk._backendId)priorById[risk._backendId]=risk;
+    if(risk.clientUid)priorByUid[String(risk.clientUid).toLowerCase()]=risk;
     if(risk.id)priorByUid[String(risk.id).toLowerCase()]=risk;
   };
   (c.risks.general||[]).forEach(remember);
   Object.values(c.risks.teams||{}).forEach(list=>(list||[]).forEach(remember));
-  const general=[],teams={};
+  (c.riskRows||[]).forEach(remember);
+  const general=[],teams={},flat=[];
   (aggregate.risks||[]).forEach(row=>{
-    const risk=priorById[row.id]||priorByUid[String(row.client_uid).toLowerCase()]||{};
-    Object.assign(risk,{
-      _backendId:row.id,id:row.client_uid,
-      desc:row.description||'',owner:row.owner||'',impact:row.impact||'',
-      control:row.control_point||'',plan:row.mitigation_plan||'',
-      shared:row.scope==='team'&&!!row.is_shared,
-    });
+    const risk=riskFromApi(row,priorById[row.id]||priorByUid[String(row.client_uid).toLowerCase()]);
+    flat.push(risk);
     if(row.scope==='team'&&row.team){
       const key=teamKey(row.team.tribe,row.team.name);
       if(!teams[key])teams[key]=[];
@@ -2042,16 +1985,15 @@ function applyRisks(c,aggregate){
     }else general.push(risk);
   });
   c.risks={general,teams};
-}
-function applyRisksIdentity(c,aggregate){
-  const byUid={};
-  (c.risks.general||[]).forEach(risk=>{if(risk.id)byUid[String(risk.id).toLowerCase()]=risk;});
-  Object.values(c.risks.teams||{}).forEach(list=>(list||[]).forEach(risk=>{
-    if(risk.id)byUid[String(risk.id).toLowerCase()]=risk;
-  }));
-  (aggregate.risks||[]).forEach(row=>{
-    const local=byUid[String(row.client_uid).toLowerCase()];if(local)local._backendId=row.id;
-  });
+  c.riskRows=flat;
+  c.riskReference=aggregate.reference_data||{};
+  if(id){
+    risksBoards[id]=aggregate;
+    if(Number.isInteger(aggregate.version)){
+      cycleVersions[id]=aggregate.version;
+      if(piDataViews[id]&&piDataViews[id].cycle)piDataViews[id].cycle.version=aggregate.version;
+    }
+  }
 }
 function reportRisksSyncError(error){
   console.error('Risks API sync failed',error);
@@ -2062,40 +2004,21 @@ function reportRisksSyncError(error){
     toast('Не удалось сохранить риски в backend.',{type:'warn',timeout:5000});
   }
 }
-async function persistRisksCycle(id,force=false){
-  const c=state.cycles[id];if(!c)return;
-  if(!cycleBackendIds[id])await persistCycle(id);
-  const hash=risksSnapshotHash(id,c);
-  if(!force&&persistedRisksSnapshots[id]===hash)return;
-  const aggregate=await cycleMutation(id,`/pi-cycles/${cycleBackendIds[id]}/risks-board`,{
-    method:'PUT',body:risksPayload(id,c),
-  });
-  if(risksSnapshotHash(id,c)===hash)applyRisksIdentity(c,aggregate);
-  persistedRisksSnapshots[id]=risksSnapshotHash(id,c);
-}
-async function syncAllRisks(){
-  for(const id of Object.keys(state.cycles||{}))await persistRisksCycle(id);
-}
-function runRisksSync(){
-  const run=risksSyncChain.then(syncAllRisks);
-  risksSyncChain=run.catch(reportRisksSyncError);
-  return run;
-}
-function queueRisksSync(){
-  clearTimeout(risksSyncTimer);
-  risksSyncTimer=setTimeout(()=>{risksSyncTimer=null;runRisksSync().catch(()=>{});},350);
-}
-function flushRisksSync(){
-  if(risksSyncTimer){clearTimeout(risksSyncTimer);risksSyncTimer=null;}
-  return runRisksSync();
+async function risksBoardCommand(path,method='POST',body={}){
+  const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
+  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/risks-board${path}`,{method,body});
+  applyRisks(state.cycles[id],aggregate,id);
+  activateCycle(id);
+  render();
+  return aggregate;
 }
 async function loadRisksCycles(){
-  persistedRisksSnapshots={};
+  risksBoards={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id];if(!backendId)continue;
     const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/risks-board`);
-    applyRisks(state.cycles[id],aggregate);
-    persistedRisksSnapshots[id]=risksSnapshotHash(id,state.cycles[id]);
+    applyRisks(state.cycles[id],aggregate,id);
   }
   const active=currentCycleId();if(active&&state.cycles[active])activateCycle(active);
 }
@@ -4987,8 +4910,7 @@ async function prepSubmitToBoards(targets){
     });
     const c=state.cycles[id];
     applyPrePi(c,result.pre_pi,id);
-    applyGoals(c,result.goals);
-    persistedGoalsSnapshots[id]=goalsSnapshotHash(id,c);
+    applyGoals(c,result.goals,id);
     activateCycle(id);
     save();render();
     const parts=[];
@@ -5189,9 +5111,380 @@ function moveGoal(key,from,targetIdx,after){
   save();render();
 }
 
+const GOAL_STATUS_LABELS={planned:'Запланирована',in_progress:'В работе',done:'Готова',cancelled:'Отменена'};
+const GOAL_CATEGORY_LABELS={committed:'Обязательная',stretch:'Дополнительная'};
+function activeCycle(){const id=currentCycleId();return id&&state.cycles[id]?state.cycles[id]:null;}
+function goalRef(){const c=activeCycle();return (c&&c.goalReference)||{};}
+function goalRows(){const c=activeCycle();return (c&&Array.isArray(c.goalRows))?c.goalRows:[];}
+function goalTeamOptions(){return (goalRef().teams||[]).filter(t=>!t.excluded_from_goals);}
+function goalTribeOptions(){
+  const allowed=new Set(goalTeamOptions().map(t=>String(t.tribe_id)));
+  return (goalRef().tribes||[]).filter(t=>allowed.has(String(t.id)));
+}
+function goalInitiativeText(id){
+  const item=(goalRef().initiatives||[]).find(i=>String(i.id)===String(id));
+  return item?`${item.issue_key} · ${item.title}`:'';
+}
+function selectOptions(rows,value,{empty='Все',label=r=>r.name,val=r=>r.id}={}){
+  return `<option value="">${esc(empty)}</option>`+rows.map(r=>{
+    const v=String(val(r)||'');
+    return `<option value="${esc(v)}" ${String(value||'')===v?'selected':''}>${esc(label(r))}</option>`;
+  }).join('');
+}
+function showConfirm(title,message,details,onConfirm){
+  const root=$('#modalRoot');
+  root.innerHTML=`<div class="overlay"><div class="modal">
+    <h3>${esc(title)}</h3>
+    <div class="note" style="margin-bottom:12px">${esc(message)}</div>
+    ${details&&details.length?`<ul style="margin:0 0 14px 18px;color:var(--muted)">${details.map(d=>`<li>${esc(d.issue_key||d.title||d.id||'')}</li>`).join('')}</ul>`:''}
+    <div class="modal-actions"><button id="confirmCancel">Отмена</button><button class="primary" id="confirmOk">Подтвердить</button></div>
+  </div></div>`;
+  $('#confirmCancel').onclick=()=>root.innerHTML='';
+  $('#confirmOk').onclick=async()=>{root.innerHTML='';await onConfirm();};
+}
+function handleCommandError(error,repeat){
+  if(error&&error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required'){
+    showConfirm('Подтверждение последствий',error.detail.message||'Нужно подтверждение',error.detail.affected||[],repeat);
+    return true;
+  }
+  if(reportOptimisticConflict(error))return true;
+  toast(error&&error.message?error.message:'Команда не выполнена',{type:'warn'});
+  return true;
+}
+function viewGoals(){
+  const tribes=goalTribeOptions(),teams=goalTeamOptions();
+  let html=`<div class="card"><h2>Цели ${cycleBadge()}</h2>`;
+  if(!goalsApiReady&&!goalsBoards[currentCycleId()])return html+`<div class="muted">Загрузка целей с backend...</div></div>`;
+  if(!cycleBackendIds[currentCycleId()])return html+`<div class="muted">Backend недоступен или PI-цикл не выбран.</div></div>`;
+  if(!teams.length)return html+`<div class="muted">Добавьте трайбы и команды на вкладке «Данные PI-цикла». Цели не создаются из демонстрационных данных.</div></div>`;
+  const tribeFilter=state.ui.goalsTribeId||'',teamFilter=state.ui.goalsTeamId||'',statusFilter=state.ui.goalsStatus||'';
+  const filteredTeams=tribeFilter?teams.filter(t=>String(t.tribe_id)===String(tribeFilter)):teams;
+  const rows=goalRows().filter(g=>
+    (!tribeFilter||String(g.tribeId)===String(tribeFilter))&&
+    (!teamFilter||String(g.teamId)===String(teamFilter))&&
+    (!statusFilter||g.status===statusFilter)
+  );
+  html+=`<div class="row" style="align-items:flex-end">
+    <label>Трайб<br><select id="goalFilterTribe">${selectOptions(tribes,tribeFilter,{empty:'Все трайбы'})}</select></label>
+    <label>Команда<br><select id="goalFilterTeam">${selectOptions(filteredTeams,teamFilter,{empty:'Все команды'})}</select></label>
+    <label>Статус<br><select id="goalFilterStatus"><option value="">Все статусы</option>${Object.entries(GOAL_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${statusFilter===k?'selected':''}>${v}</option>`).join('')}</select></label>
+    <button class="primary" id="goalAdd">Создать цель</button>
+  </div>`;
+  html+=`<div class="goals-wrap"><table class="goals"><thead><tr>
+    <th>№</th><th>Цель</th><th>Трайб / команда</th><th>Инициативы</th><th>Владелец</th><th>БЦ</th><th>Статус</th><th>Тип</th><th>Метрика</th><th></th>
+  </tr></thead><tbody>`;
+  if(!rows.length){
+    html+=`<tr><td colspan="10" class="muted">Целей пока нет. Создайте первую цель или измените фильтры.</td></tr>`;
+  }else{
+    rows.forEach((g,i)=>{
+      html+=`<tr draggable="true" data-goaldrag-id="${esc(g.id)}">
+        <td><span class="g-handle" title="Изменить порядок">⠿</span>${i+1}</td>
+        <td><b>${esc(g.title)}</b><div class="muted" style="font-size:11px">${esc(g.product||'')}</div></td>
+        <td>${esc(g.tribe||'')}<div class="muted" style="font-size:11px">${esc(g.team||'')}</div></td>
+        <td>${(g.initiativeIds||[]).map(id=>`<div>${esc(goalInitiativeText(id)||id)}</div>`).join('')||'<span class=auto>—</span>'}</td>
+        <td>${esc(g.owner)||'<span class=auto>—</span>'}</td>
+        <td>${g.businessValue!==''?esc(g.businessValue):'<span class=auto>—</span>'}</td>
+        <td><select data-goal-status="${esc(g.id)}">${Object.entries(GOAL_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${g.status===k?'selected':''}>${v}</option>`).join('')}</select></td>
+        <td>${GOAL_CATEGORY_LABELS[g.category]||g.category}</td>
+        <td>${esc(g.metric)||'<span class=auto>—</span>'}</td>
+        <td style="white-space:nowrap"><button class="sm" data-goal-edit="${esc(g.id)}">Изменить</button><button class="sm danger" data-goal-del="${esc(g.id)}">×</button></td>
+      </tr>`;
+    });
+  }
+  html+=`</tbody></table></div></div>`;
+  return html;
+}
+function bindGoals(){
+  const ft=$('#goalFilterTribe'); if(ft)ft.onchange=()=>{state.ui.goalsTribeId=ft.value;state.ui.goalsTeamId='';save();render();};
+  const fteam=$('#goalFilterTeam'); if(fteam)fteam.onchange=()=>{state.ui.goalsTeamId=fteam.value;save();render();};
+  const fs=$('#goalFilterStatus'); if(fs)fs.onchange=()=>{state.ui.goalsStatus=fs.value;save();render();};
+  const add=$('#goalAdd'); if(add)add.onclick=()=>openGoalModal(null);
+  document.querySelectorAll('[data-goal-edit]').forEach(b=>b.onclick=()=>openGoalModal(b.dataset.goalEdit));
+  document.querySelectorAll('[data-goal-del]').forEach(b=>b.onclick=()=>deleteGoalUi(b.dataset.goalDel));
+  document.querySelectorAll('[data-goal-status]').forEach(el=>el.onchange=async()=>{
+    try{await goalsBoardCommand(`/goals/${el.dataset.goalStatus}/status`,'PATCH',{status:el.value});toast('Статус цели обновлён',{type:'success'});}
+    catch(error){handleCommandError(error,()=>goalsBoardCommand(`/goals/${el.dataset.goalStatus}/status`,'PATCH',{status:el.value}));}
+  });
+  bindGoalRowDrag();
+}
+function goalPayloadFromModal(){
+  const selected=[...document.querySelectorAll('#gm_initiatives option:checked')].map(o=>o.value).filter(Boolean);
+  const teamId=$('#gm_team').value||null;
+  const team=goalTeamOptions().find(t=>String(t.id)===String(teamId));
+  return {
+    tribe_id:team?team.tribe_id:($('#gm_tribe').value||null),
+    team_id:teamId,
+    title:$('#gm_title').value.trim(),
+    owner:$('#gm_owner').value.trim(),
+    business_value:$('#gm_bv').value===''?null:+$('#gm_bv').value,
+    status:$('#gm_status').value,
+    category:$('#gm_category').value,
+    product:$('#gm_product').value.trim(),
+    metric:$('#gm_metric').value.trim(),
+    current_value:$('#gm_current').value.trim(),
+    target_value:$('#gm_target').value.trim(),
+    hypothesis:$('#gm_hypothesis').value.trim(),
+    redesign:$('#gm_redesign').value.trim(),
+    initiative_ids:selected,
+  };
+}
+function openGoalModal(goalId){
+  const g=goalRows().find(x=>x.id===goalId)||{};
+  const ref=goalRef(),teams=goalTeamOptions();
+  const teamValue=g.teamId||state.ui.goalsTeamId||'';
+  const tribeValue=g.tribeId||state.ui.goalsTribeId||'';
+  const root=$('#modalRoot');
+  root.innerHTML=`<div class="overlay"><div class="modal">
+    <h3>${goalId?'Редактирование цели':'Новая цель'}</h3>
+    <label><span>Цель</span><input id="gm_title" value="${esc(g.title||'')}"></label>
+    <label><span>Трайб</span><select id="gm_tribe">${selectOptions(goalTribeOptions(),tribeValue,{empty:'Без трайба'})}</select></label>
+    <label><span>Команда</span><select id="gm_team">${selectOptions(teams,teamValue,{empty:'Без команды',label:t=>`${t.tribe} / ${t.name}`})}</select></label>
+    <label><span>Инициативы</span><select id="gm_initiatives" multiple size="6">${(ref.initiatives||[]).map(i=>`<option value="${esc(i.id)}" ${(g.initiativeIds||[]).includes(i.id)?'selected':''}>${esc(i.issue_key)} · ${esc(i.title)}</option>`).join('')}</select></label>
+    <label><span>Владелец</span><input id="gm_owner" value="${esc(g.owner||'')}"></label>
+    <label><span>Бизнес-ценность</span><input id="gm_bv" type="number" min="0" max="100" value="${esc(g.businessValue||'')}"></label>
+    <label><span>Статус</span><select id="gm_status">${Object.entries(GOAL_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${(g.status||'planned')===k?'selected':''}>${v}</option>`).join('')}</select></label>
+    <label><span>Тип цели</span><select id="gm_category">${Object.entries(GOAL_CATEGORY_LABELS).map(([k,v])=>`<option value="${k}" ${(g.category||'committed')===k?'selected':''}>${v}</option>`).join('')}</select></label>
+    <label><span>Продукт</span><input id="gm_product" value="${esc(g.product||'')}"></label>
+    <label><span>Метрика</span><input id="gm_metric" value="${esc(g.metric||'')}"></label>
+    <label><span>AS IS</span><input id="gm_current" value="${esc(g.fact||'')}"></label>
+    <label><span>TO BE</span><input id="gm_target" value="${esc(g.plan||'')}"></label>
+    <label><span>Гипотеза</span><textarea id="gm_hypothesis" rows="2">${esc(g.hypo||'')}</textarea></label>
+    <label><span>Редизайн</span><textarea id="gm_redesign" rows="2">${esc(g.redesign||'')}</textarea></label>
+    <div class="modal-actions"><button id="gm_cancel">Отмена</button><button class="primary" id="gm_save">Сохранить</button></div>
+  </div></div>`;
+  $('#gm_cancel').onclick=()=>root.innerHTML='';
+  $('#gm_save').onclick=async()=>{
+    const payload=goalPayloadFromModal();
+    if(!payload.title){toast('Укажите цель',{type:'warn'});return;}
+    const run=confirm_cascade=>goalsBoardCommand(goalId?`/goals/${goalId}`:'/goals',goalId?'PATCH':'POST',{...payload,confirm_cascade});
+    try{await run(false);root.innerHTML='';toast(goalId?'Цель обновлена':'Цель создана',{type:'success'});}
+    catch(error){handleCommandError(error,async()=>{await run(true);root.innerHTML='';toast('Цель обновлена',{type:'success'});});}
+  };
+}
+function deleteGoalUi(goalId){
+  showConfirm('Удаление цели','Цель будет удалена из активного PI-цикла. Если есть связанные инициативы, backend потребует отдельное подтверждение.',[],async()=>{
+    const run=confirm_cascade=>goalsBoardCommand(`/goals/${goalId}`,'DELETE',{confirm_cascade});
+    try{await run(false);toast('Цель удалена',{type:'info'});}
+    catch(error){handleCommandError(error,async()=>{await run(true);toast('Цель удалена',{type:'info'});});}
+  });
+}
+function bindGoalRowDrag(){
+  let dragIdx=null;
+  document.querySelectorAll('tr[data-goaldrag-id]').forEach(tr=>{
+    tr.addEventListener('dragstart',e=>{
+      if(e.target.closest('select,button')){ e.preventDefault(); return; }
+      dragIdx=tr.dataset.goaldragId;
+      e.dataTransfer.effectAllowed='move';
+      try{e.dataTransfer.setData('text/plain',String(dragIdx));}catch(_){}
+      tr.classList.add('dragging');
+    });
+    tr.addEventListener('dragend',()=>{tr.classList.remove('dragging');clearPrepRowDropMarkers();});
+    tr.addEventListener('dragover',e=>{
+      e.preventDefault();
+      const after=isPrepDropAfter(tr,e);
+      tr.classList.toggle('rowdragover-before',!after);
+      tr.classList.toggle('rowdragover-after',after);
+    });
+    tr.addEventListener('dragleave',()=>clearPrepRowDropMarkers(tr));
+    tr.addEventListener('drop',e=>{
+      e.preventDefault(); e.stopPropagation();
+      clearPrepRowDropMarkers(tr);
+      moveGoal(dragIdx,tr.dataset.goaldragId,isPrepDropAfter(tr,e));
+    });
+  });
+}
+async function moveGoal(fromId,targetId,after){
+  if(!fromId||!targetId||fromId===targetId)return;
+  const ids=goalRows().map(g=>g.id);
+  const from=ids.indexOf(fromId),target=ids.indexOf(targetId);
+  if(from<0||target<0)return;
+  const [item]=ids.splice(from,1);
+  let insertAt=after?target+1:target;
+  if(from<insertAt)insertAt--;
+  ids.splice(insertAt,0,item);
+  try{await goalsBoardCommand('/order','PUT',{goal_ids:ids});toast('Порядок целей обновлён',{type:'success'});}
+  catch(error){handleCommandError(error,()=>goalsBoardCommand('/order','PUT',{goal_ids:ids}));}
+}
+
 /* =====================================================================
    ВКЛАДКА 3 — Program Board
 ===================================================================== */
+function goalTeamBySelection(){
+  const teams=goalTeamOptions();
+  if(state.ui.goalsTeamId){
+    const byId=teams.find(t=>String(t.id)===String(state.ui.goalsTeamId));
+    if(byId)return byId;
+  }
+  return teams.find(t=>t.name===state.ui.goalsTeam && t.tribe===state.ui.goalsTribe)||null;
+}
+function selectedGoalTribe(){
+  const tribes=goalTribeOptions();
+  if(state.ui.goalsTribeId){
+    const byId=tribes.find(t=>String(t.id)===String(state.ui.goalsTribeId));
+    if(byId)return byId;
+  }
+  return tribes.find(t=>t.name===state.ui.goalsTribe)||null;
+}
+function goalGroupName(g){
+  const issue=findIssue(g.initNum)||{};
+  return String(g.cel||g.title||issue.cel||'');
+}
+function goalPatchForField(field,value){
+  const map={metric:'metric',fact:'current_value',plan:'target_value',hypo:'hypothesis',redesign:'redesign'};
+  return {[map[field]||field]:value};
+}
+function goalRowsForTeam(team){
+  if(!team)return [];
+  return goalRows().filter(g=>String(g.teamId||'')===String(team.id));
+}
+function viewGoals(){
+  const cycleId=currentCycleId();
+  let html=`<div class="card"><h2>Цели ${cycleBadge()}</h2>`;
+  if(!goalsApiReady&&!goalsBoards[cycleId])return html+`<div class="muted">Загрузка целей с backend...</div></div>`;
+  if(!cycleBackendIds[cycleId])return html+`<div class="muted">Backend недоступен или PI-цикл не выбран.</div></div>`;
+
+  const tribes=goalTribeOptions();
+  if(!tribes.length){
+    return html+`<div class="muted">Нет трайбов и команд для целей. Добавьте их на вкладке «Данные PI-цикла».</div></div>`;
+  }
+
+  const tribe=selectedGoalTribe();
+  const tribeId=tribe?String(tribe.id):'';
+  html+=`<div>`+tribes.map(t=>`<span class="pill tribe ${tribeId===String(t.id)?'sel':''}" data-goal-tribe-id="${esc(t.id)}" data-goal-tribe-name="${esc(t.name)}">${esc(t.name)}</span>`).join('')+`</div>`;
+
+  if(!tribe){
+    html+=`<div class="muted" style="margin-top:14px">Выберите трайб.</div></div>`;
+    return html;
+  }
+
+  const teams=goalTeamOptions().filter(t=>String(t.tribe_id)===tribeId);
+  const selectedTeam=goalTeamBySelection();
+  const teamId=selectedTeam&&teams.some(t=>String(t.id)===String(selectedTeam.id))?String(selectedTeam.id):'';
+  html+=`<div style="margin-top:6px">`+teams.map(t=>`<span class="pill ${teamId===String(t.id)?'sel':''}" data-goal-team-id="${esc(t.id)}" data-goal-team-name="${esc(t.name)}">${esc(t.name)}</span>`).join('')+`</div>`;
+
+  if(!teamId){
+    html+=`<div class="muted" style="margin-top:14px">Выберите команду.</div></div>`;
+    return html;
+  }
+
+  const statusFilter=state.ui.goalsStatus||'';
+  const team=teams.find(t=>String(t.id)===teamId);
+  const isIT=teamType(team)==='ИТ-проект';
+  const allRows=goalRowsForTeam(team);
+  const rows=allRows.filter(g=>!statusFilter||g.status===statusFilter);
+  const COLS=GOAL_COLS, EDIT=GOAL_EDIT;
+  html+=`<div class="row" style="align-items:flex-end;margin-top:12px">
+    <label>Статус<br><select id="goalFilterStatus"><option value="">Все статусы</option>${Object.entries(GOAL_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${statusFilter===k?'selected':''}>${v}</option>`).join('')}</select></label>
+    <button class="primary" id="goalAddTeam">Добавить строку</button>
+  </div>`;
+  html+=`<div class="goals-wrap"><table class="goals"><thead><tr><th>№</th>`+
+    COLS.map(c=>`<th>${c[1]}</th>`).join('')+`</tr></thead><tbody>`;
+  const colCount=COLS.length+1;
+  if(!rows.length){
+    const text=allRows.length
+      ? 'Нет целей с таким статусом. Измените фильтр.'
+      : 'Целей пока нет — добавьте их на «Pre PI Planning» кнопкой «Отправить на доски» или создайте строку вручную.';
+    html+=`<tr><td colspan="${colCount}" class="muted">${text}</td></tr>`;
+  }else{
+    const byGoal=new Map();
+    rows.forEach(g=>{
+      const key=goalGroupName(g);
+      if(!byGoal.has(key))byGoal.set(key,[]);
+      byGoal.get(key).push(g);
+    });
+    const order=[];
+    (state.pi.goals||[]).forEach(name=>{if(byGoal.has(name))order.push(name);});
+    [...byGoal.keys()].forEach(name=>{if(name&&!order.includes(name))order.push(name);});
+    if(byGoal.has(''))order.push('');
+    let n=0;
+    const emptyLabel=isIT?'Без вехи':'Без цели';
+    order.forEach(group=>{
+      html+=`<tr class="goal-group"><td colspan="${colCount}">${group?esc(group):emptyLabel}</td></tr>`;
+      byGoal.get(group).forEach(g=>{
+        n++;
+        html+=`<tr draggable="true" data-goaldrag-id="${esc(g.id)}"><td><span class="g-handle" title="Перетащите, чтобы изменить порядок">⋮</span>${n}<div style="white-space:nowrap;margin-top:4px"><button class="sm" data-goal-edit="${esc(g.id)}" title="Параметры цели">...</button><button class="sm danger" data-goal-del="${esc(g.id)}" title="Удалить">×</button></div></td>`+
+          COLS.map(c=>EDIT.includes(c[0])
+            ? `<td><input data-goal-field-id="${esc(g.id)}" data-goal-k="${c[0]}" value="${esc(g[c[0]]||'')}"></td>`
+            : `<td>${esc(g[c[0]]||'')||'<span class=auto>—</span>'}</td>`
+          ).join('')+`</tr>`;
+      });
+    });
+  }
+  html+=`</tbody></table></div>
+    <div class="note" style="margin-top:14px">${isIT
+      ? 'Инициативы сгруппированы по вехам ИТ-проекта. Метрика, AS IS, TO BE, гипотезы и редизайн редактируются прямо в таблице; после каждой команды данные заново загружаются с backend.'
+      : 'Инициативы сгруппированы по целям. Метрика, AS IS, TO BE, гипотезы и редизайн редактируются прямо в таблице; после каждой команды данные заново загружаются с backend.'}</div></div>`;
+  return html;
+}
+function bindGoals(){
+  document.querySelectorAll('[data-goal-tribe-id]').forEach(el=>el.onclick=()=>{
+    state.ui.goalsTribeId=el.dataset.goalTribeId;
+    state.ui.goalsTribe=el.dataset.goalTribeName;
+    state.ui.goalsTeamId='';
+    state.ui.goalsTeam=null;
+    save();render();
+  });
+  document.querySelectorAll('[data-goal-team-id]').forEach(el=>el.onclick=()=>{
+    state.ui.goalsTeamId=el.dataset.goalTeamId;
+    state.ui.goalsTeam=el.dataset.goalTeamName;
+    save();render();
+  });
+  const fs=$('#goalFilterStatus'); if(fs)fs.onchange=()=>{state.ui.goalsStatus=fs.value;save();render();};
+  const add=$('#goalAddTeam'); if(add)add.onclick=()=>openGoalModal(null);
+  document.querySelectorAll('[data-goal-edit]').forEach(b=>b.onclick=()=>openGoalModal(b.dataset.goalEdit));
+  document.querySelectorAll('[data-goal-del]').forEach(b=>b.onclick=()=>deleteGoalUi(b.dataset.goalDel));
+  document.querySelectorAll('[data-goal-field-id]').forEach(el=>el.onchange=async()=>{
+    const goalId=el.dataset.goalFieldId;
+    try{
+      await goalsBoardCommand(`/goals/${goalId}`,'PATCH',goalPatchForField(el.dataset.goalK,el.value));
+      toast('Цель обновлена',{type:'success'});
+    }catch(error){
+      handleCommandError(error,()=>goalsBoardCommand(`/goals/${goalId}`,'PATCH',goalPatchForField(el.dataset.goalK,el.value)));
+    }
+  });
+  bindGoalRowDrag();
+}
+function bindGoalRowDrag(){
+  let dragId=null;
+  document.querySelectorAll('tr[data-goaldrag-id]').forEach(tr=>{
+    tr.addEventListener('dragstart',e=>{
+      if(e.target.closest('input,button')){e.preventDefault();return;}
+      dragId=tr.dataset.goaldragId;
+      e.dataTransfer.effectAllowed='move';
+      try{e.dataTransfer.setData('text/plain',String(dragId));}catch(_){}
+      tr.classList.add('dragging');
+    });
+    tr.addEventListener('dragend',()=>{tr.classList.remove('dragging');clearPrepRowDropMarkers();});
+    tr.addEventListener('dragover',e=>{
+      e.preventDefault();
+      const after=isPrepDropAfter(tr,e);
+      tr.classList.toggle('rowdragover-before',!after);
+      tr.classList.toggle('rowdragover-after',after);
+    });
+    tr.addEventListener('dragleave',()=>clearPrepRowDropMarkers(tr));
+    tr.addEventListener('drop',e=>{
+      e.preventDefault(); e.stopPropagation();
+      clearPrepRowDropMarkers(tr);
+      moveGoal(dragId,tr.dataset.goaldragId,isPrepDropAfter(tr,e));
+    });
+  });
+}
+async function moveGoal(fromId,targetId,after){
+  if(!fromId||!targetId||fromId===targetId)return;
+  const selected=goalTeamBySelection();
+  const selectedIds=goalRowsForTeam(selected).map(g=>g.id);
+  const from=selectedIds.indexOf(fromId),target=selectedIds.indexOf(targetId);
+  if(from<0||target<0)return;
+  const [item]=selectedIds.splice(from,1);
+  let insertAt=after?target+1:target;
+  if(from<insertAt)insertAt--;
+  selectedIds.splice(insertAt,0,item);
+  const selectedSet=new Set(selectedIds);
+  const ids=goalRows().filter(g=>!selectedSet.has(g.id)).map(g=>g.id).concat(selectedIds);
+  try{await goalsBoardCommand('/order','PUT',{goal_ids:ids});toast('Порядок целей обновлён',{type:'success'});}
+  catch(error){handleCommandError(error,()=>goalsBoardCommand('/order','PUT',{goal_ids:ids}));}
+}
+
 function pbTeamFilterOptions(){
   const seen=[];
   const add=name=>{
@@ -6793,6 +7086,187 @@ function openRiskModal(idx){
   };
 }
 
+const RISK_STATUS_LABELS={open:'Открыт',watching:'Наблюдение',closed:'Закрыт'};
+const RISK_ROAM_LABELS={resolved:'Resolved',owned:'Owned',accepted:'Accepted',mitigated:'Mitigated'};
+function riskRef(){const c=activeCycle();return (c&&c.riskReference)||{};}
+function riskRows(){const c=activeCycle();return (c&&Array.isArray(c.riskRows))?c.riskRows:[];}
+function riskTribeOptions(){return riskRef().tribes||[];}
+function riskTeamOptions(){return riskRef().teams||[];}
+function riskInitiativeOptions(){return riskRef().initiatives||[];}
+function riskLinkLabel(r){
+  if(r.scope==='team'){
+    const t=riskTeamOptions().find(x=>String(x.id)===String(r.teamId));
+    return t?`${t.tribe} / ${t.name}`:'Команда';
+  }
+  if(r.scope==='tribe'){
+    const t=riskTribeOptions().find(x=>String(x.id)===String(r.tribeId));
+    return t?t.name:'Трайб';
+  }
+  if(r.scope==='initiative'){
+    const i=riskInitiativeOptions().find(x=>String(x.id)===String(r.initiativeId));
+    return i?`${i.issue_key} · ${i.title}`:'Инициатива';
+  }
+  return 'Общий риск';
+}
+function viewRisks(){
+  const teams=riskTeamOptions(),tribes=riskTribeOptions();
+  let html=`<div class="card"><h2>Риски ${cycleBadge()}</h2>`;
+  if(!risksApiReady&&!risksBoards[currentCycleId()])return html+`<div class="muted">Загрузка рисков с backend...</div></div>`;
+  if(!cycleBackendIds[currentCycleId()])return html+`<div class="muted">Backend недоступен или PI-цикл не выбран.</div></div>`;
+  if(!teams.length&&!tribes.length)return html+`<div class="muted">Добавьте трайбы и команды на вкладке «Данные PI-цикла». Риски не создаются из демонстрационных данных.</div></div>`;
+  const scopeFilter=state.ui.riskScope||'',tribeFilter=state.ui.riskTribeId||'',teamFilter=state.ui.riskTeamId||'',statusFilter=state.ui.riskStatus||'';
+  const filteredTeams=tribeFilter?teams.filter(t=>String(t.tribe_id)===String(tribeFilter)):teams;
+  const rows=riskRows().filter(r=>
+    (!scopeFilter||r.scope===scopeFilter)&&
+    (!tribeFilter||String(r.tribeId)===String(tribeFilter))&&
+    (!teamFilter||String(r.teamId)===String(teamFilter))&&
+    (!statusFilter||r.status===statusFilter)
+  );
+  html+=`<div class="row" style="align-items:flex-end">
+    <label>Связь<br><select id="riskFilterScope"><option value="">Все</option>${['general','tribe','team','initiative'].map(s=>`<option value="${s}" ${scopeFilter===s?'selected':''}>${s}</option>`).join('')}</select></label>
+    <label>Трайб<br><select id="riskFilterTribe">${selectOptions(tribes,tribeFilter,{empty:'Все трайбы'})}</select></label>
+    <label>Команда<br><select id="riskFilterTeam">${selectOptions(filteredTeams,teamFilter,{empty:'Все команды',label:t=>`${t.tribe} / ${t.name}`})}</select></label>
+    <label>Статус<br><select id="riskFilterStatus"><option value="">Все статусы</option>${Object.entries(RISK_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${statusFilter===k?'selected':''}>${v}</option>`).join('')}</select></label>
+    <button class="primary" id="riskAdd">Создать риск</button>
+  </div>`;
+  html+=`<div class="goals-wrap"><table><thead><tr>
+    <th>№</th><th>Риск</th><th>Связь</th><th>Владелец</th><th>P</th><th>I</th><th>Критичность</th><th>Срок</th><th>Статус</th><th>ROAM</th><th></th>
+  </tr></thead><tbody>`;
+  if(!rows.length){
+    html+=`<tr><td colspan="11" class="muted">Рисков пока нет. Создайте первый риск или измените фильтры.</td></tr>`;
+  }else{
+    rows.forEach((r,i)=>{
+      html+=`<tr draggable="true" data-riskdrag-id="${esc(r.id)}">
+        <td><span class="g-handle" title="Изменить порядок">⠿</span>${i+1}</td>
+        <td><b>${esc(r.desc)}</b><div class="muted" style="font-size:11px">${esc(r.impact||'')}</div></td>
+        <td>${esc(riskLinkLabel(r))}${r.shared?'<div class="muted" style="font-size:11px">общий командный</div>':''}</td>
+        <td>${esc(r.owner)||'<span class=auto>—</span>'}</td>
+        <td>${esc(r.probability)}</td><td>${esc(r.impactLevel)}</td>
+        <td>${esc(r.criticality)} · ${esc(r.criticalityLabel)}</td>
+        <td>${esc(r.reactionDueDate)||'<span class=auto>—</span>'}</td>
+        <td><select data-risk-status="${esc(r.id)}">${Object.entries(RISK_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${r.status===k?'selected':''}>${v}</option>`).join('')}</select></td>
+        <td><select data-risk-roam="${esc(r.id)}"><option value="">—</option>${Object.entries(RISK_ROAM_LABELS).map(([k,v])=>`<option value="${k}" ${r.roam===k?'selected':''}>${v}</option>`).join('')}</select></td>
+        <td style="white-space:nowrap"><button class="sm" data-risk-edit="${esc(r.id)}">Изменить</button><button class="sm danger" data-risk-del="${esc(r.id)}">×</button></td>
+      </tr>`;
+    });
+  }
+  html+=`</tbody></table></div></div>`;
+  return html;
+}
+function bindRisks(){
+  const fs=$('#riskFilterScope'); if(fs)fs.onchange=()=>{state.ui.riskScope=fs.value;save();render();};
+  const ft=$('#riskFilterTribe'); if(ft)ft.onchange=()=>{state.ui.riskTribeId=ft.value;state.ui.riskTeamId='';save();render();};
+  const fteam=$('#riskFilterTeam'); if(fteam)fteam.onchange=()=>{state.ui.riskTeamId=fteam.value;save();render();};
+  const fst=$('#riskFilterStatus'); if(fst)fst.onchange=()=>{state.ui.riskStatus=fst.value;save();render();};
+  const add=$('#riskAdd'); if(add)add.onclick=()=>openRiskModal(null);
+  document.querySelectorAll('[data-risk-edit]').forEach(b=>b.onclick=()=>openRiskModal(b.dataset.riskEdit));
+  document.querySelectorAll('[data-risk-del]').forEach(b=>b.onclick=()=>deleteRiskUi(b.dataset.riskDel));
+  document.querySelectorAll('[data-risk-status]').forEach(el=>el.onchange=async()=>{
+    try{await risksBoardCommand(`/risks/${el.dataset.riskStatus}/status`,'PATCH',{status:el.value});toast('Статус риска обновлён',{type:'success'});}
+    catch(error){handleCommandError(error,()=>risksBoardCommand(`/risks/${el.dataset.riskStatus}/status`,'PATCH',{status:el.value}));}
+  });
+  document.querySelectorAll('[data-risk-roam]').forEach(el=>el.onchange=async()=>{
+    try{await risksBoardCommand(`/risks/${el.dataset.riskRoam}/roam`,'PATCH',{roam:el.value||null});toast('ROAM обновлён',{type:'success'});}
+    catch(error){handleCommandError(error,()=>risksBoardCommand(`/risks/${el.dataset.riskRoam}/roam`,'PATCH',{roam:el.value||null}));}
+  });
+  bindRiskRowDrag();
+}
+function riskPayloadFromModal(){
+  const scope=$('#rm_scope').value;
+  return {
+    scope,
+    tribe_id:scope==='tribe'?($('#rm_tribe').value||null):null,
+    team_id:scope==='team'?($('#rm_team').value||null):null,
+    initiative_id:scope==='initiative'?($('#rm_initiative').value||null):null,
+    is_shared:scope==='team'&&$('#rm_shared')&&$('#rm_shared').checked,
+    description:$('#rm_desc').value.trim(),
+    owner:$('#rm_owner').value.trim(),
+    impact:$('#rm_impact').value.trim(),
+    control_point:$('#rm_control').value.trim(),
+    mitigation_plan:$('#rm_plan').value.trim(),
+    probability:+$('#rm_probability').value||1,
+    impact_level:+$('#rm_impact_level').value||1,
+    reaction_due_date:$('#rm_due').value||null,
+    treatment_plan:$('#rm_treatment').value.trim(),
+    status:$('#rm_status').value,
+    roam:$('#rm_roam').value||null,
+  };
+}
+function openRiskModal(riskId){
+  const r=riskRows().find(x=>x.id===riskId)||{};
+  const scope=r.scope||state.ui.riskScope||'general';
+  const root=$('#modalRoot');
+  root.innerHTML=`<div class="overlay"><div class="modal">
+    <h3>${riskId?'Редактирование риска':'Новый риск'}</h3>
+    <label><span>Связь</span><select id="rm_scope">
+      ${['general','tribe','team','initiative'].map(s=>`<option value="${s}" ${scope===s?'selected':''}>${s}</option>`).join('')}
+    </select></label>
+    <label><span>Трайб</span><select id="rm_tribe">${selectOptions(riskTribeOptions(),r.tribeId||state.ui.riskTribeId||'',{empty:'Выберите трайб'})}</select></label>
+    <label><span>Команда</span><select id="rm_team">${selectOptions(riskTeamOptions(),r.teamId||state.ui.riskTeamId||'',{empty:'Выберите команду',label:t=>`${t.tribe} / ${t.name}`})}</select></label>
+    <label><span>Инициатива</span><select id="rm_initiative">${selectOptions(riskInitiativeOptions(),r.initiativeId||'',{empty:'Выберите инициативу',label:i=>`${i.issue_key} · ${i.title}`})}</select></label>
+    <label><span>Описание риска</span><textarea id="rm_desc" rows="2">${esc(r.desc||'')}</textarea></label>
+    <label><span>Владелец</span><input id="rm_owner" value="${esc(r.owner||'')}"></label>
+    <label><span>Влияние</span><input id="rm_impact" value="${esc(r.impact||'')}"></label>
+    <label><span>Вероятность 1-5</span><input id="rm_probability" type="number" min="1" max="5" value="${esc(r.probability||1)}"></label>
+    <label><span>Влияние 1-5</span><input id="rm_impact_level" type="number" min="1" max="5" value="${esc(r.impactLevel||1)}"></label>
+    <label><span>Срок реакции</span><input id="rm_due" type="date" value="${esc(r.reactionDueDate||'')}"></label>
+    <label><span>Контрольная точка</span><input id="rm_control" value="${esc(r.control||'')}"></label>
+    <label><span>План обработки</span><textarea id="rm_treatment" rows="2">${esc(r.treatmentPlan||'')}</textarea></label>
+    <label><span>План снижения</span><textarea id="rm_plan" rows="2">${esc(r.plan||'')}</textarea></label>
+    <label><span>Статус</span><select id="rm_status">${Object.entries(RISK_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${(r.status||'open')===k?'selected':''}>${v}</option>`).join('')}</select></label>
+    <label><span>ROAM</span><select id="rm_roam"><option value="">—</option>${Object.entries(RISK_ROAM_LABELS).map(([k,v])=>`<option value="${k}" ${(r.roam||'')===k?'selected':''}>${v}</option>`).join('')}</select></label>
+    <label style="display:flex;align-items:center;gap:9px;cursor:pointer"><input type="checkbox" id="rm_shared" ${r.shared?'checked':''} style="width:auto;margin:0"><span style="margin:0;color:var(--text)">Общий командный риск</span></label>
+    <div class="modal-actions"><button id="rm_cancel">Отмена</button><button class="primary" id="rm_save">Сохранить</button></div>
+  </div></div>`;
+  $('#rm_cancel').onclick=()=>root.innerHTML='';
+  $('#rm_save').onclick=async()=>{
+    const payload=riskPayloadFromModal();
+    if(!payload.description){toast('Укажите описание риска',{type:'warn'});return;}
+    const run=()=>risksBoardCommand(riskId?`/risks/${riskId}`:'/risks',riskId?'PATCH':'POST',payload);
+    try{await run();root.innerHTML='';toast(riskId?'Риск обновлён':'Риск создан',{type:'success'});}
+    catch(error){handleCommandError(error,run);}
+  };
+}
+function deleteRiskUi(riskId){
+  showConfirm('Удаление риска','Риск будет удалён из активного PI-цикла.',[],async()=>{
+    try{await risksBoardCommand(`/risks/${riskId}`,'DELETE',{});toast('Риск удалён',{type:'info'});}
+    catch(error){handleCommandError(error,()=>risksBoardCommand(`/risks/${riskId}`,'DELETE',{}));}
+  });
+}
+function bindRiskRowDrag(){
+  let dragId=null;
+  document.querySelectorAll('tr[data-riskdrag-id]').forEach(tr=>{
+    tr.addEventListener('dragstart',e=>{
+      if(e.target.closest('select,button')){e.preventDefault();return;}
+      dragId=tr.dataset.riskdragId; e.dataTransfer.effectAllowed='move'; tr.classList.add('dragging');
+    });
+    tr.addEventListener('dragend',()=>{tr.classList.remove('dragging');clearPrepRowDropMarkers();});
+    tr.addEventListener('dragover',e=>{
+      e.preventDefault();
+      const after=isPrepDropAfter(tr,e);
+      tr.classList.toggle('rowdragover-before',!after);
+      tr.classList.toggle('rowdragover-after',after);
+    });
+    tr.addEventListener('dragleave',()=>clearPrepRowDropMarkers(tr));
+    tr.addEventListener('drop',e=>{
+      e.preventDefault(); e.stopPropagation(); clearPrepRowDropMarkers(tr);
+      moveRisk(dragId,tr.dataset.riskdragId,isPrepDropAfter(tr,e));
+    });
+  });
+}
+async function moveRisk(fromId,targetId,after){
+  if(!fromId||!targetId||fromId===targetId)return;
+  const ids=riskRows().map(r=>r.id);
+  const from=ids.indexOf(fromId),target=ids.indexOf(targetId);
+  if(from<0||target<0)return;
+  const [item]=ids.splice(from,1);
+  let insertAt=after?target+1:target;
+  if(from<insertAt)insertAt--;
+  ids.splice(insertAt,0,item);
+  try{await risksBoardCommand('/order','PUT',{risk_ids:ids});toast('Порядок рисков обновлён',{type:'success'});}
+  catch(error){handleCommandError(error,()=>risksBoardCommand('/order','PUT',{risk_ids:ids}));}
+}
+
 /* =====================================================================
    DRAG & DROP (общий механизм)
    onDrop(payload,target) ; targetSel — селектор зон ; targetVal — функция значения
@@ -6890,11 +7364,9 @@ async function boot(){
 }
 document.addEventListener('visibilitychange',()=>{
   if(state.ui.mode!=='pi' || state.ui.tab==='data') return;
-  if(document.visibilityState==='hidden' && goalsApiReady) flushGoalsSync().catch(()=>{});
   if(document.visibilityState==='hidden' && teamBoardsApiReady) flushTeamBoardsSync().catch(()=>{});
   if(document.visibilityState==='hidden' && capacityApiReady) flushCapacitySync().catch(()=>{});
   if(document.visibilityState==='hidden' && programBoardApiReady) flushProgramBoardSync().catch(()=>{});
-  if(document.visibilityState==='hidden' && risksApiReady) flushRisksSync().catch(()=>{});
 });
 boot();
 </script>

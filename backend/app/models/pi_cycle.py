@@ -451,12 +451,36 @@ class PiGoal(Base, TimestampMixin):
     hypothesis: Mapped[str] = mapped_column(Text, default="")
     redesign: Mapped[str] = mapped_column(Text, default="")
     product: Mapped[str] = mapped_column(String(180), default="")
+    owner: Mapped[str] = mapped_column(String(220), default="", nullable=False)
+    business_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="planned", nullable=False)
+    category: Mapped[str] = mapped_column(String(40), default="committed", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
     cycle: Mapped[PiCycle] = relationship(back_populates="goals")
     tribe: Mapped[Tribe | None] = relationship()
     team: Mapped[Team | None] = relationship()
     initiative: Mapped[Initiative | None] = relationship()
+    initiative_links: Mapped[list["PiGoalInitiative"]] = relationship(
+        back_populates="goal",
+        cascade="all, delete-orphan",
+        order_by="PiGoalInitiative.sort_order",
+    )
+
+
+class PiGoalInitiative(Base):
+    __tablename__ = "pi_goal_initiatives"
+    __table_args__ = (
+        UniqueConstraint("goal_id", "initiative_id", name="uq_pi_goal_initiative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    goal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pi_goals.id", ondelete="CASCADE"))
+    initiative_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("initiatives.id", ondelete="CASCADE"))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    goal: Mapped[PiGoal] = relationship(back_populates="initiative_links")
+    initiative: Mapped[Initiative] = relationship()
 
 
 class BoardConnection(Base, TimestampMixin):
@@ -490,14 +514,25 @@ class Risk(Base, TimestampMixin):
     cycle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pi_cycles.id", ondelete="CASCADE"))
     client_uid: Mapped[str] = mapped_column(String(80), nullable=False)
     scope: Mapped[str] = mapped_column(String(40), default=RiskScope.general.value)
+    tribe_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tribes.id"), nullable=True)
     team_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
+    initiative_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("initiatives.id"), nullable=True)
     is_shared: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     owner: Mapped[str] = mapped_column(String(220), default="")
     impact: Mapped[str] = mapped_column(Text, default="")
     control_point: Mapped[str] = mapped_column(String(220), default="")
     mitigation_plan: Mapped[str] = mapped_column(Text, default="")
+    probability: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    impact_level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    criticality: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    reaction_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    treatment_plan: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="open", nullable=False)
+    roam: Mapped[str | None] = mapped_column(String(20), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     cycle: Mapped[PiCycle] = relationship(back_populates="risks")
+    tribe: Mapped[Tribe | None] = relationship()
     team: Mapped[Team | None] = relationship()
+    initiative: Mapped[Initiative | None] = relationship()

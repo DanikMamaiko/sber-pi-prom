@@ -13,6 +13,7 @@ from app.models.pi_cycle import (
     PiCycleGoalOption,
     PiCycleTeam,
     PiGoal,
+    PiGoalInitiative,
     Team,
 )
 from app.schemas.pi_cycle import (
@@ -436,6 +437,54 @@ async def _normalize_block_orders(session: AsyncSession, cycle_id: uuid.UUID) ->
             item.sort_order = position
 
 
+async def _delete_or_unlink_goals_for_initiatives(
+    session: AsyncSession,
+    cycle_id: uuid.UUID,
+    initiative_ids: Iterable[uuid.UUID],
+) -> None:
+    ids = list(initiative_ids)
+    if not ids:
+        return
+    link_rows = list(
+        (
+            await session.scalars(
+                select(PiGoalInitiative).where(PiGoalInitiative.initiative_id.in_(ids))
+            )
+        ).all()
+    )
+    affected_goal_ids = {link.goal_id for link in link_rows}
+    for link in link_rows:
+        await session.delete(link)
+    await session.flush()
+
+    legacy_goals = list(
+        (
+            await session.scalars(
+                select(PiGoal)
+                .options(selectinload(PiGoal.initiative_links))
+                .where(PiGoal.cycle_id == cycle_id, PiGoal.initiative_id.in_(ids))
+            )
+        ).all()
+    )
+    linked_goals = []
+    if affected_goal_ids:
+        linked_goals = list(
+            (
+                await session.scalars(
+                    select(PiGoal)
+                    .options(selectinload(PiGoal.initiative_links))
+                    .where(PiGoal.cycle_id == cycle_id, PiGoal.id.in_(affected_goal_ids))
+                )
+            ).all()
+        )
+    for goal in {goal.id: goal for goal in [*legacy_goals, *linked_goals]}.values():
+        remaining = [link for link in goal.initiative_links if link.initiative_id not in ids]
+        if remaining:
+            goal.initiative_id = remaining[0].initiative_id
+        else:
+            await session.delete(goal)
+
+
 async def move_pre_pi_initiative(
     session: AsyncSession,
     cycle: PiCycle,
@@ -451,7 +500,7 @@ async def move_pre_pi_initiative(
                 "Возврат опубликованной инициативы снимет её с досок и удалит связанные цели",
                 affected,
             )
-        await session.execute(delete(PiGoal).where(PiGoal.initiative_id == item.id))
+        await _delete_or_unlink_goals_for_initiatives(session, cycle.id, [item.id])
         item.on_board = False
         item.agreed = False
     item.pre_planned = to_planned
@@ -479,7 +528,25 @@ async def delete_pre_pi_initiative(
     payload: PrePiDeleteCommand,
 ) -> PrePiRead:
     item = await _initiative_or_error(session, cycle.id, initiative_id)
-    goals = list((await session.scalars(select(PiGoal).where(PiGoal.initiative_id == item.id))).all())
+    legacy_goals = list((await session.scalars(select(PiGoal).where(PiGoal.initiative_id == item.id))).all())
+    linked_goal_ids = [
+        row.goal_id
+        for row in (
+            await session.scalars(
+                select(PiGoalInitiative).where(PiGoalInitiative.initiative_id == item.id)
+            )
+        ).all()
+    ]
+    linked_goals = []
+    if linked_goal_ids:
+        linked_goals = list(
+            (
+                await session.scalars(
+                    select(PiGoal).where(PiGoal.id.in_(linked_goal_ids))
+                )
+            ).all()
+        )
+    goals = list({goal.id: goal for goal in [*legacy_goals, *linked_goals]}.values())
     affected = []
     if item.on_board:
         affected.append({"kind": "board", "id": str(item.id), "label": item.issue_key})
@@ -489,7 +556,7 @@ async def delete_pre_pi_initiative(
             "Удаление инициативы затронет опубликованные данные",
             affected,
         )
-    await session.execute(update(PiGoal).where(PiGoal.initiative_id == item.id).values(initiative_id=None))
+    await _delete_or_unlink_goals_for_initiatives(session, cycle.id, [item.id])
     await session.delete(item)
     await session.flush()
     await _normalize_block_orders(session, cycle.id)
@@ -537,7 +604,11 @@ async def replace_pre_pi(session: AsyncSession, cycle: PiCycle, payload: PrePiWr
         await _replace_executors(session, cycle, item, source.executors)
     removed = [row for row in existing if row.id not in used_ids]
     if removed:
-        await session.execute(update(PiGoal).where(PiGoal.initiative_id.in_([row.id for row in removed])).values(initiative_id=None))
+        await _delete_or_unlink_goals_for_initiatives(
+            session,
+            cycle.id,
+            [row.id for row in removed],
+        )
         for row in removed:
             await session.delete(row)
     cycle.initiatives_initialized = True

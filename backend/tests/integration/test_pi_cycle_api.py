@@ -1583,3 +1583,141 @@ async def test_pre_pi_focused_commands_return_canonical_read_model(api_client):
     returned_first = next(row for row in returned["backlog"] if row["id"] == first["id"])
     assert returned_first["on_board"] is False
     assert returned_first["status"] == "backlog"
+
+
+@pytest.mark.asyncio
+async def test_goals_and_risks_focused_commands_are_atomic_and_versioned(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2034, quarter="Q2")
+    cycle_id = cycle["id"]
+    path = f"/pi-cycles/{cycle_id}"
+    pre_pi = assert_ok(
+        await api_client.put(
+            f"{path}/pre-pi",
+            json={
+                "initiatives": [
+                    {
+                        "issue_key": "ATOM-1",
+                        "title": "Atomic initiative",
+                        "owner_team": "Команда Альфа",
+                        "owner_tribe": "Регрессия",
+                        "goal_text": "Atomic goal",
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "tribe": "Регрессия",
+                                "effort_by_competency": {"SA": 1},
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    initiative = pre_pi["initiatives"][0]
+    alpha = next(row for row in pre_pi["teams"] if row["name"] == "Команда Альфа")
+    current_version = pre_pi["version"]
+
+    stale_goal = await api_client.raw.post(
+        f"{path}/goals-board/goals",
+        json={
+            "expected_version": current_version - 1,
+            "team_id": alpha["id"],
+            "title": "Stale goal",
+        },
+    )
+    assert stale_goal.status_code == 409
+    assert stale_goal.json()["detail"]["code"] == "version_conflict"
+
+    goals = assert_ok(
+        await api_client.raw.post(
+            f"{path}/goals-board/goals",
+            json={
+                "expected_version": current_version,
+                "team_id": alpha["id"],
+                "title": "Atomic goal",
+                "owner": "Иванов",
+                "business_value": 89,
+                "status": "planned",
+                "category": "committed",
+                "initiative_ids": [initiative["id"]],
+            },
+        ),
+        201,
+    )
+    goal = goals["goals"][0]
+    assert goal["id"]
+    assert goal["team_id"] == alpha["id"]
+    assert goal["initiative_ids"] == [initiative["id"]]
+    assert goals["version"] == current_version + 1
+
+    link_change = await api_client.raw.patch(
+        f"{path}/goals-board/goals/{goal['id']}",
+        json={
+            "expected_version": goals["version"],
+            "title": "Atomic goal",
+            "initiative_ids": [],
+            "confirm_cascade": False,
+        },
+    )
+    assert link_change.status_code == 409
+    assert link_change.json()["detail"]["code"] == "cascade_confirmation_required"
+
+    goals = assert_ok(
+        await api_client.raw.patch(
+            f"{path}/goals-board/goals/{goal['id']}",
+            json={
+                "expected_version": goals["version"],
+                "title": "Atomic goal edited",
+                "initiative_ids": [],
+                "confirm_cascade": True,
+            },
+        )
+    )
+    assert goals["goals"][0]["title"] == "Atomic goal edited"
+    assert goals["goals"][0]["initiative_ids"] == []
+
+    deleted_goals = assert_ok(
+        await api_client.raw.request(
+            "DELETE",
+            f"{path}/goals-board/goals/{goal['id']}",
+            json={"expected_version": goals["version"]},
+        )
+    )
+    assert deleted_goals["goals"] == []
+
+    risks = assert_ok(
+        await api_client.raw.post(
+            f"{path}/risks-board/risks",
+            json={
+                "expected_version": deleted_goals["version"],
+                "scope": "team",
+                "team_id": alpha["id"],
+                "description": "Atomic risk",
+                "probability": 4,
+                "impact_level": 5,
+                "roam": "owned",
+            },
+        ),
+        201,
+    )
+    risk = risks["risks"][0]
+    assert risk["team_id"] == alpha["id"]
+    assert risk["criticality"] == 20
+    assert risk["criticality_label"] == "critical"
+    assert risk["roam"] == "owned"
+
+    risks = assert_ok(
+        await api_client.raw.patch(
+            f"{path}/risks-board/risks/{risk['id']}/roam",
+            json={"expected_version": risks["version"], "roam": "mitigated"},
+        )
+    )
+    assert risks["risks"][0]["roam"] == "mitigated"
+
+    risks = assert_ok(
+        await api_client.raw.patch(
+            f"{path}/risks-board/risks/{risk['id']}/status",
+            json={"expected_version": risks["version"], "status": "closed"},
+        )
+    )
+    assert risks["risks"][0]["status"] == "closed"

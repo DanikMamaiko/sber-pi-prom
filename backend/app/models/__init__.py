@@ -14,6 +14,7 @@ from app.models.pi_cycle import (  # noqa: F401
     PiCycleTeamCompetency,
     PiEvent,
     PiGoal,
+    PiGoalInitiative,
     Risk,
     Story,
     Team,

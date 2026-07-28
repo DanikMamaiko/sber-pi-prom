@@ -27,6 +27,13 @@ from app.schemas.pi_cycle import (
     BacklogReorderCommand,
     CapacityRead,
     CapacityWrite,
+    GoalCreateCommand,
+    GoalDeleteCommand,
+    GoalLinkCommand,
+    GoalReorderCommand,
+    GoalStatusCommand,
+    GoalUnlinkCommand,
+    GoalUpdateCommand,
     GoalsRead,
     GoalsWrite,
     InitiativeCreate,
@@ -62,6 +69,13 @@ from app.schemas.pi_cycle import (
     PiGoalCreate,
     PiGoalRead,
     RiskCreate,
+    RiskCreateCommand,
+    RiskDeleteCommand,
+    RiskLinkCommand,
+    RiskReorderCommand,
+    RiskRoamCommand,
+    RiskStatusCommand,
+    RiskUpdateCommand,
     RiskRead,
     RisksRead,
     RisksWrite,
@@ -96,15 +110,33 @@ from app.services.pre_pi import (
     update_pre_pi_initiative,
 )
 from app.services.goals import (
+    GoalsCascadeRequired,
     PrePiValidationError,
+    add_goal_link_command,
+    create_goal_command,
+    delete_goal_command,
     read_goals,
+    remove_goal_link_command,
+    reorder_goals_command,
     replace_goals,
     submit_pre_pi,
+    update_goal_command,
+    update_goal_status_command,
 )
 from app.services.team_boards import read_team_boards, replace_team_boards
 from app.services.capacity import read_capacity, replace_capacity
 from app.services.program_board import read_program_board, replace_program_board
-from app.services.risks import read_risks, replace_risks
+from app.services.risks import (
+    create_risk_command,
+    delete_risk_command,
+    read_risks,
+    reorder_risks_command,
+    replace_risks,
+    update_risk_command,
+    update_risk_link_command,
+    update_risk_roam_command,
+    update_risk_status_command,
+)
 from app.services.validation import cycle_team_context, normalized_effort
 from app.services.optimistic_locking import lock_backlog, lock_cycle
 from app.services.pi_cycle_data import (
@@ -796,6 +828,119 @@ async def put_goals_board(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
 
+async def _run_goal_command(session: AsyncSession, operation):
+    try:
+        return await operation
+    except GoalsCascadeRequired as error:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "cascade_confirmation_required",
+                "message": error.message,
+                "affected": error.affected,
+            },
+        )
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+
+
+@router.post(
+    "/pi-cycles/{cycle_id}/goals-board/goals",
+    response_model=GoalsRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_goals_board_goal(
+    cycle_id: uuid.UUID,
+    payload: GoalCreateCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_goal_command(session, create_goal_command(session, cycle, payload))
+
+
+@router.patch("/pi-cycles/{cycle_id}/goals-board/goals/{goal_id}", response_model=GoalsRead)
+async def patch_goals_board_goal(
+    cycle_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    payload: GoalUpdateCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_goal_command(session, update_goal_command(session, cycle, goal_id, payload))
+
+
+@router.delete("/pi-cycles/{cycle_id}/goals-board/goals/{goal_id}", response_model=GoalsRead)
+async def delete_goals_board_goal(
+    cycle_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    payload: GoalDeleteCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_goal_command(session, delete_goal_command(session, cycle, goal_id, payload))
+
+
+@router.put("/pi-cycles/{cycle_id}/goals-board/order", response_model=GoalsRead)
+async def put_goals_board_order(
+    cycle_id: uuid.UUID,
+    payload: GoalReorderCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_goal_command(session, reorder_goals_command(session, cycle, payload))
+
+
+@router.patch(
+    "/pi-cycles/{cycle_id}/goals-board/goals/{goal_id}/status",
+    response_model=GoalsRead,
+)
+async def patch_goals_board_goal_status(
+    cycle_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    payload: GoalStatusCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_goal_command(
+        session,
+        update_goal_status_command(session, cycle, goal_id, payload),
+    )
+
+
+@router.post(
+    "/pi-cycles/{cycle_id}/goals-board/goals/{goal_id}/links",
+    response_model=GoalsRead,
+)
+async def post_goals_board_goal_link(
+    cycle_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    payload: GoalLinkCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_goal_command(session, add_goal_link_command(session, cycle, goal_id, payload))
+
+
+@router.delete(
+    "/pi-cycles/{cycle_id}/goals-board/goals/{goal_id}/links/{initiative_id}",
+    response_model=GoalsRead,
+)
+async def delete_goals_board_goal_link(
+    cycle_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    initiative_id: uuid.UUID,
+    payload: GoalUnlinkCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_goal_command(
+        session,
+        remove_goal_link_command(session, cycle, goal_id, initiative_id, payload),
+    )
+
+
 @router.get("/pi-cycles/{cycle_id}/team-boards", response_model=TeamBoardsRead)
 async def get_team_boards(
     cycle_id: uuid.UUID,
@@ -1012,6 +1157,126 @@ async def put_risks_board(
     except ValueError as error:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+
+
+async def _run_risk_command(session: AsyncSession, operation):
+    try:
+        return await operation
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+
+
+@router.post(
+    "/pi-cycles/{cycle_id}/risks-board/risks",
+    response_model=RisksRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_risks_board_risk(
+    cycle_id: uuid.UUID,
+    payload: RiskCreateCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_risk_command(session, create_risk_command(session, cycle, payload))
+
+
+@router.patch("/pi-cycles/{cycle_id}/risks-board/risks/{risk_id}", response_model=RisksRead)
+async def patch_risks_board_risk(
+    cycle_id: uuid.UUID,
+    risk_id: uuid.UUID,
+    payload: RiskUpdateCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_risk_command(session, update_risk_command(session, cycle, risk_id, payload))
+
+
+@router.delete("/pi-cycles/{cycle_id}/risks-board/risks/{risk_id}", response_model=RisksRead)
+async def delete_risks_board_risk(
+    cycle_id: uuid.UUID,
+    risk_id: uuid.UUID,
+    payload: RiskDeleteCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_risk_command(session, delete_risk_command(session, cycle, risk_id, payload))
+
+
+@router.put("/pi-cycles/{cycle_id}/risks-board/order", response_model=RisksRead)
+async def put_risks_board_order(
+    cycle_id: uuid.UUID,
+    payload: RiskReorderCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_risk_command(session, reorder_risks_command(session, cycle, payload))
+
+
+@router.patch(
+    "/pi-cycles/{cycle_id}/risks-board/risks/{risk_id}/status",
+    response_model=RisksRead,
+)
+async def patch_risks_board_risk_status(
+    cycle_id: uuid.UUID,
+    risk_id: uuid.UUID,
+    payload: RiskStatusCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_risk_command(
+        session,
+        update_risk_status_command(session, cycle, risk_id, payload),
+    )
+
+
+@router.patch(
+    "/pi-cycles/{cycle_id}/risks-board/risks/{risk_id}/roam",
+    response_model=RisksRead,
+)
+async def patch_risks_board_risk_roam(
+    cycle_id: uuid.UUID,
+    risk_id: uuid.UUID,
+    payload: RiskRoamCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_risk_command(
+        session,
+        update_risk_roam_command(session, cycle, risk_id, payload),
+    )
+
+
+@router.post(
+    "/pi-cycles/{cycle_id}/risks-board/risks/{risk_id}/links",
+    response_model=RisksRead,
+)
+async def post_risks_board_risk_link(
+    cycle_id: uuid.UUID,
+    risk_id: uuid.UUID,
+    payload: RiskLinkCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_risk_command(session, update_risk_link_command(session, cycle, risk_id, payload))
+
+
+@router.delete(
+    "/pi-cycles/{cycle_id}/risks-board/risks/{risk_id}/links",
+    response_model=RisksRead,
+)
+async def delete_risks_board_risk_link(
+    cycle_id: uuid.UUID,
+    risk_id: uuid.UUID,
+    payload: RiskDeleteCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    link_payload = RiskLinkCommand(expected_version=payload.expected_version, scope="general")
+    return await _run_risk_command(
+        session,
+        update_risk_link_command(session, cycle, risk_id, link_payload),
+    )
 
 
 @router.post("/pi-cycles/{cycle_id}/risks", response_model=RiskRead, status_code=status.HTTP_201_CREATED)

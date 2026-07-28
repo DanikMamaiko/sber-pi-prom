@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.pi_cycle import (
     Initiative,
@@ -11,10 +12,18 @@ from app.models.pi_cycle import (
     PiCycle,
     PiCycleTeam,
     PiGoal,
+    PiGoalInitiative,
     Team,
     Tribe,
 )
 from app.schemas.pi_cycle import (
+    GoalCreateCommand,
+    GoalDeleteCommand,
+    GoalLinkCommand,
+    GoalReorderCommand,
+    GoalStatusCommand,
+    GoalUnlinkCommand,
+    GoalUpdateCommand,
     GoalsItemRead,
     GoalsRead,
     GoalsWrite,
@@ -45,6 +54,13 @@ class PrePiValidationError(ValueError):
         self.problems = problems
 
 
+class GoalsCascadeRequired(ValueError):
+    def __init__(self, message: str, affected: list[dict]):
+        super().__init__(message)
+        self.message = message
+        self.affected = affected
+
+
 async def _goals_query(session: AsyncSession, cycle_id: uuid.UUID) -> list[PiGoal]:
     return list(
         (
@@ -54,6 +70,9 @@ async def _goals_query(session: AsyncSession, cycle_id: uuid.UUID) -> list[PiGoa
                     selectinload(PiGoal.tribe),
                     selectinload(PiGoal.team).selectinload(Team.tribe),
                     selectinload(PiGoal.initiative),
+                    selectinload(PiGoal.initiative_links).selectinload(
+                        PiGoalInitiative.initiative
+                    ),
                 )
                 .where(PiGoal.cycle_id == cycle_id)
                 .order_by(PiGoal.sort_order, PiGoal.created_at, PiGoal.id)
@@ -65,29 +84,106 @@ async def _goals_query(session: AsyncSession, cycle_id: uuid.UUID) -> list[PiGoa
 async def read_goals(session: AsyncSession, cycle: PiCycle) -> GoalsRead:
     rows: list[GoalsItemRead] = []
     for goal in await _goals_query(session, cycle.id):
-        initiative = goal.initiative
+        linked_initiatives = [link.initiative for link in goal.initiative_links]
+        if not linked_initiatives and goal.initiative_id is not None and goal.initiative is not None:
+            linked_initiatives = [goal.initiative]
+        initiative = linked_initiatives[0] if linked_initiatives else None
         team = goal.team
-        if initiative is None or team is None:
-            continue
-        tribe_name = team.tribe.name if team.tribe else (goal.tribe.name if goal.tribe else "")
+        tribe_name = ""
+        if team and team.tribe:
+            tribe_name = team.tribe.name
+        elif goal.tribe:
+            tribe_name = goal.tribe.name
         rows.append(
             GoalsItemRead(
                 id=goal.id,
+                tribe_id=goal.tribe_id,
+                team_id=goal.team_id,
+                initiative_id=initiative.id if initiative else None,
+                initiative_ids=[initiative.id for initiative in linked_initiatives],
                 tribe=tribe_name,
-                team=team.name,
-                issue_key=initiative.issue_key,
-                initiative_title=initiative.title,
-                goal_text=initiative.goal_text or goal.title or "",
-                product=initiative.product or goal.product or "",
-                metric=initiative.metric or "",
-                current_value=initiative.current_value or "",
-                target_value=initiative.target_value or "",
-                hypothesis=initiative.hypothesis or "",
-                redesign=initiative.redesign or "",
+                team=team.name if team else "",
+                issue_key=initiative.issue_key if initiative else "",
+                initiative_title=initiative.title if initiative else "",
+                title=goal.title,
+                goal_text=goal.title or (initiative.goal_text if initiative else ""),
+                product=goal.product or (initiative.product if initiative else ""),
+                metric=goal.metric,
+                current_value=goal.current_value,
+                target_value=goal.target_value,
+                hypothesis=goal.hypothesis,
+                redesign=goal.redesign,
+                owner=goal.owner,
+                business_value=goal.business_value,
+                status=goal.status,
+                category=goal.category,
                 sort_order=goal.sort_order,
             )
         )
-    return GoalsRead(initialized=cycle.goals_initialized, version=cycle.version, goals=rows)
+    return GoalsRead(
+        initialized=cycle.goals_initialized,
+        version=cycle.version,
+        goals=rows,
+        reference_data=await _goals_reference_data(session, cycle),
+    )
+
+
+async def _goals_reference_data(session: AsyncSession, cycle: PiCycle) -> dict:
+    cycle_teams = (
+        await session.scalars(
+            select(PiCycleTeam)
+            .options(selectinload(PiCycleTeam.team).selectinload(Team.tribe))
+            .where(PiCycleTeam.cycle_id == cycle.id)
+            .order_by(PiCycleTeam.sort_order, PiCycleTeam.id)
+        )
+    ).all()
+    initiatives = (
+        await session.scalars(
+            select(Initiative)
+            .options(selectinload(Initiative.owner_team).selectinload(Team.tribe))
+            .where(Initiative.cycle_id == cycle.id)
+            .order_by(Initiative.sort_order, Initiative.created_at, Initiative.id)
+        )
+    ).all()
+    tribes_by_id: dict[uuid.UUID, Tribe] = {}
+    teams = []
+    for row in cycle_teams:
+        if row.team and row.team.tribe:
+            tribes_by_id[row.team.tribe.id] = row.team.tribe
+            teams.append(
+                {
+                    "id": row.team.id,
+                    "cycle_team_id": row.id,
+                    "tribe_id": row.team.tribe.id,
+                    "tribe": row.team.tribe.name,
+                    "name": row.team.name,
+                    "excluded_from_goals": row.excluded_from_goals,
+                    "sort_order": row.sort_order,
+                }
+            )
+    return {
+        "tribes": [
+            {"id": tribe.id, "name": tribe.name}
+            for tribe in sorted(tribes_by_id.values(), key=lambda item: item.name)
+        ],
+        "teams": teams,
+        "initiatives": [
+            {
+                "id": initiative.id,
+                "issue_key": initiative.issue_key,
+                "title": initiative.title,
+                "owner_team_id": initiative.owner_team_id,
+                "owner_team": initiative.owner_team.name if initiative.owner_team else "",
+                "owner_tribe_id": initiative.owner_team.tribe_id if initiative.owner_team else None,
+                "owner_tribe": initiative.owner_team.tribe.name
+                if initiative.owner_team and initiative.owner_team.tribe
+                else "",
+            }
+            for initiative in initiatives
+        ],
+        "statuses": ["planned", "in_progress", "done", "cancelled"],
+        "categories": ["committed", "stretch"],
+    }
 
 
 async def _resolve_team(
@@ -130,6 +226,318 @@ def _copy_to_goal(goal: PiGoal, initiative: Initiative, sort_order: int) -> None
     goal.redesign = initiative.redesign or ""
     goal.product = initiative.product or ""
     goal.sort_order = sort_order
+
+
+async def _cycle_team_by_id(
+    session: AsyncSession,
+    cycle: PiCycle,
+    team_id: uuid.UUID | None,
+) -> Team | None:
+    if team_id is None:
+        return None
+    cycle_team = await session.scalar(
+        select(PiCycleTeam)
+        .options(selectinload(PiCycleTeam.team))
+        .where(PiCycleTeam.cycle_id == cycle.id, PiCycleTeam.team_id == team_id)
+    )
+    if cycle_team is None:
+        raise ValueError("Goal team is not part of this PI cycle")
+    return cycle_team.team
+
+
+async def _cycle_tribe_by_id(
+    session: AsyncSession,
+    cycle: PiCycle,
+    tribe_id: uuid.UUID | None,
+) -> Tribe | None:
+    if tribe_id is None:
+        return None
+    tribe = await session.get(Tribe, tribe_id)
+    if tribe is None:
+        raise ValueError("Goal tribe is not found")
+    exists = await session.scalar(
+        select(PiCycleTeam)
+        .join(Team, PiCycleTeam.team_id == Team.id)
+        .where(PiCycleTeam.cycle_id == cycle.id, Team.tribe_id == tribe_id)
+    )
+    if exists is None:
+        raise ValueError("Goal tribe is not part of this PI cycle")
+    return tribe
+
+
+async def _cycle_initiatives_by_ids(
+    session: AsyncSession,
+    cycle: PiCycle,
+    initiative_ids: list[uuid.UUID],
+) -> list[Initiative]:
+    seen: list[uuid.UUID] = []
+    for initiative_id in initiative_ids:
+        if initiative_id not in seen:
+            seen.append(initiative_id)
+    if not seen:
+        return []
+    initiatives = (
+        await session.scalars(
+            select(Initiative).where(
+                Initiative.cycle_id == cycle.id,
+                Initiative.id.in_(seen),
+            )
+        )
+    ).all()
+    by_id = {initiative.id: initiative for initiative in initiatives}
+    missing = [str(initiative_id) for initiative_id in seen if initiative_id not in by_id]
+    if missing:
+        raise ValueError("Goal initiative is not part of this PI cycle: " + ", ".join(missing))
+    return [by_id[initiative_id] for initiative_id in seen]
+
+
+def _affected_initiatives(goal: PiGoal) -> list[dict]:
+    linked = [link.initiative for link in goal.initiative_links]
+    if not linked and goal.initiative is not None:
+        linked = [goal.initiative]
+    return [
+        {"id": str(initiative.id), "issue_key": initiative.issue_key, "title": initiative.title}
+        for initiative in linked
+    ]
+
+
+def _sync_goal_to_initiatives(goal: PiGoal) -> None:
+    for link in goal.initiative_links:
+        initiative = link.initiative
+        initiative.goal_text = goal.title
+        initiative.product = goal.product
+        initiative.metric = goal.metric
+        initiative.current_value = goal.current_value
+        initiative.target_value = goal.target_value
+        initiative.hypothesis = goal.hypothesis
+        initiative.redesign = goal.redesign
+
+
+async def _set_goal_links(
+    session: AsyncSession,
+    goal: PiGoal,
+    initiatives: list[Initiative],
+) -> None:
+    current_links = list(goal.__dict__.get("initiative_links") or [])
+    existing_by_initiative = {link.initiative_id: link for link in current_links}
+    wanted = {initiative.id for initiative in initiatives}
+    for link in current_links:
+        if link.initiative_id not in wanted:
+            await session.delete(link)
+    next_links = [
+        existing_by_initiative[initiative.id]
+        if initiative.id in existing_by_initiative
+        else PiGoalInitiative(goal_id=goal.id, initiative_id=initiative.id)
+        for initiative in initiatives
+    ]
+    for index, link in enumerate(next_links):
+        link.sort_order = index
+        link.initiative = initiatives[index]
+        session.add(link)
+    set_committed_value(goal, "initiative_links", next_links)
+    goal.initiative_id = initiatives[0].id if initiatives else None
+
+
+async def _get_goal(session: AsyncSession, cycle: PiCycle, goal_id: uuid.UUID) -> PiGoal:
+    goal = await session.scalar(
+        select(PiGoal)
+        .options(
+            selectinload(PiGoal.initiative),
+            selectinload(PiGoal.initiative_links).selectinload(PiGoalInitiative.initiative),
+        )
+        .where(PiGoal.cycle_id == cycle.id, PiGoal.id == goal_id)
+    )
+    if goal is None:
+        raise ValueError("Goal is not found in this PI cycle")
+    return goal
+
+
+async def create_goal_command(
+    session: AsyncSession,
+    cycle: PiCycle,
+    payload: GoalCreateCommand,
+) -> GoalsRead:
+    team = await _cycle_team_by_id(session, cycle, payload.team_id)
+    tribe_id = payload.tribe_id
+    if team is not None:
+        tribe_id = team.tribe_id
+    await _cycle_tribe_by_id(session, cycle, tribe_id)
+    initiatives = await _cycle_initiatives_by_ids(session, cycle, payload.initiative_ids)
+    max_sort_order = await session.scalar(
+        select(PiGoal.sort_order)
+        .where(PiGoal.cycle_id == cycle.id)
+        .order_by(PiGoal.sort_order.desc())
+        .limit(1)
+    )
+    goal = PiGoal(
+        id=uuid.uuid4(),
+        cycle_id=cycle.id,
+        tribe_id=tribe_id,
+        team_id=team.id if team else None,
+        title=payload.title.strip(),
+        product=payload.product.strip(),
+        metric=payload.metric.strip(),
+        current_value=payload.current_value.strip(),
+        target_value=payload.target_value.strip(),
+        hypothesis=payload.hypothesis,
+        redesign=payload.redesign,
+        owner=payload.owner.strip(),
+        business_value=payload.business_value,
+        status=payload.status,
+        category=payload.category,
+        sort_order=(max_sort_order + 1 if max_sort_order is not None else 0),
+    )
+    session.add(goal)
+    await session.flush()
+    await _set_goal_links(session, goal, initiatives)
+    _sync_goal_to_initiatives(goal)
+    cycle.goals_initialized = True
+    await session.commit()
+    return await read_goals(session, cycle)
+
+
+async def update_goal_command(
+    session: AsyncSession,
+    cycle: PiCycle,
+    goal_id: uuid.UUID,
+    payload: GoalUpdateCommand,
+) -> GoalsRead:
+    goal = await _get_goal(session, cycle, goal_id)
+    data = payload.model_dump(exclude_unset=True, exclude={"expected_version", "confirm_cascade"})
+    if "team_id" in data:
+        team = await _cycle_team_by_id(session, cycle, payload.team_id)
+        goal.team_id = team.id if team else None
+        goal.tribe_id = team.tribe_id if team else goal.tribe_id
+    if "tribe_id" in data and "team_id" not in data:
+        await _cycle_tribe_by_id(session, cycle, payload.tribe_id)
+        goal.tribe_id = payload.tribe_id
+    if "initiative_ids" in data:
+        old_ids = {link.initiative_id for link in goal.initiative_links}
+        new_ids = set(payload.initiative_ids or [])
+        removed = old_ids - new_ids
+        if removed and not payload.confirm_cascade:
+            raise GoalsCascadeRequired(
+                "Goal link changes require confirmation",
+                [
+                    {"id": item["id"], "issue_key": item["issue_key"], "title": item["title"]}
+                    for item in _affected_initiatives(goal)
+                    if uuid.UUID(item["id"]) in removed
+                ],
+            )
+        initiatives = await _cycle_initiatives_by_ids(session, cycle, payload.initiative_ids or [])
+        await _set_goal_links(session, goal, initiatives)
+    for field in (
+        "title",
+        "product",
+        "metric",
+        "current_value",
+        "target_value",
+        "hypothesis",
+        "redesign",
+        "owner",
+        "business_value",
+        "status",
+        "category",
+    ):
+        if field in data:
+            value = data[field]
+            setattr(goal, field, value.strip() if isinstance(value, str) else value)
+    _sync_goal_to_initiatives(goal)
+    cycle.goals_initialized = True
+    await session.commit()
+    return await read_goals(session, cycle)
+
+
+async def delete_goal_command(
+    session: AsyncSession,
+    cycle: PiCycle,
+    goal_id: uuid.UUID,
+    payload: GoalDeleteCommand,
+) -> GoalsRead:
+    goal = await _get_goal(session, cycle, goal_id)
+    affected = _affected_initiatives(goal)
+    if affected and not payload.confirm_cascade:
+        raise GoalsCascadeRequired("Goal deletion requires confirmation", affected)
+    await session.delete(goal)
+    cycle.goals_initialized = True
+    await session.commit()
+    return await read_goals(session, cycle)
+
+
+async def reorder_goals_command(
+    session: AsyncSession,
+    cycle: PiCycle,
+    payload: GoalReorderCommand,
+) -> GoalsRead:
+    goals = (
+        await session.scalars(select(PiGoal).where(PiGoal.cycle_id == cycle.id))
+    ).all()
+    by_id = {goal.id: goal for goal in goals}
+    if set(payload.goal_ids) != set(by_id):
+        raise ValueError("Goal order must include every goal in the PI cycle")
+    for index, goal_id in enumerate(payload.goal_ids):
+        by_id[goal_id].sort_order = index
+    cycle.goals_initialized = True
+    await session.commit()
+    return await read_goals(session, cycle)
+
+
+async def update_goal_status_command(
+    session: AsyncSession,
+    cycle: PiCycle,
+    goal_id: uuid.UUID,
+    payload: GoalStatusCommand,
+) -> GoalsRead:
+    goal = await _get_goal(session, cycle, goal_id)
+    goal.status = payload.status
+    cycle.goals_initialized = True
+    await session.commit()
+    return await read_goals(session, cycle)
+
+
+async def add_goal_link_command(
+    session: AsyncSession,
+    cycle: PiCycle,
+    goal_id: uuid.UUID,
+    payload: GoalLinkCommand,
+) -> GoalsRead:
+    goal = await _get_goal(session, cycle, goal_id)
+    initiatives = await _cycle_initiatives_by_ids(session, cycle, [payload.initiative_id])
+    if payload.initiative_id not in {link.initiative_id for link in goal.initiative_links}:
+        goal.initiative_links.append(
+            PiGoalInitiative(
+                goal_id=goal.id,
+                initiative_id=payload.initiative_id,
+                initiative=initiatives[0],
+                sort_order=len(goal.initiative_links),
+            )
+        )
+    goal.initiative_id = goal.initiative_links[0].initiative_id if goal.initiative_links else None
+    _sync_goal_to_initiatives(goal)
+    cycle.goals_initialized = True
+    await session.commit()
+    return await read_goals(session, cycle)
+
+
+async def remove_goal_link_command(
+    session: AsyncSession,
+    cycle: PiCycle,
+    goal_id: uuid.UUID,
+    initiative_id: uuid.UUID,
+    payload: GoalUnlinkCommand,
+) -> GoalsRead:
+    goal = await _get_goal(session, cycle, goal_id)
+    link = next((item for item in goal.initiative_links if item.initiative_id == initiative_id), None)
+    if link is None:
+        raise ValueError("Goal initiative link is not found")
+    if not payload.confirm_cascade:
+        raise GoalsCascadeRequired("Goal link deletion requires confirmation", _affected_initiatives(goal))
+    await session.delete(link)
+    remaining = [item for item in goal.initiative_links if item.initiative_id != initiative_id]
+    goal.initiative_id = remaining[0].initiative_id if remaining else None
+    cycle.goals_initialized = True
+    await session.commit()
+    return await read_goals(session, cycle)
 
 
 async def replace_goals(
@@ -189,6 +597,10 @@ async def replace_goals(
         goal.team_id = team.id
         goal.tribe_id = team.tribe_id
         goal.initiative_id = initiative.id
+        goal.owner = source.owner.strip()
+        goal.business_value = source.business_value
+        goal.status = source.status
+        goal.category = source.category
         initiative.goal_text = source.goal_text.strip()
         initiative.product = source.product.strip()
         initiative.metric = source.metric.strip()
@@ -197,6 +609,15 @@ async def replace_goals(
         initiative.hypothesis = source.hypothesis
         initiative.redesign = source.redesign
         _copy_to_goal(goal, initiative, source.sort_order if source.sort_order is not None else position)
+        if not any(link.initiative_id == initiative.id for link in goal.initiative_links):
+            goal.initiative_links.append(
+                PiGoalInitiative(
+                    goal_id=goal.id,
+                    initiative_id=initiative.id,
+                    initiative=initiative,
+                    sort_order=0,
+                )
+            )
 
     for goal in existing:
         if goal.id not in used_ids:
