@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from app.models.pi_cycle import PiCycle, PiCycleCapacityMember
+from app.models.pi_cycle import Initiative, PiCycle, PiCycleCapacityMember, PiGoal
 from app.schemas.pi_cycle import (
     BacklogBoardWrite,
     BacklogDispatchWrite,
@@ -21,6 +21,7 @@ from app.schemas.pi_cycle import (
 from app.services.planning import compute_sprints
 from app.services.capacity import calculate_member_capacity
 from app.services.pre_pi import _scope_metrics, validate_status_transition
+from app.services.goals import _sync_goal_to_initiatives
 
 
 def test_compute_sprints_uses_two_week_periods():
@@ -158,6 +159,30 @@ def test_goals_board_accepts_team_and_initiative_contract():
 
     assert payload.goals[0].team == "СБОЛ"
     assert payload.goals[0].target_value == "15%"
+
+
+def test_goal_sync_falls_back_to_legacy_initiative_relationship():
+    initiative = Initiative(issue_key="SBOL-3001", title="Развитие переводов")
+    goal = PiGoal(
+        title="Повысить конверсию",
+        product="СБОЛ",
+        metric="Конверсия",
+        current_value="10%",
+        target_value="15%",
+        hypothesis="Упростить путь",
+        redesign="Новый экран",
+        initiative=initiative,
+    )
+
+    _sync_goal_to_initiatives(goal)
+
+    assert initiative.goal_text == "Повысить конверсию"
+    assert initiative.product == "СБОЛ"
+    assert initiative.metric == "Конверсия"
+    assert initiative.current_value == "10%"
+    assert initiative.target_value == "15%"
+    assert initiative.hypothesis == "Упростить путь"
+    assert initiative.redesign == "Новый экран"
 
 
 def test_pre_pi_submit_requires_at_least_one_team():

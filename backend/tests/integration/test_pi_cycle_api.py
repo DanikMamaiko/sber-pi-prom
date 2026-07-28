@@ -226,6 +226,16 @@ async def test_full_pi_cycle_flow_persists_and_deletes_dependencies(api_client):
     assert repeated["board_added"] == 0
 
     goals = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/goals-board"))
+    focused_goal = assert_ok(
+        await api_client.patch(
+            f"/pi-cycles/{cycle_id}/goals-board/goals/{goals['goals'][0]['id']}",
+            json={"target_value": "95%"},
+        )
+    )
+    assert focused_goal["goals"][0]["target_value"] == "95%"
+    assert assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"][0]["target_value"] == "95%"
+
+    goals = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/goals-board"))
     goals["goals"][0]["target_value"] = "99%"
     edited_goals = assert_ok(
         await api_client.put(

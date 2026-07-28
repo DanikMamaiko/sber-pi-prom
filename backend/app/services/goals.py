@@ -157,6 +157,7 @@ async def _goals_reference_data(session: AsyncSession, cycle: PiCycle) -> dict:
                     "tribe_id": row.team.tribe.id,
                     "tribe": row.team.tribe.name,
                     "name": row.team.name,
+                    "type": row.team_type or row.team.team_type,
                     "excluded_from_goals": row.excluded_from_goals,
                     "sort_order": row.sort_order,
                 }
@@ -302,8 +303,10 @@ def _affected_initiatives(goal: PiGoal) -> list[dict]:
 
 
 def _sync_goal_to_initiatives(goal: PiGoal) -> None:
-    for link in goal.initiative_links:
-        initiative = link.initiative
+    initiatives = [link.initiative for link in goal.initiative_links]
+    if not initiatives and goal.initiative is not None:
+        initiatives = [goal.initiative]
+    for initiative in initiatives:
         initiative.goal_text = goal.title
         initiative.product = goal.product
         initiative.metric = goal.metric
@@ -724,6 +727,15 @@ async def submit_pre_pi(
             goals_added += 1
         order = goal.sort_order if goal.id in {row.id for row in existing_goals} else next_order.get(team.id, 0)
         _copy_to_goal(goal, initiative, order)
+        if not any(link.initiative_id == initiative.id for link in goal.initiative_links):
+            goal.initiative_links.append(
+                PiGoalInitiative(
+                    goal_id=goal.id,
+                    initiative_id=initiative.id,
+                    initiative=initiative,
+                    sort_order=0,
+                )
+            )
         next_order[team.id] = max(next_order.get(team.id, 0), order + 1)
         if not initiative.on_board:
             initiative.on_board = True

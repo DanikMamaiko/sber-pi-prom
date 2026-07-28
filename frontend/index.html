@@ -4982,7 +4982,7 @@ const GOAL_COLS=[
 ];
 // Редактируемые на вкладке «Цели» столбцы (синхронизируются с Pre PI Planning).
 const GOAL_EDIT=['metric','fact','plan','hypo','redesign'];
-function viewGoals(){
+function legacyViewGoalsLocal(){
   const tribes=tribesForGoals();
   const tr=state.ui.goalsTribe && tribes.includes(state.ui.goalsTribe)?state.ui.goalsTribe:null;
   let html=`<div class="card"><h2>Цели ${cycleBadge()}</h2>`;
@@ -5053,7 +5053,7 @@ function viewGoals(){
   html+=`</div>`;
   return html;
 }
-function bindGoals(){
+function legacyBindGoalsLocal(){
   document.querySelectorAll('[data-tribe]').forEach(el=>el.onclick=()=>{
     state.ui.goalsTribe=el.dataset.tribe;state.ui.goalsTeam=null;save();render();
   });
@@ -5075,7 +5075,7 @@ function bindGoals(){
   bindGoalRowDrag(key);
 }
 // Перетаскивание строк на вкладке «Цели»
-function bindGoalRowDrag(key){
+function legacyBindGoalRowDragLocal(key){
   let dragIdx=null;
   document.querySelectorAll('tr[data-goaldrag]').forEach(tr=>{
     tr.addEventListener('dragstart',e=>{
@@ -5100,7 +5100,7 @@ function bindGoalRowDrag(key){
     });
   });
 }
-function moveGoal(key,from,targetIdx,after){
+function legacyMoveGoalLocal(key,from,targetIdx,after){
   if(from==null || from===undefined) return;
   const rows=state.goals[key]; if(!rows) return;
   if(from===targetIdx) return;
@@ -5151,7 +5151,7 @@ function handleCommandError(error,repeat){
   toast(error&&error.message?error.message:'Команда не выполнена',{type:'warn'});
   return true;
 }
-function viewGoals(){
+function legacyViewGoalsCrud(){
   const tribes=goalTribeOptions(),teams=goalTeamOptions();
   let html=`<div class="card"><h2>Цели ${cycleBadge()}</h2>`;
   if(!goalsApiReady&&!goalsBoards[currentCycleId()])return html+`<div class="muted">Загрузка целей с backend...</div></div>`;
@@ -5194,7 +5194,7 @@ function viewGoals(){
   html+=`</tbody></table></div></div>`;
   return html;
 }
-function bindGoals(){
+function legacyBindGoalsCrud(){
   const ft=$('#goalFilterTribe'); if(ft)ft.onchange=()=>{state.ui.goalsTribeId=ft.value;state.ui.goalsTeamId='';save();render();};
   const fteam=$('#goalFilterTeam'); if(fteam)fteam.onchange=()=>{state.ui.goalsTeamId=fteam.value;save();render();};
   const fs=$('#goalFilterStatus'); if(fs)fs.onchange=()=>{state.ui.goalsStatus=fs.value;save();render();};
@@ -5228,7 +5228,7 @@ function goalPayloadFromModal(){
     initiative_ids:selected,
   };
 }
-function openGoalModal(goalId){
+function legacyOpenGoalModal(goalId){
   const g=goalRows().find(x=>x.id===goalId)||{};
   const ref=goalRef(),teams=goalTeamOptions();
   const teamValue=g.teamId||state.ui.goalsTeamId||'';
@@ -5268,7 +5268,7 @@ function deleteGoalUi(goalId){
     catch(error){handleCommandError(error,async()=>{await run(true);toast('Цель удалена',{type:'info'});});}
   });
 }
-function bindGoalRowDrag(){
+function legacyBindGoalRowDragCrud(){
   let dragIdx=null;
   document.querySelectorAll('tr[data-goaldrag-id]').forEach(tr=>{
     tr.addEventListener('dragstart',e=>{
@@ -5289,11 +5289,11 @@ function bindGoalRowDrag(){
     tr.addEventListener('drop',e=>{
       e.preventDefault(); e.stopPropagation();
       clearPrepRowDropMarkers(tr);
-      moveGoal(dragIdx,tr.dataset.goaldragId,isPrepDropAfter(tr,e));
+      legacyMoveGoalCrud(dragIdx,tr.dataset.goaldragId,isPrepDropAfter(tr,e));
     });
   });
 }
-async function moveGoal(fromId,targetId,after){
+async function legacyMoveGoalCrud(fromId,targetId,after){
   if(!fromId||!targetId||fromId===targetId)return;
   const ids=goalRows().map(g=>g.id);
   const from=ids.indexOf(fromId),target=ids.indexOf(targetId);
@@ -5367,24 +5367,15 @@ function viewGoals(){
     return html;
   }
 
-  const statusFilter=state.ui.goalsStatus||'';
   const team=teams.find(t=>String(t.id)===teamId);
   const isIT=teamType(team)==='ИТ-проект';
-  const allRows=goalRowsForTeam(team);
-  const rows=allRows.filter(g=>!statusFilter||g.status===statusFilter);
+  const rows=goalRowsForTeam(team);
   const COLS=GOAL_COLS, EDIT=GOAL_EDIT;
-  html+=`<div class="row" style="align-items:flex-end;margin-top:12px">
-    <label>Статус<br><select id="goalFilterStatus"><option value="">Все статусы</option>${Object.entries(GOAL_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${statusFilter===k?'selected':''}>${v}</option>`).join('')}</select></label>
-    <button class="primary" id="goalAddTeam">Добавить строку</button>
-  </div>`;
   html+=`<div class="goals-wrap"><table class="goals"><thead><tr><th>№</th>`+
     COLS.map(c=>`<th>${c[1]}</th>`).join('')+`</tr></thead><tbody>`;
   const colCount=COLS.length+1;
   if(!rows.length){
-    const text=allRows.length
-      ? 'Нет целей с таким статусом. Измените фильтр.'
-      : 'Целей пока нет — добавьте их на «Pre PI Planning» кнопкой «Отправить на доски» или создайте строку вручную.';
-    html+=`<tr><td colspan="${colCount}" class="muted">${text}</td></tr>`;
+    html+=`<tr><td colspan="${colCount}" class="muted">Целей пока нет — добавьте их на вкладке «Pre PI Planning» кнопкой «Отправить на доски».</td></tr>`;
   }else{
     const byGoal=new Map();
     rows.forEach(g=>{
@@ -5398,11 +5389,12 @@ function viewGoals(){
     if(byGoal.has(''))order.push('');
     let n=0;
     const emptyLabel=isIT?'Без вехи':'Без цели';
+    const groupIcon=isIT?'🏁 ':'🎯 ';
     order.forEach(group=>{
-      html+=`<tr class="goal-group"><td colspan="${colCount}">${group?esc(group):emptyLabel}</td></tr>`;
+      html+=`<tr class="goal-group"><td colspan="${colCount}">${group?(groupIcon+esc(group)):emptyLabel}</td></tr>`;
       byGoal.get(group).forEach(g=>{
         n++;
-        html+=`<tr draggable="true" data-goaldrag-id="${esc(g.id)}"><td><span class="g-handle" title="Перетащите, чтобы изменить порядок">⋮</span>${n}<div style="white-space:nowrap;margin-top:4px"><button class="sm" data-goal-edit="${esc(g.id)}" title="Параметры цели">...</button><button class="sm danger" data-goal-del="${esc(g.id)}" title="Удалить">×</button></div></td>`+
+        html+=`<tr draggable="true" data-goaldrag-id="${esc(g.id)}"><td><span class="g-handle" title="Перетащите, чтобы изменить порядок">⠿</span>${n}</td>`+
           COLS.map(c=>EDIT.includes(c[0])
             ? `<td><input data-goal-field-id="${esc(g.id)}" data-goal-k="${c[0]}" value="${esc(g[c[0]]||'')}"></td>`
             : `<td>${esc(g[c[0]]||'')||'<span class=auto>—</span>'}</td>`
@@ -5412,8 +5404,8 @@ function viewGoals(){
   }
   html+=`</tbody></table></div>
     <div class="note" style="margin-top:14px">${isIT
-      ? 'Инициативы сгруппированы по вехам ИТ-проекта. Метрика, AS IS, TO BE, гипотезы и редизайн редактируются прямо в таблице; после каждой команды данные заново загружаются с backend.'
-      : 'Инициативы сгруппированы по целям. Метрика, AS IS, TO BE, гипотезы и редизайн редактируются прямо в таблице; после каждой команды данные заново загружаются с backend.'}</div></div>`;
+      ? 'Инициативы сгруппированы по <b>вехам ИТ-проекта</b> — веха вписывается вручную в столбец «Цель/Веха» на «Pre PI Planning». Поля метрика / AS IS / TO BE / гипотезы / редизайн можно редактировать прямо здесь — изменения синхронизируются с «Pre PI Planning»; для ИТ-проектов они необязательны. Перетаскивайте строки за <b>⠿</b>, чтобы менять порядок.'
+      : 'Инициативы сгруппированы по <b>Цели</b>. Цель выбирается у инициативы на «Pre PI Planning» из справочника («Данные PI-цикла») либо вводится вручную. Поля метрика / AS IS / TO BE / гипотезы / редизайн можно редактировать прямо здесь — изменения синхронизируются с «Pre PI Planning». Перетаскивайте строки за <b>⠿</b>, чтобы менять порядок.'}</div></div>`;
   return html;
 }
 function bindGoals(){
@@ -5429,10 +5421,6 @@ function bindGoals(){
     state.ui.goalsTeam=el.dataset.goalTeamName;
     save();render();
   });
-  const fs=$('#goalFilterStatus'); if(fs)fs.onchange=()=>{state.ui.goalsStatus=fs.value;save();render();};
-  const add=$('#goalAddTeam'); if(add)add.onclick=()=>openGoalModal(null);
-  document.querySelectorAll('[data-goal-edit]').forEach(b=>b.onclick=()=>openGoalModal(b.dataset.goalEdit));
-  document.querySelectorAll('[data-goal-del]').forEach(b=>b.onclick=()=>deleteGoalUi(b.dataset.goalDel));
   document.querySelectorAll('[data-goal-field-id]').forEach(el=>el.onchange=async()=>{
     const goalId=el.dataset.goalFieldId;
     try{
@@ -5480,7 +5468,8 @@ async function moveGoal(fromId,targetId,after){
   if(from<insertAt)insertAt--;
   selectedIds.splice(insertAt,0,item);
   const selectedSet=new Set(selectedIds);
-  const ids=goalRows().filter(g=>!selectedSet.has(g.id)).map(g=>g.id).concat(selectedIds);
+  let selectedIndex=0;
+  const ids=goalRows().map(g=>selectedSet.has(g.id)?selectedIds[selectedIndex++]:g.id);
   try{await goalsBoardCommand('/order','PUT',{goal_ids:ids});toast('Порядок целей обновлён',{type:'success'});}
   catch(error){handleCommandError(error,()=>goalsBoardCommand('/order','PUT',{goal_ids:ids}));}
 }
@@ -6868,23 +6857,20 @@ const RISK_COLS=[
 // Список рисков текущего контекста (общие либо выбранная команда) или null,
 // если на командной под-вкладке команда ещё не выбрана.
 function currentRiskList(){
-  if(state.ui.riskView==='general') return state.risks.general;
-  if(!state.ui.riskTeam) return null;
-  const key=teamKey(state.ui.riskTribe,state.ui.riskTeam);
-  if(!state.risks.teams[key]) state.risks.teams[key]=[];
-  return state.risks.teams[key];
+  if(state.ui.riskView==='general') return riskRows().filter(r=>r.scope==='general');
+  const team=selectedRiskTeam();
+  if(!team)return null;
+  return riskRows().filter(r=>r.scope==='team'&&String(r.teamId)===String(team.id));
 }
 // Командные риски, отмеченные как общебанковские (shared) — для зеркала на «Общие риски»
 function sharedTeamRisks(){
-  const out=[];
-  Object.keys(state.risks.teams).forEach(key=>{
-    const team=key.split('||')[1]||key;
-    (state.risks.teams[key]||[]).forEach(r=>{ if(r.shared) out.push({r,team}); });
+  return riskRows().filter(r=>r.scope==='team'&&r.shared).map(r=>{
+    const team=riskTeamOptions().find(t=>String(t.id)===String(r.teamId));
+    return {r,team:team?team.name:'Команда'};
   });
-  return out;
 }
 
-function viewRisks(){
+function legacyViewRisksLocal(){
   if(state.ui.riskView==='team'&&state.ui.riskTeam){
     const selectedExists=(state.pi.teams||[]).some(team=>
       team.tribe===state.ui.riskTribe&&team.name===state.ui.riskTeam
@@ -6924,7 +6910,7 @@ function viewRisks(){
 }
 // Таблица «Общие риски»: собственные общие риски + зеркало отмеченных командных
 function viewGeneralRiskTable(){
-  const gen=state.risks.general;
+  const gen=riskRows().filter(r=>r.scope==='general');
   const shared=sharedTeamRisks();
   let html=`<table><thead><tr><th style="width:40px">N</th>`+
     RISK_COLS.map(c=>`<th>${c[1]}</th>`).join('')+
@@ -6933,13 +6919,13 @@ function viewGeneralRiskTable(){
     html+=`<tr><td colspan="${RISK_COLS.length+2}" class="muted">Рисков пока нет</td></tr>`;
   }else{
     let n=0;
-    gen.forEach((r,i)=>{
+    gen.forEach(r=>{
       n++;
       html+=`<tr><td>${n}</td>`+
         RISK_COLS.map(c=>`<td>${esc(r[c[0]])||'<span class=auto>—</span>'}</td>`).join('')+
         `<td style="white-space:nowrap">
-           <button class="icon sm" data-rg-edit="${i}">Изменить</button>
-           <button class="icon danger sm" data-rg-del="${i}">✕</button>
+           <button class="icon sm" data-rg-edit="${esc(r.id)}">Изменить</button>
+           <button class="icon danger sm" data-rg-del="${esc(r.id)}">✕</button>
          </td></tr>`;
     });
     shared.forEach(({r,team})=>{
@@ -6968,10 +6954,10 @@ function viewTeamRiskTable(){
     list.forEach((r,i)=>{
       html+=`<tr><td>${i+1}</td>`+
         RISK_COLS.map(c=>`<td>${esc(r[c[0]])||'<span class=auto>—</span>'}</td>`).join('')+
-        `<td style="text-align:center"><input type="checkbox" data-rt-share="${i}" ${r.shared?'checked':''}></td>`+
+        `<td style="text-align:center"><input type="checkbox" data-rt-share="${esc(r.id)}" ${r.shared?'checked':''}></td>`+
         `<td style="white-space:nowrap">
-           <button class="icon sm" data-rt-edit="${i}">Изменить</button>
-           <button class="icon danger sm" data-rt-del="${i}">✕</button>
+           <button class="icon sm" data-rt-edit="${esc(r.id)}">Изменить</button>
+           <button class="icon danger sm" data-rt-del="${esc(r.id)}">✕</button>
          </td></tr>`;
     });
   }
@@ -6982,21 +6968,21 @@ function viewTeamRiskTable(){
 
 // Выбор команды для командных рисков (аккордеон трайбов → команды, как 5.0)
 function viewRiskTeamSelect(){
-  const tribes=allTribes();
-  const sel=state.ui.riskTribe;
+  const tribes=riskTribeOptions();
+  const sel=String(state.ui.riskTribeId||'');
   let html=`<div class="hint" style="margin-bottom:10px">Выберите команду. Трайбы и команды сформированы автоматически из «Данных PI-цикла».</div>`;
   html+=`<div class="tribe-list">`;
   tribes.forEach(tribe=>{
-    const open=sel===tribe;
+    const open=sel===String(tribe.id);
     html+=`<div class="tribe-acc">
-      <div class="tribe-acc-head ${open?'open':''}" data-risk-tribe="${esc(tribe)}">
-        <span class="caret">${open?'▼':'▶'}</span>${esc(tribe)}
+      <div class="tribe-acc-head ${open?'open':''}" data-risk-tribe-id="${esc(tribe.id)}" data-risk-tribe-name="${esc(tribe.name)}">
+        <span class="caret">${open?'▼':'▶'}</span>${esc(tribe.name)}
       </div>`;
     if(open){
-      const teams=state.pi.teams.filter(t=>t.tribe===tribe);
+      const teams=riskTeamOptions().filter(t=>String(t.tribe_id)===String(tribe.id));
       html+=`<div class="tribe-acc-body">`+
         (teams.length
-          ? teams.map(t=>`<div class="team-item" data-risk-open="${esc(t.name)}">${esc(t.name)}</div>`).join('')
+          ? teams.map(t=>`<div class="team-item" data-risk-open-id="${esc(t.id)}" data-risk-open-name="${esc(t.name)}">${esc(t.name)}</div>`).join('')
           : `<div class="muted">В трайбе нет команд</div>`)+
         `</div>`;
     }
@@ -7006,7 +6992,7 @@ function viewRiskTeamSelect(){
   return html;
 }
 
-function bindRisks(){
+function legacyBindRisksLocal(){
   // переключение под-вкладок
   document.querySelectorAll('[data-risk-view]').forEach(el=>el.onclick=()=>{
     state.ui.riskView=el.dataset.riskView;save();render();
@@ -7045,7 +7031,7 @@ function bindRisks(){
 
 // Модальное окно добавления / редактирования риска.
 // idx===null → добавление; иначе — редактирование записи списка.
-function openRiskModal(idx){
+function legacyOpenRiskModalLocal(idx){
   const list=currentRiskList(); if(!list)return;
   const isEdit=idx!==null && idx!==undefined;
   const isTeam = state.ui.riskView==='team';
@@ -7093,6 +7079,14 @@ function riskRows(){const c=activeCycle();return (c&&Array.isArray(c.riskRows))?
 function riskTribeOptions(){return riskRef().tribes||[];}
 function riskTeamOptions(){return riskRef().teams||[];}
 function riskInitiativeOptions(){return riskRef().initiatives||[];}
+function selectedRiskTeam(){
+  const teams=riskTeamOptions();
+  if(state.ui.riskTeamId){
+    const byId=teams.find(t=>String(t.id)===String(state.ui.riskTeamId));
+    if(byId)return byId;
+  }
+  return teams.find(t=>t.name===state.ui.riskTeam&&t.tribe===state.ui.riskTribe)||null;
+}
 function riskLinkLabel(r){
   if(r.scope==='team'){
     const t=riskTeamOptions().find(x=>String(x.id)===String(r.teamId));
@@ -7110,112 +7104,89 @@ function riskLinkLabel(r){
 }
 function viewRisks(){
   const teams=riskTeamOptions(),tribes=riskTribeOptions();
+  const selectedTeam=selectedRiskTeam();
+  if(state.ui.riskView==='team'&&state.ui.riskTeam&&!selectedTeam){
+    state.ui.riskTeam=null;
+    state.ui.riskTeamId='';
+  }
+  const view=state.ui.riskView==='team'?'team':'general';
   let html=`<div class="card"><h2>Риски ${cycleBadge()}</h2>`;
   if(!risksApiReady&&!risksBoards[currentCycleId()])return html+`<div class="muted">Загрузка рисков с backend...</div></div>`;
   if(!cycleBackendIds[currentCycleId()])return html+`<div class="muted">Backend недоступен или PI-цикл не выбран.</div></div>`;
   if(!teams.length&&!tribes.length)return html+`<div class="muted">Добавьте трайбы и команды на вкладке «Данные PI-цикла». Риски не создаются из демонстрационных данных.</div></div>`;
-  const scopeFilter=state.ui.riskScope||'',tribeFilter=state.ui.riskTribeId||'',teamFilter=state.ui.riskTeamId||'',statusFilter=state.ui.riskStatus||'';
-  const filteredTeams=tribeFilter?teams.filter(t=>String(t.tribe_id)===String(tribeFilter)):teams;
-  const rows=riskRows().filter(r=>
-    (!scopeFilter||r.scope===scopeFilter)&&
-    (!tribeFilter||String(r.tribeId)===String(tribeFilter))&&
-    (!teamFilter||String(r.teamId)===String(teamFilter))&&
-    (!statusFilter||r.status===statusFilter)
-  );
-  html+=`<div class="row" style="align-items:flex-end">
-    <label>Связь<br><select id="riskFilterScope"><option value="">Все</option>${['general','tribe','team','initiative'].map(s=>`<option value="${s}" ${scopeFilter===s?'selected':''}>${s}</option>`).join('')}</select></label>
-    <label>Трайб<br><select id="riskFilterTribe">${selectOptions(tribes,tribeFilter,{empty:'Все трайбы'})}</select></label>
-    <label>Команда<br><select id="riskFilterTeam">${selectOptions(filteredTeams,teamFilter,{empty:'Все команды',label:t=>`${t.tribe} / ${t.name}`})}</select></label>
-    <label>Статус<br><select id="riskFilterStatus"><option value="">Все статусы</option>${Object.entries(RISK_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${statusFilter===k?'selected':''}>${v}</option>`).join('')}</select></label>
-    <button class="primary" id="riskAdd">Создать риск</button>
+  html+=`<div style="margin-bottom:18px">
+    <span class="pill ${view==='general'?'sel':''}" data-risk-view="general">Общие риски</span>
+    <span class="pill ${view==='team'?'sel':''}" data-risk-view="team">Командные риски</span>
   </div>`;
-  html+=`<div class="goals-wrap"><table><thead><tr>
-    <th>№</th><th>Риск</th><th>Связь</th><th>Владелец</th><th>P</th><th>I</th><th>Критичность</th><th>Срок</th><th>Статус</th><th>ROAM</th><th></th>
-  </tr></thead><tbody>`;
-  if(!rows.length){
-    html+=`<tr><td colspan="11" class="muted">Рисков пока нет. Создайте первый риск или измените фильтры.</td></tr>`;
-  }else{
-    rows.forEach((r,i)=>{
-      html+=`<tr draggable="true" data-riskdrag-id="${esc(r.id)}">
-        <td><span class="g-handle" title="Изменить порядок">⠿</span>${i+1}</td>
-        <td><b>${esc(r.desc)}</b><div class="muted" style="font-size:11px">${esc(r.impact||'')}</div></td>
-        <td>${esc(riskLinkLabel(r))}${r.shared?'<div class="muted" style="font-size:11px">общий командный</div>':''}</td>
-        <td>${esc(r.owner)||'<span class=auto>—</span>'}</td>
-        <td>${esc(r.probability)}</td><td>${esc(r.impactLevel)}</td>
-        <td>${esc(r.criticality)} · ${esc(r.criticalityLabel)}</td>
-        <td>${esc(r.reactionDueDate)||'<span class=auto>—</span>'}</td>
-        <td><select data-risk-status="${esc(r.id)}">${Object.entries(RISK_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${r.status===k?'selected':''}>${v}</option>`).join('')}</select></td>
-        <td><select data-risk-roam="${esc(r.id)}"><option value="">—</option>${Object.entries(RISK_ROAM_LABELS).map(([k,v])=>`<option value="${k}" ${r.roam===k?'selected':''}>${v}</option>`).join('')}</select></td>
-        <td style="white-space:nowrap"><button class="sm" data-risk-edit="${esc(r.id)}">Изменить</button><button class="sm danger" data-risk-del="${esc(r.id)}">×</button></td>
-      </tr>`;
-    });
+  if(view==='team'&&!selectedTeam){
+    html+=viewRiskTeamSelect()+`</div>`;
+    return html;
   }
-  html+=`</tbody></table></div></div>`;
+  if(view==='team'){
+    html+=`<div class="team-toolbar"><span class="team-title">${esc(selectedTeam.name)}</span><button class="ghost" id="riskTeamBack">← Выбор команды</button></div>`;
+  }
+  html+=`<div class="row" style="margin-bottom:14px"><button class="plus" id="riskAdd">+</button><span>Добавить риск</span></div>`;
+  html+=view==='team'?viewTeamRiskTable():viewGeneralRiskTable();
+  html+=`</div>`;
   return html;
 }
 function bindRisks(){
-  const fs=$('#riskFilterScope'); if(fs)fs.onchange=()=>{state.ui.riskScope=fs.value;save();render();};
-  const ft=$('#riskFilterTribe'); if(ft)ft.onchange=()=>{state.ui.riskTribeId=ft.value;state.ui.riskTeamId='';save();render();};
-  const fteam=$('#riskFilterTeam'); if(fteam)fteam.onchange=()=>{state.ui.riskTeamId=fteam.value;save();render();};
-  const fst=$('#riskFilterStatus'); if(fst)fst.onchange=()=>{state.ui.riskStatus=fst.value;save();render();};
+  document.querySelectorAll('[data-risk-view]').forEach(el=>el.onclick=()=>{
+    state.ui.riskView=el.dataset.riskView;save();render();
+  });
+  document.querySelectorAll('[data-risk-tribe-id]').forEach(el=>el.onclick=()=>{
+    const same=String(state.ui.riskTribeId||'')===String(el.dataset.riskTribeId);
+    state.ui.riskTribeId=same?'':el.dataset.riskTribeId;
+    state.ui.riskTribe=same?null:el.dataset.riskTribeName;
+    save();render();
+  });
+  document.querySelectorAll('[data-risk-open-id]').forEach(el=>el.onclick=()=>{
+    const team=riskTeamOptions().find(t=>String(t.id)===String(el.dataset.riskOpenId));
+    state.ui.riskTeamId=el.dataset.riskOpenId;
+    state.ui.riskTeam=el.dataset.riskOpenName;
+    if(team){state.ui.riskTribeId=String(team.tribe_id);state.ui.riskTribe=team.tribe;}
+    save();render();
+  });
+  const back=$('#riskTeamBack'); if(back)back.onclick=()=>{state.ui.riskTeam=null;state.ui.riskTeamId='';save();render();};
   const add=$('#riskAdd'); if(add)add.onclick=()=>openRiskModal(null);
-  document.querySelectorAll('[data-risk-edit]').forEach(b=>b.onclick=()=>openRiskModal(b.dataset.riskEdit));
-  document.querySelectorAll('[data-risk-del]').forEach(b=>b.onclick=()=>deleteRiskUi(b.dataset.riskDel));
-  document.querySelectorAll('[data-risk-status]').forEach(el=>el.onchange=async()=>{
-    try{await risksBoardCommand(`/risks/${el.dataset.riskStatus}/status`,'PATCH',{status:el.value});toast('Статус риска обновлён',{type:'success'});}
-    catch(error){handleCommandError(error,()=>risksBoardCommand(`/risks/${el.dataset.riskStatus}/status`,'PATCH',{status:el.value}));}
+  document.querySelectorAll('[data-rg-edit]').forEach(b=>b.onclick=()=>openRiskModal(b.dataset.rgEdit));
+  document.querySelectorAll('[data-rt-edit]').forEach(b=>b.onclick=()=>openRiskModal(b.dataset.rtEdit));
+  document.querySelectorAll('[data-rg-del]').forEach(b=>b.onclick=()=>deleteRiskUi(b.dataset.rgDel));
+  document.querySelectorAll('[data-rt-del]').forEach(b=>b.onclick=()=>deleteRiskUi(b.dataset.rtDel));
+  document.querySelectorAll('[data-rt-share]').forEach(el=>el.onchange=async()=>{
+    const run=()=>risksBoardCommand(`/risks/${el.dataset.rtShare}`,'PATCH',{is_shared:el.checked});
+    try{await run();toast(el.checked?'Риск продублирован в «Общие риски»':'Риск убран из «Общих рисков»',{type:'info'});}
+    catch(error){handleCommandError(error,run);}
   });
-  document.querySelectorAll('[data-risk-roam]').forEach(el=>el.onchange=async()=>{
-    try{await risksBoardCommand(`/risks/${el.dataset.riskRoam}/roam`,'PATCH',{roam:el.value||null});toast('ROAM обновлён',{type:'success'});}
-    catch(error){handleCommandError(error,()=>risksBoardCommand(`/risks/${el.dataset.riskRoam}/roam`,'PATCH',{roam:el.value||null}));}
-  });
-  bindRiskRowDrag();
 }
 function riskPayloadFromModal(){
-  const scope=$('#rm_scope').value;
+  const isTeam=state.ui.riskView==='team';
+  const team=selectedRiskTeam();
   return {
-    scope,
-    tribe_id:scope==='tribe'?($('#rm_tribe').value||null):null,
-    team_id:scope==='team'?($('#rm_team').value||null):null,
-    initiative_id:scope==='initiative'?($('#rm_initiative').value||null):null,
-    is_shared:scope==='team'&&$('#rm_shared')&&$('#rm_shared').checked,
+    scope:isTeam?'team':'general',
+    tribe_id:null,
+    team_id:isTeam&&team?team.id:null,
+    initiative_id:null,
+    is_shared:isTeam&&$('#rm_shared')&&$('#rm_shared').checked,
     description:$('#rm_desc').value.trim(),
     owner:$('#rm_owner').value.trim(),
     impact:$('#rm_impact').value.trim(),
     control_point:$('#rm_control').value.trim(),
     mitigation_plan:$('#rm_plan').value.trim(),
-    probability:+$('#rm_probability').value||1,
-    impact_level:+$('#rm_impact_level').value||1,
-    reaction_due_date:$('#rm_due').value||null,
-    treatment_plan:$('#rm_treatment').value.trim(),
-    status:$('#rm_status').value,
-    roam:$('#rm_roam').value||null,
   };
 }
 function openRiskModal(riskId){
   const r=riskRows().find(x=>x.id===riskId)||{};
-  const scope=r.scope||state.ui.riskScope||'general';
+  const isTeam=state.ui.riskView==='team';
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>${riskId?'Редактирование риска':'Новый риск'}</h3>
-    <label><span>Связь</span><select id="rm_scope">
-      ${['general','tribe','team','initiative'].map(s=>`<option value="${s}" ${scope===s?'selected':''}>${s}</option>`).join('')}
-    </select></label>
-    <label><span>Трайб</span><select id="rm_tribe">${selectOptions(riskTribeOptions(),r.tribeId||state.ui.riskTribeId||'',{empty:'Выберите трайб'})}</select></label>
-    <label><span>Команда</span><select id="rm_team">${selectOptions(riskTeamOptions(),r.teamId||state.ui.riskTeamId||'',{empty:'Выберите команду',label:t=>`${t.tribe} / ${t.name}`})}</select></label>
-    <label><span>Инициатива</span><select id="rm_initiative">${selectOptions(riskInitiativeOptions(),r.initiativeId||'',{empty:'Выберите инициативу',label:i=>`${i.issue_key} · ${i.title}`})}</select></label>
     <label><span>Описание риска</span><textarea id="rm_desc" rows="2">${esc(r.desc||'')}</textarea></label>
     <label><span>Владелец</span><input id="rm_owner" value="${esc(r.owner||'')}"></label>
     <label><span>Влияние</span><input id="rm_impact" value="${esc(r.impact||'')}"></label>
-    <label><span>Вероятность 1-5</span><input id="rm_probability" type="number" min="1" max="5" value="${esc(r.probability||1)}"></label>
-    <label><span>Влияние 1-5</span><input id="rm_impact_level" type="number" min="1" max="5" value="${esc(r.impactLevel||1)}"></label>
-    <label><span>Срок реакции</span><input id="rm_due" type="date" value="${esc(r.reactionDueDate||'')}"></label>
-    <label><span>Контрольная точка</span><input id="rm_control" value="${esc(r.control||'')}"></label>
-    <label><span>План обработки</span><textarea id="rm_treatment" rows="2">${esc(r.treatmentPlan||'')}</textarea></label>
-    <label><span>План снижения</span><textarea id="rm_plan" rows="2">${esc(r.plan||'')}</textarea></label>
-    <label><span>Статус</span><select id="rm_status">${Object.entries(RISK_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${(r.status||'open')===k?'selected':''}>${v}</option>`).join('')}</select></label>
-    <label><span>ROAM</span><select id="rm_roam"><option value="">—</option>${Object.entries(RISK_ROAM_LABELS).map(([k,v])=>`<option value="${k}" ${(r.roam||'')===k?'selected':''}>${v}</option>`).join('')}</select></label>
-    <label style="display:flex;align-items:center;gap:9px;cursor:pointer"><input type="checkbox" id="rm_shared" ${r.shared?'checked':''} style="width:auto;margin:0"><span style="margin:0;color:var(--text)">Общий командный риск</span></label>
+    <label><span>Контрольная дата/событие</span><input id="rm_control" value="${esc(r.control||'')}"></label>
+    <label><span>План работы с риском</span><textarea id="rm_plan" rows="2">${esc(r.plan||'')}</textarea></label>
+    ${isTeam?`<label style="display:flex;align-items:center;gap:9px;cursor:pointer"><input type="checkbox" id="rm_shared" ${r.shared?'checked':''} style="width:auto;margin:0"><span style="margin:0;color:var(--text)">Общий риск — продублировать на «Общие риски»</span></label>`:''}
     <div class="modal-actions"><button id="rm_cancel">Отмена</button><button class="primary" id="rm_save">Сохранить</button></div>
   </div></div>`;
   $('#rm_cancel').onclick=()=>root.innerHTML='';
