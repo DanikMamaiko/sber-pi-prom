@@ -215,7 +215,7 @@ function pbCardHTML(card,extraClass=''){
 function pbConflictsHTML(board){
   const conflicts=board.conflicts||[];
   if(!conflicts.length)return '';
-  return `<div class="pb-conflicts"><b>Предупреждения плана: ${conflicts.length}</b>`+
+  return `<div class="pb-conflicts"><b>Проверьте план: ${conflicts.length}</b>`+
     conflicts.slice(0,6).map(row=>`<span class="${row.severity==='error'?'error':''}">${esc(row.message)}</span>`).join('')+
     (conflicts.length>6?`<span>Ещё ${conflicts.length-6}</span>`:'')+`</div>`;
 }

@@ -178,15 +178,10 @@ async def read_program_board(
             conflicts.append(
                 {
                     "code": "unscheduled_dependency",
-                    "message": "У зависимости есть endpoint без назначенного спринта",
-                    "connection_id": connection.id,
-                }
-            )
-        elif source_sprint > target_sprint:
-            conflicts.append(
-                {
-                    "code": "dependency_order",
-                    "message": "Предшественник запланирован позже зависимой работы",
+                    "message": (
+                        f"Проверьте связь {source['ref']} -> {target['ref']}: "
+                        "у одной из работ не выбран спринт"
+                    ),
                     "connection_id": connection.id,
                 }
             )
