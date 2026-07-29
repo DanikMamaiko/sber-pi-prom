@@ -47,6 +47,9 @@ class WorkItem(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     initiative_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("initiatives.id", ondelete="CASCADE"))
     story_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"), nullable=True)
+    assignee_member_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("pi_cycle_capacity_members.id", ondelete="SET NULL"), nullable=True
+    )
     client_uid: Mapped[str] = mapped_column(String(80), nullable=False)
     assignee_name: Mapped[str] = mapped_column(String(220), default="")
     competency: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -58,6 +61,7 @@ class WorkItem(Base, TimestampMixin):
 
     initiative: Mapped[Initiative] = relationship(back_populates="work_items")
     story: Mapped[Story | None] = relationship(back_populates="work_items")
+    assignee_member: Mapped["PiCycleCapacityMember | None"] = relationship()
 
 
 class PiCycleCapacityMember(Base, TimestampMixin):

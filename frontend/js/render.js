@@ -128,8 +128,9 @@ function render(){
    ГЛАВНАЯ СТРАНИЦА — выбор PI-цикла (год + квартал)
 ===================================================================== */
 function viewLanding(){
-  const years=[2026,2027,2028];
-  const y=state.ui.landingYear||2026;
+  const backendYears=Object.keys(state.cycles||{}).map(id=>+String(id).split('-')[0]).filter(Number.isFinite);
+  const y=state.ui.landingYear||backendYears[0]||new Date().getFullYear();
+  const years=[...new Set([2026,2027,2028,y,...backendYears])].sort((a,b)=>a-b);
   const yopts=years.map(v=>`<option value="${v}" ${v===y?'selected':''}>${v}</option>`).join('');
   const qs=['Q1','Q2','Q3','Q4'].map(q=>`<button class="q-btn" data-q="${q}">${q}</button>`).join('');
   return `

@@ -90,18 +90,6 @@ function formatRangesShort(text){
     return r.start.getTime()===r.end.getTime() ? a : `${a} — ${b}`;
   }).join('; ');
 }
-function rangeWorkdaysInPeriod(text,period){
-  const days=new Set();
-  parseDateRanges(text).forEach(r=>{
-    const os=r.start>period.start?r.start:period.start;
-    const oe=r.end<period.end?r.end:period.end;
-    for(let d=new Date(os); d<=oe; d=addDays(d,1)){
-      const w=d.getDay();
-      if(w!==0&&w!==6) days.add(`${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`);
-    }
-  });
-  return days.size;
-}
 function weekdaysBetween(a,b){
   if(b<a) return 0;
   let c=0,d=new Date(a);
@@ -211,15 +199,10 @@ function teamType(t){ return (t && t.type==='ИТ-проект') ? 'ИТ-про�
 /* ---- Модель компетенций и команд-исполнителей ---- */
 // Объект команды по имени (в активном цикле).
 function teamObjByName(name){ return (state.pi.teams||[]).find(t=>t.name===name)||null; }
-// Компетенции команды по умолчанию (глобальный дефолт).
-function defaultCompsFor(name){ return (DEFAULT_TEAM_COMPS[name]||BASE_TEAM_COMPS).slice(); }
-// Настроенные компетенции команды в активном цикле (с фолбэком: глобально по циклам → дефолт).
+// Настроенные компетенции команды берутся только из активного PI-цикла.
 function teamComps(name){
   const t=teamObjByName(name);
-  if(t && Array.isArray(t.comps) && t.comps.length) return COMPS.filter(c=>t.comps.includes(c));
-  const g=allCycleTeams().find(x=>x.name===name);
-  if(g && Array.isArray(g.comps) && g.comps.length) return COMPS.filter(c=>g.comps.includes(c));
-  return defaultCompsFor(name);
+  return t && Array.isArray(t.comps) ? t.comps.slice() : [];
 }
 // Компетенции команды-исполнителя с учётом «Квартала реализации» (quarter+year).
 // Если целевой цикл существует и в нём есть команда — берём его набор; иначе — глобальный дефолт.
@@ -228,7 +211,7 @@ function teamCompsFor(name, quarter, year){
     const c=state.cycles && state.cycles[cycleId(year,quarter)];
     if(c && Array.isArray(c.pi && c.pi.teams)){
       const t=c.pi.teams.find(x=>x.name===name);
-      if(t && Array.isArray(t.comps) && t.comps.length) return COMPS.filter(x=>t.comps.includes(x));
+      if(t && Array.isArray(t.comps)) return t.comps.slice();
     }
   }
   // только год → берём Q1 этого года
@@ -236,10 +219,10 @@ function teamCompsFor(name, quarter, year){
     const c=state.cycles && state.cycles[cycleId(year,'Q1')];
     if(c && c.pi && Array.isArray(c.pi.teams)){
       const t=c.pi.teams.find(x=>x.name===name);
-      if(t && Array.isArray(t.comps) && t.comps.length) return COMPS.filter(x=>t.comps.includes(x));
+      if(t && Array.isArray(t.comps)) return t.comps.slice();
     }
   }
-  return teamComps(name);
+  return [];
 }
 // Нормализованный список исполнителей инициативы: [{team, comps:{SA:..,DEV:..}}].
 function issueExecutors(iss){
@@ -415,42 +398,27 @@ function effortTitle(iss,role){
 }
 
 function round1(n){ return Math.round((+n||0)*10)/10; }
-// дни отпуска человека внутри спринта
-function personVacation(person,sprint){
-  return rangeWorkdaysInPeriod(person.vacation,sprint);
-}
-function personExtraUnavailable(person,sprint){
-  return rangeWorkdaysInPeriod(person.extraUnavailable,sprint);
-}
-function personRate(person){
-  const n=parseFloat(String(person.rate??'').replace(',','.'));
-  return Number.isFinite(n) && n>=0 ? n : 1;
-}
-function personEfficiency(person){
-  if(person.efficiency===null || person.efficiency===undefined || String(person.efficiency).trim()==='') return null;
-  const n=parseFloat(String(person.efficiency).replace(',','.'));
-  return Number.isFinite(n) && n>=0 ? n : null;
-}
 // доступная ёмкость человека в конкретном спринте
 //   Доступная = Плановая − отпуск − Плановая×%церемоний − Плановая×%рисков (проценты от Плановой)
 function personAvail(person,sprint){
   const id=currentCycleId(),cycle=id&&state.cycles&&state.cycles[id];
   const cached=id&&person.uid&&capacityComputedCycles[id]&&capacityComputedCycles[id].members[person.uid];
-  if(cached&&cycle&&(sprint.week===null||sprint.week===undefined)&&
-      cached.inputKey===capacityMemberInputKey(person,cycle,id)){
-    const row=(cached.sprints||[]).find(x=>+x.sprint_index===+sprint.index);
-    if(row)return +row.available_capacity||0;
+  if(cached&&cycle&&cached.inputKey===capacityMemberInputKey(person,cycle,id)){
+    if(sprint.week===null||sprint.week===undefined){
+      const row=(cached.sprints||[]).find(x=>+x.sprint_index===+sprint.index);
+      return row ? (+row.available_capacity||0) : 0;
+    }
+    const rows=(cached.weeks||{})[sprint.index]||(cached.weeks||{})[String(sprint.index)]||[];
+    const row=rows.find(x=>+x.week_index===+sprint.week);
+    return row ? (+row.available_capacity||0) : 0;
   }
-  const rate=personRate(person);
-  const planned=sprint.workdays*rate;
-  const vac=personVacation(person,sprint)*rate;
-  const extra=personExtraUnavailable(person,sprint)*rate;
-  const cer=planned*(+person.ceremonyPct||0)/100;
-  const risk=planned*(+person.riskPct||0)/100;
-  let avail=Math.max(0, planned - vac - extra - cer - risk);
-  const eff=personEfficiency(person);
-  if(eff!==null) avail*=eff;
-  return avail;
+  return 0;
+}
+function personCapacityTotal(person,field){
+  const id=currentCycleId(),cycle=id&&state.cycles&&state.cycles[id];
+  const cached=id&&person.uid&&capacityComputedCycles[id]&&capacityComputedCycles[id].members[person.uid];
+  if(!cached||!cycle||cached.inputKey!==capacityMemberInputKey(person,cycle,id))return null;
+  return +(cached[field]||0);
 }
 // план роли в спринте = сумма доступной по всем людям этой роли
 function rolePlan(team,role,sprint){
@@ -461,17 +429,15 @@ function rolePlan(team,role,sprint){
 //  - если issue НЕ декомпозирован (нет белых) — берём значение роли с цветного стикера в его спринте;
 //  - если декомпозирован (есть ≥1 белый) — значения цветного игнорируются, считаем по белым.
 function consumedEffort(team,role,sprintIndex,weekIndex=null){
-  let sum=0;
-  state.issues.filter(i=>issuePrimaryTeam(i)===team.name && i.onBoard).forEach(i=>{
-    const subs=i.subtasks||[];
-    if(subs.length>0){
-      subs.forEach(st=>{
-        if(st.role===role && st.sprint===sprintIndex && (weekIndex===null || itemWeek(st)===weekIndex)) sum+=(+st.cap||0);
-      });
-    }else if(i.sprint===sprintIndex && (weekIndex===null || itemWeek(i)===weekIndex)){
-      sum += issueTeamEffort(i,team.name,role);
-    }
-  });
-  return sum;
+  const id=currentCycleId(),cache=id&&capacityComputedCycles[id];
+  const summary=cache&&cache.teams[teamKey(team.tribe,team.name)];
+  if(!summary)return 0;
+  if(weekIndex===null||weekIndex===undefined){
+    const row=(summary.loadBySprint||{})[sprintIndex]||(summary.loadBySprint||{})[String(sprintIndex)]||{};
+    return +row[role]||0;
+  }
+  const sprint=(summary.loadByWeek||{})[sprintIndex]||(summary.loadByWeek||{})[String(sprintIndex)]||{};
+  const row=sprint[weekIndex]||sprint[String(weekIndex)]||{};
+  return +row[role]||0;
 }
 

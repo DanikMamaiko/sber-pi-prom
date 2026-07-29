@@ -405,6 +405,15 @@ async function loadGoalsCycles(){
 }
 function teamBoardsPayload(id,c){
   ensureCycleShape(c);
+  const assigneeId=(issue,item)=>{
+    const team=(c.pi.teams||[]).find(row=>row.name===issuePrimaryTeam(issue));
+    if(!team)return item._assigneeMemberId||null;
+    const roster=c.capacity[teamKey(team.tribe,team.name)]||[];
+    const match=roster.find(member=>
+      String(member.fio||'').trim().toLowerCase()===String(item.fio||'').trim().toLowerCase() &&
+      String(member.role||'').trim().toUpperCase()===String(item.role||'').trim().toUpperCase());
+    return match&&match._backendId ? match._backendId : (item._assigneeMemberId||null);
+  };
   return {initiatives:(c.issues||[]).filter(i=>String(i.id||'').trim()).map(i=>({
     id:i._backendId||null,
     issue_key:String(i.id).trim(),
@@ -429,6 +438,7 @@ function teamBoardsPayload(id,c){
       id:st._backendId||null,
       client_uid:String(st.uid).trim(),
       story_client_uid:st.storyUid?String(st.storyUid):null,
+      assignee_member_id:assigneeId(i,st),
       assignee_name:String(st.fio||''),
       competency:String(st.role||'SA'),
       effort:+st.cap||0,
@@ -439,7 +449,7 @@ function teamBoardsPayload(id,c){
     })),
   }))};
 }
-function teamBoardsSnapshotHash(id,c){ return stablePayloadHash(teamBoardsPayload(id,c)); }
+function teamBoardsPayloadHash(id,c){ return stablePayloadHash(teamBoardsPayload(id,c)); }
 function applyTeamBoards(c,aggregate){
   const byId={},byKey={};
   (c.issues||[]).forEach(i=>{
@@ -481,6 +491,7 @@ function applyTeamBoards(c,aggregate){
       const item=priorItemsById[w.id]||priorItemsByUid[String(w.client_uid).toLowerCase()]||{};
       Object.assign(item,{
         _backendId:w.id,uid:w.client_uid,fio:w.assignee_name||'',role:w.competency||'',
+        _assigneeMemberId:w.assignee_member_id||null,
         cap:+w.effort||0,
         sprint:w.sprint_index===null||w.sprint_index===undefined?null:+w.sprint_index,
         ord:+w.board_sort_order||0,
@@ -515,13 +526,16 @@ function reportTeamBoardsSyncError(error){
 async function persistTeamBoardsCycle(id,force=false){
   const c=state.cycles[id];if(!c)return;
   if(!cycleBackendIds[id])await persistCycle(id);
-  const hash=teamBoardsSnapshotHash(id,c);
-  if(!force&&persistedTeamBoardSnapshots[id]===hash)return;
+  const hash=teamBoardsPayloadHash(id,c);
+  if(!force&&persistedTeamBoardHashes[id]===hash)return;
   const aggregate=await cycleMutation(id,`/pi-cycles/${cycleBackendIds[id]}/team-boards`,{
     method:'PUT',body:teamBoardsPayload(id,c),
   });
   applyTeamBoardsIdentity(c,aggregate);
-  persistedTeamBoardSnapshots[id]=teamBoardsSnapshotHash(id,c);
+  persistedTeamBoardHashes[id]=teamBoardsPayloadHash(id,c);
+  const capacity=await cycleRead(id,`/pi-cycles/${cycleBackendIds[id]}/capacity`);
+  applyCapacity(c,capacity,id);
+  persistedCapacityHashes[id]=capacityPayloadHash(id,c);
 }
 async function syncAllTeamBoards(){
   for(const id of Object.keys(state.cycles||{}))await persistTeamBoardsCycle(id);
@@ -540,15 +554,30 @@ function flushTeamBoardsSync(){
   return runTeamBoardsSync();
 }
 async function loadTeamBoardsCycles(){
-  persistedTeamBoardSnapshots={};
+  persistedTeamBoardHashes={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id];if(!backendId)continue;
     const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/team-boards`);
     applyTeamBoards(state.cycles[id],aggregate);
-    persistedTeamBoardSnapshots[id]=teamBoardsSnapshotHash(id,state.cycles[id]);
+    persistedTeamBoardHashes[id]=teamBoardsPayloadHash(id,state.cycles[id]);
   }
   const active=currentCycleId();
   if(active&&state.cycles[active])activateCycle(active);
+}
+async function teamBoardCommand(path,method='PATCH',body={}){
+  const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
+  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/team-boards${path}`,{method,body});
+  applyTeamBoards(state.cycles[id],aggregate);
+  persistedTeamBoardHashes[id]=teamBoardsPayloadHash(id,state.cycles[id]);
+  const capacity=await cycleRead(id,`/pi-cycles/${backendId}/capacity`);
+  applyCapacity(state.cycles[id],capacity,id);
+  persistedCapacityHashes[id]=capacityPayloadHash(id,state.cycles[id]);
+  const programBoard=await cycleRead(id,`/pi-cycles/${backendId}/program-board`);
+  applyProgramBoard(state.cycles[id],programBoard);
+  persistedProgramBoardHashes[id]=programBoardPayloadHash(id,state.cycles[id]);
+  activateCycle(id);
+  return aggregate;
 }
 function capacityCycleYear(id,c){
   const fromStart=String(c&&c.pi&&c.pi.startDate||'').match(/^(\d{4})-/);
@@ -604,7 +633,7 @@ function capacityPayload(id,c){
     };
   })};
 }
-function capacitySnapshotHash(id,c){return stablePayloadHash(capacityPayload(id,c));}
+function capacityPayloadHash(id,c){return stablePayloadHash(capacityPayload(id,c));}
 function cacheCapacityComputed(id,c,aggregate){
   const cache={teams:{},members:{}};
   (aggregate.teams||[]).forEach(row=>{
@@ -613,6 +642,8 @@ function cacheCapacityComputed(id,c,aggregate){
       calendar:+row.calendar_capacity||0,available:+row.available_capacity||0,
       planned:+row.planned_effort||0,availableByRole:row.available_by_competency||{},
       plannedByRole:row.planned_by_competency||{},
+      loadByRole:row.load_by_competency||{},loadBySprint:row.load_by_sprint||{},
+      loadByWeek:row.load_by_week||{},
     };
     const localByUid={};(c.capacity[key]||[]).forEach(p=>{if(p.uid)localByUid[String(p.uid).toLowerCase()]=p;});
     (row.members||[]).forEach(member=>{
@@ -620,7 +651,7 @@ function cacheCapacityComputed(id,c,aggregate){
       cache.members[member.client_uid]={
         inputKey:capacityMemberInputKey(local,c,id),
         calendar:+member.calendar_capacity||0,available:+member.available_capacity||0,
-        sprints:Array.isArray(member.sprints)?member.sprints:[],
+        sprints:Array.isArray(member.sprints)?member.sprints:[],weeks:member.weeks||{},
       };
     });
   });
@@ -670,13 +701,13 @@ function reportCapacitySyncError(error){
 async function persistCapacityCycle(id,force=false){
   const c=state.cycles[id];if(!c)return;
   if(!cycleBackendIds[id])await persistCycle(id);
-  const hash=capacitySnapshotHash(id,c);
-  if(!force&&persistedCapacitySnapshots[id]===hash)return;
+  const hash=capacityPayloadHash(id,c);
+  if(!force&&persistedCapacityHashes[id]===hash)return;
   const aggregate=await cycleMutation(id,`/pi-cycles/${cycleBackendIds[id]}/capacity`,{
     method:'PUT',body:capacityPayload(id,c),
   });
-  if(capacitySnapshotHash(id,c)===hash)applyCapacityIdentity(c,aggregate,id);
-  persistedCapacitySnapshots[id]=capacitySnapshotHash(id,c);
+  if(capacityPayloadHash(id,c)===hash)applyCapacityIdentity(c,aggregate,id);
+  persistedCapacityHashes[id]=capacityPayloadHash(id,c);
 }
 async function syncAllCapacity(){
   for(const id of Object.keys(state.cycles||{}))await persistCapacityCycle(id);
@@ -697,14 +728,23 @@ function flushCapacitySync(){
   return runCapacitySync();
 }
 async function loadCapacityCycles(){
-  persistedCapacitySnapshots={};capacityComputedCycles={};
+  persistedCapacityHashes={};capacityComputedCycles={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id];if(!backendId)continue;
     const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/capacity`);
     applyCapacity(state.cycles[id],aggregate,id);
-    persistedCapacitySnapshots[id]=capacitySnapshotHash(id,state.cycles[id]);
+    persistedCapacityHashes[id]=capacityPayloadHash(id,state.cycles[id]);
   }
   const active=currentCycleId();if(active&&state.cycles[active])activateCycle(active);
+}
+async function capacityMemberCommand(path,method='PATCH',body={}){
+  const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
+  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/capacity${path}`,{method,body});
+  applyCapacity(state.cycles[id],aggregate,id);
+  persistedCapacityHashes[id]=capacityPayloadHash(id,state.cycles[id]);
+  activateCycle(id);
+  return aggregate;
 }
 function programBoardPayload(id,c){
   ensureCycleShape(c);
@@ -740,7 +780,7 @@ function programBoardPayload(id,c){
   });
   return {connections:rows};
 }
-function programBoardSnapshotHash(id,c){return stablePayloadHash(programBoardPayload(id,c));}
+function programBoardPayloadHash(id,c){return stablePayloadHash(programBoardPayload(id,c));}
 function connectionEndpointFromApi(endpoint){
   return endpoint.kind==='c'?{kind:'c',id:endpoint.ref}:{kind:'w',uid:endpoint.ref};
 }
@@ -779,13 +819,13 @@ function reportProgramBoardSyncError(error){
 async function persistProgramBoardCycle(id,force=false){
   const c=state.cycles[id];if(!c)return;
   if(!cycleBackendIds[id])await persistCycle(id);
-  const hash=programBoardSnapshotHash(id,c);
-  if(!force&&persistedProgramBoardSnapshots[id]===hash)return;
+  const hash=programBoardPayloadHash(id,c);
+  if(!force&&persistedProgramBoardHashes[id]===hash)return;
   const aggregate=await cycleMutation(id,`/pi-cycles/${cycleBackendIds[id]}/program-board`,{
     method:'PUT',body:programBoardPayload(id,c),
   });
-  if(programBoardSnapshotHash(id,c)===hash)applyProgramBoardIdentity(c,aggregate);
-  persistedProgramBoardSnapshots[id]=programBoardSnapshotHash(id,c);
+  if(programBoardPayloadHash(id,c)===hash)applyProgramBoardIdentity(c,aggregate);
+  persistedProgramBoardHashes[id]=programBoardPayloadHash(id,c);
 }
 async function syncAllProgramBoards(){
   for(const id of Object.keys(state.cycles||{}))await persistProgramBoardCycle(id);
@@ -807,12 +847,12 @@ function flushProgramBoardSync(){
   return runProgramBoardSync();
 }
 async function loadProgramBoardCycles(){
-  persistedProgramBoardSnapshots={};
+  persistedProgramBoardHashes={};
   for(const id of Object.keys(state.cycles||{})){
     const backendId=cycleBackendIds[id];if(!backendId)continue;
     const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/program-board`);
     applyProgramBoard(state.cycles[id],aggregate);
-    persistedProgramBoardSnapshots[id]=programBoardSnapshotHash(id,state.cycles[id]);
+    persistedProgramBoardHashes[id]=programBoardPayloadHash(id,state.cycles[id]);
   }
   const active=currentCycleId();if(active&&state.cycles[active])activateCycle(active);
 }

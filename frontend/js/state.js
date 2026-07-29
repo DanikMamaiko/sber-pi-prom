@@ -5,17 +5,7 @@
 const COMPS = ['SA','DEV','QA','FE','BE','DES'];
 // ROLES — легаси-алиас; используется как «все компетенции» там, где нет привязки к команде.
 const ROLES = COMPS;
-// Компетенции по умолчанию для команды, если у неё не заданы (по имени; иначе базовый набор).
-const DEFAULT_TEAM_COMPS = {
-  'Продажи':['SA','DEV','QA'],
-  'Расчеты':['SA','DEV','QA','BE'],
-  'Модуль расчетов':['SA','DEV','QA'],
-  'СБОЛ':['SA','FE','BE','DES'],
-  'Сопровождение':['SA','DEV','QA'],
-};
 const BASE_TEAM_COMPS = ['SA','DEV','QA'];
-// Демо-список АС (архитектурных систем) для вкладки «Бэклог команд».
-const AC_LIST = ['СБОЛ','СББОЛ','CRM','КСШ'];
 // Возможные статусы инициативы в бэклоге трайба.
 const BACKLOG_STATUSES = ['Нет оценки','Оценка проведена','Отправлена в Pre PI Planning'];
 const BUDGET_STATUSES = ['Одобрена','На рассмотрении','Отклонена'];
@@ -103,18 +93,18 @@ let goalsApiReady=false;
 let goalsBoards={};
 let lastGoalsSyncErrorAt=0;
 let teamBoardsApiReady=false;
-let persistedTeamBoardSnapshots={};
+let persistedTeamBoardHashes={};
 let teamBoardsSyncTimer=null;
 let teamBoardsSyncChain=Promise.resolve();
 let lastTeamBoardsSyncErrorAt=0;
 let capacityApiReady=false;
-let persistedCapacitySnapshots={};
+let persistedCapacityHashes={};
 let capacityComputedCycles={};
 let capacitySyncTimer=null;
 let capacitySyncChain=Promise.resolve();
 let lastCapacitySyncErrorAt=0;
 let programBoardApiReady=false;
-let persistedProgramBoardSnapshots={};
+let persistedProgramBoardHashes={};
 let programBoardSyncTimer=null;
 let programBoardSyncChain=Promise.resolve();
 let lastProgramBoardSyncErrorAt=0;

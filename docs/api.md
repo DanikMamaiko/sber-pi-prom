@@ -105,21 +105,37 @@ Focused-команды возвращают этот полный read model. П
 
 - `GET /pi-cycles/{cycle_id}/team-boards`
 - `PUT /pi-cycles/{cycle_id}/team-boards`
+- `PATCH /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}`
+- `POST /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}/stories`
+- `PATCH|DELETE /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}/stories/{story_id}`
+- `POST /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}/work-items`
+- `PATCH|DELETE /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}/work-items/{work_item_id}`
 
 `team-boards` — транзакционный агрегат содержимого командных досок. Он хранит размещение
 инициатив по спринтам и неделям, порядок стикеров, согласование, stories и белые подзадачи.
 Frontend использует стабильные `client_uid` для связи story с подзадачами; backend проверяет
 уникальность UID и отклоняет некорректный payload без частичного сохранения.
+Focused-команды соответствуют одному действию пользователя, требуют `expected_version` и
+возвращают каноническую read model всей доски. Редактирование заголовка, типа, комментария,
+тегов и оценки инициативы обновляет ту же серверную `Initiative`, которую читают Pre PI и
+Program Board. Удаление Story с дочерними Work Items и удаление Work Item со связями требуют
+`confirm_cascade: true`; каскад и изменение версии выполняются одной транзакцией.
 
 ## Ёмкость команд
 
 - `GET /pi-cycles/{cycle_id}/capacity`
 - `PUT /pi-cycles/{cycle_id}/capacity`
+- `POST /pi-cycles/{cycle_id}/capacity/members`
+- `PATCH|DELETE /pi-cycles/{cycle_id}/capacity/members/{member_id}`
 
 `capacity` хранит квартальный состав команд: ФИО, компетенцию, ставку, периоды отпуска и
 дополнительной недоступности, проценты церемоний/риска и КПД. Ответ содержит рассчитанные
 календарную и доступную ёмкость каждого участника по спринтам, итоги команды по компетенциям,
 а также запланированные трудозатраты из нормализованного Pre PI.
+Backend также возвращает расчёт по каждой неделе спринта и фактическую загрузку доски по
+компетенциям/спринтам/неделям. Work Item хранит ссылку `assignee_member_id` на участника
+ёмкости активного PI; удаление назначенного участника требует подтверждения и атомарно
+очищает назначения.
 
 ## Program Board
 

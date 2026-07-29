@@ -8,6 +8,28 @@ function viewTeams(){
   if(state.ui.teamView==='capacity') return viewCapacity(t);
   return viewBoard(t);
 }
+async function runBoardCommand(path,method,body,successMessage){
+  try{
+    await teamBoardCommand(path,method,body);
+    save(false);render();
+    if(successMessage)toast(successMessage,{type:'success'});
+    return true;
+  }catch(error){
+    reportTeamBoardsSyncError(error);
+    return false;
+  }
+}
+async function runCapacityCommand(path,method,body,successMessage){
+  try{
+    await capacityMemberCommand(path,method,body);
+    save(false);render();
+    if(successMessage)toast(successMessage,{type:'success'});
+    return true;
+  }catch(error){
+    reportCapacitySyncError(error);
+    return false;
+  }
+}
 function viewTeamSelect(){
   const tribes=allTribes();
   const sel=state.ui.teamsTribe;
@@ -373,23 +395,21 @@ function whiteHTML(iss,st,si){
 function viewCapacity(t){
   const key=teamKey(t.tribe,t.name);
   const rows=state.capacity[key]||[];
-  const sprints=computeSprints();
-  const totalWD=sprints.reduce((s,x)=>s+x.workdays,0);
   let html=`<div class="card">${teamToolbar(t,'capacity')}<h3>Емкость команды</h3>
     <div class="board-scroll" style="padding:0"><table><thead><tr><th>ФИО</th><th>Роль</th><th>Ставка</th><th>Плановая</th><th>Отпуск</th><th>Доп. дни недоступен</th><th>Agile-церемонии (%)</th><th>Риски (%)</th><th>КПД</th><th>Доступная</th><th></th></tr></thead><tbody>`;
   if(!rows.length) html+=`<tr><td colspan="11" class="muted">Нет сотрудников</td></tr>`;
   rows.forEach((p,i)=>{
-    const avail=sprints.reduce((s,x)=>s+personAvail(p,x),0);
+    const avail=personCapacityTotal(p,'available');
     const vacLabel=formatVacShort(p.vacation);
     const extraLabel=formatVacShort(p.extraUnavailable);
-    const planned=totalWD*personRate(p);
+    const planned=personCapacityTotal(p,'calendar');
     const memberRoles=teamComps(t.name).slice();
     if(p.role&&!memberRoles.includes(p.role))memberRoles.unshift(p.role);
     html+=`<tr>
       <td><input data-ci="${i}" data-ck="fio" value="${esc(p.fio)}"></td>
       <td><select data-ci="${i}" data-ck="role">${memberRoles.map(r=>`<option ${p.role===r?'selected':''}>${r}</option>`).join('')}</select></td>
       <td><input type="number" min="0" max="1" step="0.05" style="width:70px" data-ci="${i}" data-ck="rate" value="${esc(p.rate??1)}"></td>
-      <td class="auto">${round1(planned)} дн. <span style="font-size:10px">(раб. дни PI × ставка)</span></td>
+      <td class="auto">${planned===null?'—':round1(planned)+' дн.'} <span style="font-size:10px">(backend: раб. дни PI × ставка)</span></td>
       <td><button class="vac-chip${vacLabel?'':' empty'}" data-vacedit="${i}">
         <span class="vac-cal">📅</span>${vacLabel||'Указать даты'}
       </button></td>
@@ -399,7 +419,7 @@ function viewCapacity(t){
       <td><input type="number" min="0" max="100" style="width:70px" data-ci="${i}" data-ck="ceremonyPct" value="${esc(p.ceremonyPct)}"></td>
       <td><input type="number" min="0" max="100" style="width:70px" data-ci="${i}" data-ck="riskPct" value="${esc(p.riskPct)}"></td>
       <td><input type="number" min="0" max="1" step="0.05" style="width:70px" data-ci="${i}" data-ck="efficiency" value="${esc(p.efficiency??'')}" placeholder="1"></td>
-      <td class="auto">${round1(avail)} дн.</td>
+      <td class="auto">${avail===null?'—':round1(avail)+' дн.'}</td>
       <td><button class="icon danger sm" data-delcap="${i}">✕</button></td>
     </tr>`;
   });
@@ -448,8 +468,14 @@ function openDateRangesModal(t,i,opts){
   renderRanges();
   $('#vm_cancel').onclick=close;
   $('#vm_add_range').onclick=()=>{ draft.push({start:'',end:''}); renderRanges(); };
-  $('#vm_clear').onclick=()=>{ person[field]=''; close(); save(); render(); toast(`${opts.title} очищен`,{type:'info'}); };
-  $('#vm_save').onclick=()=>{
+  $('#vm_clear').onclick=async()=>{
+    if(!person._backendId)return;
+    const apiField=field==='vacation'?'vacation_ranges':'extra_unavailable_ranges';
+    close();
+    if(await runCapacityCommand(`/members/${person._backendId}`,'PATCH',{[apiField]:[]}))
+      toast(`${opts.title} очищен`,{type:'info'});
+  };
+  $('#vm_save').onclick=async()=>{
     const out=[];
     for(const r of draft){
       if(!r.start && !r.end) continue;
@@ -458,9 +484,12 @@ function openDateRangesModal(t,i,opts){
       if(end<r.start){ $('#vm_err').textContent='Дата конца не может быть раньше начала.'; return; }
       out.push(datesToVac(r.start,end));
     }
-    person[field]=out.join('; ');
-    close(); save(); render();
-    toast(`${opts.title}: ${formatVacShort(person[field])||'не указан'}`,{type:'success',title:`${opts.title} сохранён`});
+    if(!person._backendId)return;
+    const apiField=field==='vacation'?'vacation_ranges':'extra_unavailable_ranges';
+    const ranges=draft.filter(r=>r.start).map(r=>({start:r.start,end:r.end||r.start}));
+    close();
+    if(await runCapacityCommand(`/members/${person._backendId}`,'PATCH',{[apiField]:ranges}))
+      toast(`${opts.title}: ${formatRangesShort(out.join('; '))||'не указан'}`,{type:'success',title:`${opts.title} сохранён`});
   };
 }
 function openVacationModal(t,i){
@@ -533,13 +562,24 @@ function bindTeams(){
   if(!t) return;
 
   // --- Ёмкость ---
-  const addCap=$('#addCap');if(addCap)addCap.onclick=()=>{
-    const key=teamKey(t.tribe,t.name);state.capacity[key]=state.capacity[key]||[];
-    state.capacity[key].push({fio:'',role:'SA',rate:1,vacation:'',extraUnavailable:'',ceremonyPct:0,riskPct:0,efficiency:''});save();render();
+  const addCap=$('#addCap');if(addCap)addCap.onclick=async()=>{
+    const role=teamComps(t.name)[0];
+    if(!role){toast('У команды не настроены компетенции в активном PI-цикле',{type:'warn'});return;}
+    await runCapacityCommand('/members','POST',{
+      tribe:t.tribe,team:t.name,client_uid:uid(),full_name:'',competency:role,
+      rate:1,vacation_ranges:[],extra_unavailable_ranges:[],ceremony_percent:0,
+      risk_percent:0,efficiency:null,sort_order:(state.capacity[teamKey(t.tribe,t.name)]||[]).length,
+    });
   };
-  document.querySelectorAll('[data-ci]').forEach(el=>el.onchange=()=>{
+  document.querySelectorAll('[data-ci]').forEach(el=>el.onchange=async()=>{
     const key=teamKey(t.tribe,t.name);
-    state.capacity[key][+el.dataset.ci][el.dataset.ck]=el.value;save();render();
+    const member=state.capacity[key][+el.dataset.ci];if(!member||!member._backendId)return;
+    const map={fio:'full_name',role:'competency',rate:'rate',ceremonyPct:'ceremony_percent',riskPct:'risk_percent',efficiency:'efficiency'};
+    const field=map[el.dataset.ck];if(!field)return;
+    let value=el.value;
+    if(['rate','ceremony_percent','risk_percent'].includes(field))value=capacityNumber(value,0);
+    if(field==='efficiency')value=String(value).trim()===''?null:capacityNumber(value,1);
+    await runCapacityCommand(`/members/${member._backendId}`,'PATCH',{[field]:value});
   });
   // отпуск — открытие модального окна выбора дат
   document.querySelectorAll('[data-vacedit]').forEach(el=>el.onclick=()=>{
@@ -548,8 +588,18 @@ function bindTeams(){
   document.querySelectorAll('[data-unavailedit]').forEach(el=>el.onclick=()=>{
     openExtraUnavailableModal(t,+el.dataset.unavailedit);
   });
-  document.querySelectorAll('[data-delcap]').forEach(b=>b.onclick=()=>{
-    const key=teamKey(t.tribe,t.name);state.capacity[key].splice(+b.dataset.delcap,1);save();render();
+  document.querySelectorAll('[data-delcap]').forEach(b=>b.onclick=async()=>{
+    const key=teamKey(t.tribe,t.name),member=state.capacity[key][+b.dataset.delcap];
+    if(!member||!member._backendId)return;
+    try{
+      await capacityMemberCommand(`/members/${member._backendId}`,'DELETE',{confirm_cascade:false});
+      save(false);render();
+    }catch(error){
+      if(error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required'&&
+          window.confirm('Сотрудник назначен на работы. Удалить сотрудника и очистить назначения?')){
+        await runCapacityCommand(`/members/${member._backendId}`,'DELETE',{confirm_cascade:true});
+      }else reportCapacitySyncError(error);
+    }
   });
 
   // --- Доска: удаление стикеров/подзадач, добавление подзадач, drag ---
@@ -566,28 +616,35 @@ function bindTeams(){
     if(col==='red')  i.agreed=false;
     save();render();
   });
-  document.querySelectorAll('[data-delsub-i]').forEach(b=>b.onclick=(e)=>{
+  document.querySelectorAll('[data-delsub-i]').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const iss=state.issues.find(i=>i.id===b.dataset.delsubI);
-    if(iss){
-      const st=iss.subtasks[+b.dataset.delsubS];
-      if(st) state.connections=(state.connections||[]).filter(c=>
-        !(c.from.kind==='w'&&c.from.uid===st.uid) && !(c.to.kind==='w'&&c.to.uid===st.uid));
-      iss.subtasks.splice(+b.dataset.delsubS,1);
+    const st=iss&&(iss.subtasks||[])[+b.dataset.delsubS];if(!iss||!st)return;
+    try{
+      await teamBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'DELETE',{confirm_cascade:false});
+      save(false);render();
+    }catch(error){
+      if(error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required'&&
+          window.confirm('Удалить подзадачу вместе с её связями?'))
+        await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'DELETE',{confirm_cascade:true});
+      else reportTeamBoardsSyncError(error);
     }
-    save();render();
   });
   // удаление Истории: снимаем и её белые подзадачи (со связями)
-  document.querySelectorAll('[data-delstory-i]').forEach(b=>b.onclick=(e)=>{
+  document.querySelectorAll('[data-delstory-i]').forEach(b=>b.onclick=async (e)=>{
     e.stopPropagation();
     const iss=state.issues.find(i=>i.id===b.dataset.delstoryI); if(!iss)return;
     const su=b.dataset.delstoryU;
-    const childUids=(iss.subtasks||[]).filter(st=>st.storyUid===su).map(st=>st.uid);
-    state.connections=(state.connections||[]).filter(c=>
-      !(c.from.kind==='w'&&childUids.includes(c.from.uid)) && !(c.to.kind==='w'&&childUids.includes(c.to.uid)));
-    iss.subtasks=(iss.subtasks||[]).filter(st=>st.storyUid!==su);
-    iss.stories=(iss.stories||[]).filter(s=>s.uid!==su);
-    save();render();
+    const story=storyById(iss,su);if(!story)return;
+    try{
+      await teamBoardCommand(`/initiatives/${iss._backendId}/stories/${story._backendId}`,'DELETE',{confirm_cascade:false});
+      save(false);render();
+    }catch(error){
+      if(error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required'&&
+          window.confirm('Удалить историю вместе с её подзадачами и связями?'))
+        await runBoardCommand(`/initiatives/${iss._backendId}/stories/${story._backendId}`,'DELETE',{confirm_cascade:true});
+      else reportTeamBoardsSyncError(error);
+    }
   });
   // клик по стикеру -> карточка (поля + Согласовать для фиолетовых + декомпозиция)
   document.querySelectorAll('#boardScroll .sticker').forEach(el=>el.onclick=(e)=>{
@@ -776,18 +833,19 @@ function openStickerModal(issueId){
     if(!entry){ entry={team:tn,comps:{}}; iss.executors=iss.executors||[]; iss.executors.push(entry); }
     entry.comps=entry.comps||{};
     comps.forEach(r=>{ entry.comps[r]=+$('#sm_'+r.toLowerCase()).value||0; });
+    return {title:iss.name,initiative_type:iss.type,comment:iss.comment,tags:iss.tags,effort_by_competency:{...entry.comps}};
   };
   root.querySelectorAll('[data-sm-tag]').forEach(el=>el.onchange=(e)=>{
     e.stopPropagation();
     iss.tags=[...root.querySelectorAll('[data-sm-tag]:checked')].map(x=>x.value);
-    save();
+    save(false);
   });
   const tagPick=root.querySelector('.tag-picker');
   if(tagPick) tagPick.onclick=e=>e.stopPropagation();
-  $('#sm_close').onclick=()=>{ sync(); root.innerHTML=''; save(); render(); };
-  const ap=$('#sm_approve'); if(ap)ap.onclick=()=>{ sync(); iss.agreed=true; root.innerHTML=''; save(); render(); };
-  $('#sm_decomp').onclick=()=>{ sync(); save(); openSubtaskModal(iss.id); };
-  $('#sm_story').onclick=()=>{ sync(); save(); openStoryModal(iss.id, null); };
+  $('#sm_close').onclick=async()=>{ const body=sync();root.innerHTML='';await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body); };
+  const ap=$('#sm_approve'); if(ap)ap.onclick=async()=>{ const body={...sync(),agreed:true};root.innerHTML='';await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body,'Привлечение согласовано'); };
+  $('#sm_decomp').onclick=async()=>{ const body=sync();root.innerHTML='';if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openSubtaskModal(iss.id); };
+  $('#sm_story').onclick=async()=>{ const body=sync();root.innerHTML='';if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openStoryModal(iss.id, null); };
 }
 
 /* ---- Модальное окно подзадачи ---- */
@@ -799,11 +857,14 @@ function openSubtaskModal(issueId,storyUid){
   const sprints=computeSprints();
   const defSprint = sy ? sy.sprint : iss.sprint;
   const defWeek = sy ? itemWeek(sy) : itemWeek(iss);
+  const primaryTeam=teamObjByName(issuePrimaryTeam(iss));
+  const roster=primaryTeam?(state.capacity[teamKey(primaryTeam.tribe,primaryTeam.name)]||[]):[];
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>Декомпозиция · ${esc(sy?(sy.id||'История'):iss.id)}</h3>
     ${sy?`<div class="muted" style="margin-bottom:10px">Подзадача Истории <b>${esc(sy.id||'')}</b> (задача ${esc(iss.id)})</div>`:''}
-    <label><span>ФИО</span><input id="m_fio" placeholder="Фамилия"></label>
+    <label><span>ФИО</span><input id="m_fio" list="m_people" placeholder="Фамилия"></label>
+    <datalist id="m_people">${roster.map(p=>`<option value="${esc(p.fio)}">${esc(p.role)}</option>`).join('')}</datalist>
     <label><span>Компетенция</span><select id="m_role">${teamComps(issuePrimaryTeam(iss)).map(r=>`<option>${r}</option>`).join('')}</select></label>
     <label><span>Ёмкость (дн.)</span><input id="m_cap" type="number" min="0" value="1"></label>
     <label><span>Спринт</span><select id="m_sprint">${sprints.map(s=>`<option value="${s.index}" ${s.index===defSprint?'selected':''}>Спринт ${s.index+1}</option>`).join('')}</select></label>
@@ -814,18 +875,23 @@ function openSubtaskModal(issueId,storyUid){
     </div>
   </div></div>`;
   $('#m_cancel').onclick=()=>{ if(sy){ root.innerHTML=''; openStoryModal(iss.id, storyUid); } else root.innerHTML=''; };
-  $('#m_save').onclick=()=>{
-    iss.subtasks=iss.subtasks||[];
+  $('#m_save').onclick=async()=>{
     const u=uid();
-    const white={uid:u,fio:$('#m_fio').value||'—',role:$('#m_role').value,cap:+$('#m_cap').value||0,sprint:+$('#m_sprint').value,week:+$('#m_week').value};
+    const white={uid:u,fio:$('#m_fio').value.trim(),role:$('#m_role').value,cap:+$('#m_cap').value||0,sprint:+$('#m_sprint').value,week:+$('#m_week').value};
     if(storyUid) white.storyUid=storyUid; // принадлежит Истории
-    iss.subtasks.push(white);
+    root.innerHTML='';
+    const created=await runBoardCommand(`/initiatives/${iss._backendId}/work-items`,'POST',{
+      client_uid:white.uid,story_client_uid:white.storyUid||null,assignee_name:white.fio,
+      competency:white.role,effort:white.cap,sprint_index:white.sprint,week_index:white.week,
+      sort_order:(iss.subtasks||[]).length,board_sort_order:(iss.subtasks||[]).length,
+    });
+    if(!created)return;
     // дефолтная стрелка декомпозиции только для белых напрямую под задачей
     if(!storyUid){
       state.connections=state.connections||[];
       state.connections.push({id:newConnId(), from:{kind:'w',uid:u}, to:{kind:'c',id:iss.id}});
     }
-    root.innerHTML='';save();render();
+    save();render();
   };
 }
 /* ---- Модальное окно Истории (зелёный стикер): поля + декомпозиция на белые ---- */
@@ -866,28 +932,42 @@ function openStoryModal(issueId,storyUid){
     return { id:$('#sy_id').value.trim(), name:$('#sy_name').value.trim(), comps, sprint:+$('#sy_sprint').value, week:+$('#sy_week').value };
   };
   $('#sy_cancel').onclick=()=>root.innerHTML='';
-  $('#sy_save').onclick=()=>{
+  $('#sy_save').onclick=async()=>{
     const f=readForm();
     if(!f.id){ toast('Укажите ID истории',{type:'warn'}); return; }
+    root.innerHTML='';
     if(isNew){
-      iss.stories=iss.stories||[];
-      iss.stories.push({uid:uid(), id:f.id, name:f.name, comps:f.comps, sprint:f.sprint, week:f.week});
+      await runBoardCommand(`/initiatives/${iss._backendId}/stories`,'POST',{
+        client_uid:uid(),external_key:f.id,title:f.name,effort_by_competency:f.comps,
+        sprint_index:f.sprint,week_index:f.week,sort_order:(iss.stories||[]).length,
+        board_sort_order:(iss.stories||[]).length,
+      });
     }else{
-      Object.assign(sy,{id:f.id, name:f.name, comps:f.comps, sprint:f.sprint, week:f.week});
+      await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'PATCH',{
+        external_key:f.id,title:f.name,effort_by_competency:f.comps,
+        sprint_index:f.sprint,week_index:f.week,board_sort_order:sy.ord||0,
+      });
     }
-    root.innerHTML=''; save(); render();
   };
-  const del=$('#sy_del'); if(del)del.onclick=()=>{
-    const childUids=(iss.subtasks||[]).filter(st=>st.storyUid===sy.uid).map(st=>st.uid);
-    state.connections=(state.connections||[]).filter(c=>
-      !(c.from.kind==='w'&&childUids.includes(c.from.uid)) && !(c.to.kind==='w'&&childUids.includes(c.to.uid)));
-    iss.subtasks=(iss.subtasks||[]).filter(st=>st.storyUid!==sy.uid);
-    iss.stories=(iss.stories||[]).filter(s=>s.uid!==sy.uid);
-    root.innerHTML=''; save(); render();
+  const del=$('#sy_del'); if(del)del.onclick=async()=>{
+    root.innerHTML='';
+    try{
+      await teamBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'DELETE',{confirm_cascade:false});
+      save(false);render();
+    }catch(error){
+      if(error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required'&&
+          window.confirm('Удалить историю вместе с её подзадачами и связями?')){
+        await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'DELETE',{confirm_cascade:true});
+      }else reportTeamBoardsSyncError(error);
+    }
   };
-  const dec=$('#sy_decomp'); if(dec)dec.onclick=()=>{
+  const dec=$('#sy_decomp'); if(dec)dec.onclick=async()=>{
     // сохранить правки Истории, затем открыть добавление белой подзадачи в неё
-    Object.assign(sy,readForm()); save(); root.innerHTML=''; openSubtaskModal(iss.id, sy.uid);
+    const f=readForm();root.innerHTML='';
+    if(await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'PATCH',{
+      external_key:f.id,title:f.name,effort_by_competency:f.comps,
+      sprint_index:f.sprint,week_index:f.week,board_sort_order:sy.ord||0,
+    }))openSubtaskModal(iss.id, sy.uid);
   };
 }
 
@@ -896,10 +976,13 @@ function openWhiteModal(issueId,si){
   const iss=state.issues.find(i=>i.id===issueId); if(!iss)return;
   const st=(iss.subtasks||[])[si]; if(!st)return;
   const sprints=computeSprints();
+  const primaryTeam=teamObjByName(issuePrimaryTeam(iss));
+  const roster=primaryTeam?(state.capacity[teamKey(primaryTeam.tribe,primaryTeam.name)]||[]):[];
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>Подзадача · ${esc(iss.id)}</h3>
-    <label><span>ФИО</span><input id="w_fio" value="${esc(st.fio||'')}" placeholder="Фамилия"></label>
+    <label><span>ФИО</span><input id="w_fio" list="w_people" value="${esc(st.fio||'')}" placeholder="Фамилия"></label>
+    <datalist id="w_people">${roster.map(p=>`<option value="${esc(p.fio)}">${esc(p.role)}</option>`).join('')}</datalist>
     <label><span>Компетенция</span><select id="w_role">${teamComps(issuePrimaryTeam(iss)).map(r=>`<option ${r===st.role?'selected':''}>${r}</option>`).join('')}</select></label>
     <label><span>Ёмкость (дн.)</span><input id="w_cap" type="number" min="0" value="${+st.cap||0}"></label>
     <label><span>Спринт</span><select id="w_sprint">${sprints.map(s=>`<option value="${s.index}" ${s.index===st.sprint?'selected':''}>Спринт ${s.index+1}</option>`).join('')}</select></label>
@@ -913,20 +996,26 @@ function openWhiteModal(issueId,si){
     </div>
   </div></div>`;
   $('#w_cancel').onclick=()=>root.innerHTML='';
-  $('#w_del').onclick=()=>{
-    // удалить подзадачу и связанные с ней рёбра
-    state.connections=(state.connections||[]).filter(c=>
-      !(c.from.kind==='w'&&c.from.uid===st.uid) && !(c.to.kind==='w'&&c.to.uid===st.uid));
-    iss.subtasks.splice(si,1);
-    root.innerHTML=''; save(); render();
+  $('#w_del').onclick=async()=>{
+    root.innerHTML='';
+    try{
+      await teamBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'DELETE',{confirm_cascade:false});
+      save(false);render();
+    }catch(error){
+      if(error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required'&&
+          window.confirm('Удалить подзадачу вместе с её связями?')){
+        await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'DELETE',{confirm_cascade:true});
+      }else reportTeamBoardsSyncError(error);
+    }
   };
-  $('#w_save').onclick=()=>{
-    st.fio=$('#w_fio').value||'—';
-    st.role=$('#w_role').value;
-    st.cap=+$('#w_cap').value||0;
-    st.sprint=+$('#w_sprint').value;
-    st.week=+$('#w_week').value;
-    root.innerHTML=''; save(); render();
+  $('#w_save').onclick=async()=>{
+    const body={
+      assignee_name:$('#w_fio').value.trim(),competency:$('#w_role').value,
+      effort:+$('#w_cap').value||0,sprint_index:+$('#w_sprint').value,
+      week_index:+$('#w_week').value,board_sort_order:st.ord||0,
+    };
+    root.innerHTML='';
+    await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'PATCH',body);
   };
 }
 

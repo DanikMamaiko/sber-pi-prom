@@ -1638,6 +1638,210 @@ async def test_goals_and_risks_focused_commands_are_atomic_and_versioned(api_cli
     assert stale_goal.status_code == 409
     assert stale_goal.json()["detail"]["code"] == "version_conflict"
 
+
+@pytest.mark.asyncio
+async def test_team_board_focused_commands_capacity_assignments_and_cascades(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2035, quarter="Q3")
+    path = f"/pi-cycles/{cycle['id']}"
+    pre_pi = assert_ok(
+        await api_client.put(
+            f"{path}/pre-pi",
+            json={
+                "initiatives": [
+                    {
+                        "issue_key": "TEAM-CMD-1",
+                        "title": "Team command source",
+                        "owner_team": "Команда Альфа",
+                        "owner_tribe": "Регрессия",
+                        "initiative_type": "Развитие функционала",
+                        "tags": ["E2E"],
+                        "goal_text": "Командная цель",
+                        "metric": "Командная метрика",
+                        "current_value": "0",
+                        "target_value": "1",
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "tribe": "Регрессия",
+                                "effort_by_competency": {"SA": 3},
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    initiative = pre_pi["backlog"][0]
+    pre_pi = assert_ok(
+        await api_client.post(
+            f"{path}/pre-pi/initiatives/{initiative['id']}/move",
+            json={"target_block": "planned"},
+        )
+    )
+    initiative = pre_pi["planned"][0]
+    submitted = assert_ok(
+        await api_client.post(
+            f"{path}/pre-pi/submit",
+            json={"teams": [{"tribe": "Регрессия", "name": "Команда Альфа"}]},
+        )
+    )
+    version = submitted["version"]
+
+    capacity = assert_ok(
+        await api_client.raw.post(
+            f"{path}/capacity/members",
+            json={
+                "expected_version": version,
+                "tribe": "Регрессия",
+                "team": "Команда Альфа",
+                "client_uid": "team-member-1",
+                "full_name": "Иванов Иван",
+                "competency": "SA",
+                "rate": 1,
+                "vacation_ranges": [],
+                "extra_unavailable_ranges": [],
+                "ceremony_percent": 10,
+                "risk_percent": 5,
+            },
+        ),
+        201,
+    )
+    member = next(row for row in capacity["teams"] if row["team"] == "Команда Альфа")[
+        "members"
+    ][0]
+    assert len(member["weeks"]["0"]) == 2
+    assert [row["week_index"] for row in member["weeks"]["0"]] == [0, 1]
+
+    board = assert_ok(
+        await api_client.raw.post(
+            f"{path}/team-boards/initiatives/{initiative['id']}/stories",
+            json={
+                "expected_version": capacity["version"],
+                "client_uid": "team-story-1",
+                "external_key": "TEAM-CMD-1-S1",
+                "title": "Server story",
+                "effort_by_competency": {"SA": 2},
+                "sprint_index": 0,
+                "week_index": 1,
+            },
+        ),
+        201,
+    )
+    story = board["initiatives"][0]["stories"][0]
+    board = assert_ok(
+        await api_client.raw.post(
+            f"{path}/team-boards/initiatives/{initiative['id']}/work-items",
+            json={
+                "expected_version": board["version"],
+                "client_uid": "team-work-1",
+                "story_client_uid": story["client_uid"],
+                "assignee_member_id": member["id"],
+                "assignee_name": "ignored in favor of member id",
+                "competency": "SA",
+                "effort": 2,
+                "sprint_index": 0,
+                "week_index": 1,
+            },
+        ),
+        201,
+    )
+    work_item = board["initiatives"][0]["work_items"][0]
+    assert work_item["assignee_member_id"] == member["id"]
+    assert work_item["assignee_name"] == "Иванов Иван"
+
+    board = assert_ok(
+        await api_client.raw.patch(
+            f"{path}/team-boards/initiatives/{initiative['id']}",
+            json={
+                "expected_version": board["version"],
+                "title": "Edited on team board",
+                "initiative_type": "Командная тех. повестка",
+                "comment": "Shared entity",
+                "tags": ["E2E"],
+                "effort_by_competency": {"SA": 5},
+                "agreed": True,
+                "sprint_index": 0,
+                "week_index": 1,
+            },
+        )
+    )
+    shared = assert_ok(await api_client.get(f"{path}/pre-pi"))["initiatives"][0]
+    assert shared["title"] == "Edited on team board"
+    assert shared["executors"][0]["effort_by_competency"] == {"SA": 5.0}
+
+    capacity = assert_ok(await api_client.get(f"{path}/capacity"))
+    alpha = next(row for row in capacity["teams"] if row["team"] == "Команда Альфа")
+    assert alpha["load_by_sprint"]["0"] == {"SA": 2.0}
+    assert alpha["load_by_week"]["0"]["1"] == {"SA": 2.0}
+
+    program = assert_ok(
+        await api_client.put(
+            f"{path}/program-board",
+            json={
+                "connections": [
+                    {
+                        "client_uid": "team-command-edge",
+                        "source": {"kind": "w", "ref": work_item["client_uid"]},
+                        "target": {"kind": "c", "ref": "TEAM-CMD-1"},
+                    }
+                ]
+            },
+        )
+    )
+
+    member_cascade = await api_client.raw.request(
+        "DELETE",
+        f"{path}/capacity/members/{member['id']}",
+        json={"expected_version": program["version"], "confirm_cascade": False},
+    )
+    assert member_cascade.status_code == 409
+    assert member_cascade.json()["detail"]["code"] == "cascade_confirmation_required"
+    capacity = assert_ok(
+        await api_client.raw.request(
+            "DELETE",
+            f"{path}/capacity/members/{member['id']}",
+            json={"expected_version": program["version"], "confirm_cascade": True},
+        )
+    )
+    assert next(row for row in capacity["teams"] if row["team"] == "Команда Альфа")[
+        "members"
+    ] == []
+    cleared = assert_ok(await api_client.get(f"{path}/team-boards"))["initiatives"][0][
+        "work_items"
+    ][0]
+    assert cleared["assignee_member_id"] is None
+    assert cleared["assignee_name"] == ""
+
+    story_cascade = await api_client.raw.request(
+        "DELETE",
+        f"{path}/team-boards/initiatives/{initiative['id']}/stories/{story['id']}",
+        json={"expected_version": capacity["version"], "confirm_cascade": False},
+    )
+    assert story_cascade.status_code == 409
+    deleted = assert_ok(
+        await api_client.raw.request(
+            "DELETE",
+            f"{path}/team-boards/initiatives/{initiative['id']}/stories/{story['id']}",
+            json={"expected_version": capacity["version"], "confirm_cascade": True},
+        )
+    )
+    assert deleted["initiatives"][0]["stories"] == []
+    assert deleted["initiatives"][0]["work_items"] == []
+    assert assert_ok(await api_client.get(f"{path}/program-board"))["connections"] == []
+
+    stale = await api_client.raw.patch(
+        f"{path}/team-boards/initiatives/{initiative['id']}",
+        json={"expected_version": capacity["version"], "agreed": False},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "version_conflict"
+
+    current_version = deleted["version"]
+    alpha = next(
+        row
+        for row in assert_ok(await api_client.get(f"{path}/pre-pi"))["teams"]
+        if row["name"] == "Команда Альфа"
+    )
     goals = assert_ok(
         await api_client.raw.post(
             f"{path}/goals-board/goals",
@@ -1693,7 +1897,7 @@ async def test_goals_and_risks_focused_commands_are_atomic_and_versioned(api_cli
             json={"expected_version": goals["version"]},
         )
     )
-    assert deleted_goals["goals"] == []
+    assert goal["id"] not in {row["id"] for row in deleted_goals["goals"]}
 
     risks = assert_ok(
         await api_client.raw.post(

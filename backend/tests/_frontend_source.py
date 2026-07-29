@@ -19,5 +19,7 @@ def frontend_source() -> str:
     parts = [INDEX.read_text(encoding="utf-8")]
     index_html = parts[0]
     for match in _SCRIPT_RE.finditer(index_html):
-        parts.append((FRONTEND_DIR / match.group(1)).read_text(encoding="utf-8"))
+        # Browser cache-busting query parameters are not part of the local path.
+        script_path = match.group(1).split("?", 1)[0].split("#", 1)[0]
+        parts.append((FRONTEND_DIR / script_path).read_text(encoding="utf-8"))
     return "".join(parts)

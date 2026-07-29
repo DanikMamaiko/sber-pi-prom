@@ -12,12 +12,16 @@ from app.models.pi_cycle import (
     PiCycleCapacityMember,
     PiCycleTeam,
     Team,
+    WorkItem,
 )
 from app.schemas.pi_cycle import (
     CapacityMemberRead,
+    CapacityMemberCreate,
+    CapacityMemberUpdate,
     CapacityRead,
     CapacitySprintRead,
     CapacityTeamRead,
+    CapacityWeekRead,
     CapacityWrite,
 )
 from app.services.planning import compute_sprints, workdays_between
@@ -44,36 +48,45 @@ def _workdays_in_ranges(values: list[dict], start: date, end: date) -> int:
     return len(days)
 
 
-def calculate_member_capacity(
+def _period_capacity(
+    member: PiCycleCapacityMember,
+    start: date,
+    end: date,
+) -> tuple[int, float, int, int, float]:
+    workdays = workdays_between(start, end)
+    planned = workdays * member.rate
+    vacation_days = _workdays_in_ranges(member.vacation_ranges, start, end)
+    extra_days = _workdays_in_ranges(member.extra_unavailable_ranges, start, end)
+    available = max(
+        0.0,
+        planned
+        - vacation_days * member.rate
+        - extra_days * member.rate
+        - planned * member.ceremony_percent / 100
+        - planned * member.risk_percent / 100,
+    )
+    if member.efficiency is not None:
+        available *= member.efficiency
+    return workdays, planned, vacation_days, extra_days, available
+
+
+def calculate_member_capacity_with_weeks(
     member: PiCycleCapacityMember,
     cycle: PiCycle,
-) -> tuple[float, float, list[CapacitySprintRead]]:
+) -> tuple[
+    float,
+    float,
+    list[CapacitySprintRead],
+    dict[int, list[CapacityWeekRead]],
+]:
     calendar_capacity = 0.0
     available_capacity = 0.0
     sprint_rows: list[CapacitySprintRead] = []
+    week_rows: dict[int, list[CapacityWeekRead]] = {}
     for sprint in compute_sprints(cycle):
-        workdays = workdays_between(sprint.start_date, sprint.end_date)
-        planned = workdays * member.rate
-        vacation_days = _workdays_in_ranges(
-            member.vacation_ranges,
-            sprint.start_date,
-            sprint.end_date,
+        workdays, planned, vacation_days, extra_days, available = _period_capacity(
+            member, sprint.start_date, sprint.end_date
         )
-        extra_days = _workdays_in_ranges(
-            member.extra_unavailable_ranges,
-            sprint.start_date,
-            sprint.end_date,
-        )
-        available = max(
-            0.0,
-            planned
-            - vacation_days * member.rate
-            - extra_days * member.rate
-            - planned * member.ceremony_percent / 100
-            - planned * member.risk_percent / 100,
-        )
-        if member.efficiency is not None:
-            available *= member.efficiency
         calendar_capacity += planned
         available_capacity += available
         sprint_rows.append(
@@ -86,7 +99,30 @@ def calculate_member_capacity(
                 available_capacity=available,
             )
         )
-    return calendar_capacity, available_capacity, sprint_rows
+        week_rows[sprint.index] = []
+        for week_index in (0, 1):
+            week_start = sprint.start_date + timedelta(days=week_index * 7)
+            week_end = min(week_start + timedelta(days=6), sprint.end_date)
+            week_values = _period_capacity(member, week_start, week_end)
+            week_rows[sprint.index].append(
+                CapacityWeekRead(
+                    week_index=week_index,
+                    workdays=week_values[0],
+                    planned_capacity=week_values[1],
+                    vacation_days=week_values[2],
+                    extra_unavailable_days=week_values[3],
+                    available_capacity=week_values[4],
+                )
+            )
+    return calendar_capacity, available_capacity, sprint_rows, week_rows
+
+
+def calculate_member_capacity(
+    member: PiCycleCapacityMember,
+    cycle: PiCycle,
+) -> tuple[float, float, list[CapacitySprintRead]]:
+    calendar, available, sprints, _ = calculate_member_capacity_with_weeks(member, cycle)
+    return calendar, available, sprints
 
 
 async def _cycle_teams(session: AsyncSession, cycle_id: uuid.UUID) -> list[PiCycleTeam]:
@@ -149,6 +185,60 @@ async def _planned_by_team(
     return result
 
 
+async def _board_load_by_team(
+    session: AsyncSession,
+    cycle_id: uuid.UUID,
+) -> dict[uuid.UUID, dict[str, object]]:
+    result: dict[uuid.UUID, dict[str, object]] = {}
+    initiatives = list(
+        (
+            await session.scalars(
+                select(Initiative)
+                .options(
+                    selectinload(Initiative.executors),
+                    selectinload(Initiative.work_items),
+                )
+                .where(Initiative.cycle_id == cycle_id, Initiative.on_board.is_(True))
+            )
+        ).all()
+    )
+    for initiative in initiatives:
+        executors = sorted(
+            initiative.executors,
+            key=lambda row: (row.sort_order, str(row.id)),
+        )
+        if not executors:
+            continue
+        team_id = executors[0].team_id
+        target = result.setdefault(
+            team_id,
+            {"total": {}, "sprints": {}, "weeks": {}},
+        )
+
+        def add(competency: str, effort: float, sprint_index: int, week_index: int) -> None:
+            code = competency.strip().upper()
+            value = float(effort or 0)
+            target["total"][code] = target["total"].get(code, 0.0) + value
+            sprint = target["sprints"].setdefault(sprint_index, {})
+            sprint[code] = sprint.get(code, 0.0) + value
+            week = target["weeks"].setdefault(sprint_index, {}).setdefault(week_index, {})
+            week[code] = week.get(code, 0.0) + value
+
+        if initiative.work_items:
+            for item in initiative.work_items:
+                if item.sprint_index is not None:
+                    add(item.competency, item.effort, item.sprint_index, item.week_index or 0)
+        elif initiative.sprint_index is not None:
+            for competency, effort in (executors[0].effort_by_competency or {}).items():
+                add(
+                    str(competency),
+                    float(effort or 0),
+                    initiative.sprint_index,
+                    initiative.week_index or 0,
+                )
+    return result
+
+
 async def read_capacity(session: AsyncSession, cycle: PiCycle) -> CapacityRead:
     cycle_teams = await _cycle_teams(session, cycle.id)
     members = await _members(session, cycle.id)
@@ -156,6 +246,7 @@ async def read_capacity(session: AsyncSession, cycle: PiCycle) -> CapacityRead:
     for member in members:
         members_by_team.setdefault(member.team_id, []).append(member)
     planned_by_team = await _planned_by_team(session, cycle.id)
+    board_load_by_team = await _board_load_by_team(session, cycle.id)
 
     rows: list[CapacityTeamRead] = []
     for cycle_team in cycle_teams:
@@ -166,7 +257,9 @@ async def read_capacity(session: AsyncSession, cycle: PiCycle) -> CapacityRead:
         calendar_capacity = 0.0
         available_capacity = 0.0
         for member in members_by_team.get(cycle_team.team_id, []):
-            calendar, available, sprint_rows = calculate_member_capacity(member, cycle)
+            calendar, available, sprint_rows, week_rows = calculate_member_capacity_with_weeks(
+                member, cycle
+            )
             calendar_capacity += calendar
             available_capacity += available
             available_by_competency[member.competency] = (
@@ -188,9 +281,13 @@ async def read_capacity(session: AsyncSession, cycle: PiCycle) -> CapacityRead:
                     calendar_capacity=calendar,
                     available_capacity=available,
                     sprints=sprint_rows,
+                    weeks=week_rows,
                 )
             )
         planned = planned_by_team.get(cycle_team.team_id, {})
+        board_load = board_load_by_team.get(
+            cycle_team.team_id, {"total": {}, "sprints": {}, "weeks": {}}
+        )
         rows.append(
             CapacityTeamRead(
                 tribe=cycle_team.team.tribe.name,
@@ -201,6 +298,9 @@ async def read_capacity(session: AsyncSession, cycle: PiCycle) -> CapacityRead:
                 planned_effort=sum(planned.values()),
                 available_by_competency=available_by_competency,
                 planned_by_competency=planned,
+                load_by_competency=board_load["total"],
+                load_by_sprint=board_load["sprints"],
+                load_by_week=board_load["weeks"],
             )
         )
     return CapacityRead(initialized=cycle.capacity_initialized, version=cycle.version, teams=rows)
@@ -298,5 +398,160 @@ async def replace_capacity(
         if member.id not in desired_ids:
             await session.delete(member)
     cycle.capacity_initialized = True
+    await session.commit()
+    return await read_capacity(session, cycle)
+
+
+async def _capacity_team_by_name(
+    session: AsyncSession,
+    cycle: PiCycle,
+    tribe: str,
+    team: str,
+) -> PiCycleTeam:
+    key = (tribe.strip().casefold(), team.strip().casefold())
+    cycle_team = next(
+        (
+            row
+            for row in await _cycle_teams(session, cycle.id)
+            if (row.team.tribe.name.casefold(), row.team.name.casefold()) == key
+        ),
+        None,
+    )
+    if cycle_team is None:
+        raise ValueError(f"Team is not included in this PI cycle: {tribe} / {team}")
+    return cycle_team
+
+
+def _capacity_values(payload, *, exclude: set[str] | None = None) -> dict:
+    data = payload.model_dump(exclude_unset=True, exclude=exclude or set())
+    for field in ("vacation_ranges", "extra_unavailable_ranges"):
+        if field in data:
+            data[field] = [
+                row.model_dump(mode="json") if hasattr(row, "model_dump") else row
+                for row in (getattr(payload, field) or [])
+            ]
+            for value in data[field]:
+                _range_dates(value)
+    return data
+
+
+async def create_capacity_member(
+    session: AsyncSession,
+    cycle: PiCycle,
+    payload: CapacityMemberCreate,
+) -> CapacityRead:
+    cycle_team = await _capacity_team_by_name(
+        session, cycle, payload.tribe, payload.team
+    )
+    uid = payload.client_uid.strip()
+    if await session.scalar(
+        select(PiCycleCapacityMember.id).where(
+            PiCycleCapacityMember.cycle_id == cycle.id,
+            PiCycleCapacityMember.client_uid.ilike(uid),
+        )
+    ):
+        raise ValueError(f"Capacity member UID must be unique inside a PI cycle: {uid}")
+    competency = payload.competency.strip().upper()
+    allowed = {row.code.strip().upper() for row in cycle_team.competencies}
+    if competency not in allowed:
+        raise ValueError(
+            f"Capacity member {uid}: competency is not configured for team "
+            f"{cycle_team.team.name}: {competency}"
+        )
+    values = _capacity_values(
+        payload,
+        exclude={"expected_version", "id", "tribe", "team", "client_uid", "competency"},
+    )
+    member = PiCycleCapacityMember(
+        id=uuid.uuid4(),
+        cycle_id=cycle.id,
+        team_id=cycle_team.team_id,
+        client_uid=uid,
+        competency=competency,
+        **values,
+    )
+    session.add(member)
+    cycle.capacity_initialized = True
+    await session.commit()
+    return await read_capacity(session, cycle)
+
+
+async def update_capacity_member(
+    session: AsyncSession,
+    cycle: PiCycle,
+    member_id: uuid.UUID,
+    payload: CapacityMemberUpdate,
+) -> CapacityRead:
+    member = await session.scalar(
+        select(PiCycleCapacityMember).where(
+            PiCycleCapacityMember.cycle_id == cycle.id,
+            PiCycleCapacityMember.id == member_id,
+        )
+    )
+    if member is None:
+        raise ValueError("Capacity member is not found in this PI cycle")
+    cycle_team = next(
+        (row for row in await _cycle_teams(session, cycle.id) if row.team_id == member.team_id),
+        None,
+    )
+    if cycle_team is None:
+        raise ValueError("Capacity member team is not included in this PI cycle")
+    values = _capacity_values(payload, exclude={"expected_version"})
+    if "competency" in values:
+        competency = str(values["competency"]).strip().upper()
+        allowed = {row.code.strip().upper() for row in cycle_team.competencies}
+        if competency not in allowed:
+            raise ValueError(
+                f"Capacity member {member.client_uid}: competency is not configured for team "
+                f"{cycle_team.team.name}: {competency}"
+            )
+        values["competency"] = competency
+    for field, value in values.items():
+        setattr(member, field, value.strip() if field == "full_name" else value)
+    await session.commit()
+    return await read_capacity(session, cycle)
+
+
+async def delete_capacity_member(
+    session: AsyncSession,
+    cycle: PiCycle,
+    member_id: uuid.UUID,
+    *,
+    confirm_cascade: bool = False,
+) -> CapacityRead:
+    member = await session.scalar(
+        select(PiCycleCapacityMember).where(
+            PiCycleCapacityMember.cycle_id == cycle.id,
+            PiCycleCapacityMember.id == member_id,
+        )
+    )
+    if member is None:
+        raise ValueError("Capacity member is not found in this PI cycle")
+    assigned = list(
+        (
+            await session.scalars(
+                select(WorkItem)
+                .join(Initiative, Initiative.id == WorkItem.initiative_id)
+                .where(
+                    Initiative.cycle_id == cycle.id,
+                    WorkItem.assignee_member_id == member.id,
+                )
+            )
+        ).all()
+    )
+    if assigned and not confirm_cascade:
+        from app.services.team_boards import TeamBoardCascadeRequired
+
+        raise TeamBoardCascadeRequired(
+            "Deleting the capacity member clears assignments on work items",
+            [
+                {"kind": "work_item", "id": str(row.id), "label": row.client_uid}
+                for row in assigned
+            ],
+        )
+    for item in assigned:
+        item.assignee_member_id = None
+        item.assignee_name = ""
+    await session.delete(member)
     await session.commit()
     return await read_capacity(session, cycle)

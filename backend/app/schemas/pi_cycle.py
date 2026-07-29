@@ -45,8 +45,12 @@ from app.schemas.pre_pi import (  # noqa: F401
 from app.schemas.team_boards import (  # noqa: F401
     TeamBoardStoryWrite, TeamBoardStoryRead, TeamBoardWorkItemWrite, TeamBoardWorkItemRead,
     TeamBoardInitiativeWrite, TeamBoardInitiativeRead, TeamBoardsWrite, TeamBoardsRead,
-    CapacityDateRange, CapacityMemberWrite, CapacitySprintRead, CapacityMemberRead,
-    CapacityTeamWrite, CapacityTeamRead, CapacityWrite, CapacityRead,
+    TeamBoardCommand, TeamBoardInitiativeCommand, TeamBoardStoryCreate,
+    TeamBoardStoryUpdate, TeamBoardDeleteCommand, TeamBoardWorkItemCreate,
+    TeamBoardWorkItemUpdate, CapacityDateRange, CapacityMemberWrite,
+    CapacitySprintRead, CapacityWeekRead, CapacityMemberRead, CapacityTeamWrite,
+    CapacityTeamRead, CapacityWrite, CapacityRead, CapacityMemberCreate,
+    CapacityMemberUpdate,
 )
 
 from app.schemas.program_board import (  # noqa: F401
