@@ -198,7 +198,7 @@ async def create_risk(
     if payload.scope == "general" and (payload.team_id is not None or payload.is_shared):
         raise HTTPException(
             status_code=422,
-            detail="A general risk cannot reference a team or be shared",
+            detail="Общий риск не может ссылаться на команду или быть общим для других разделов",
         )
     if payload.scope == "team":
         if payload.team_id is None or not await session.scalar(
@@ -209,7 +209,7 @@ async def create_risk(
         ):
             raise HTTPException(
                 status_code=422,
-                detail="Risk team is not part of this PI cycle",
+                detail="Команда риска не входит в данный PI-цикл",
             )
     risk_id = uuid.uuid4()
     risk = Risk(

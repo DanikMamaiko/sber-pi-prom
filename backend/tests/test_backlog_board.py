@@ -11,7 +11,7 @@ def test_issue_key_is_trimmed_and_rejects_unsafe_or_empty_values():
     assert normalize_issue_key("Продукт_7.2") == "Продукт_7.2"
 
     for value in ("", "SBOL 42", "#42", "A/42"):
-        with pytest.raises(ValueError, match="Issue ID"):
+        with pytest.raises(ValueError, match="Issue должен"):
             normalize_issue_key(value)
 
 

@@ -141,7 +141,7 @@ class CapacityMemberWrite(BaseModel):
     def validate_full_name(cls, value: str) -> str:
         value = value.strip()
         if not value:
-            raise ValueError("full_name must not be blank")
+            raise ValueError("ФИО не может быть пустым")
         return value
 
 
@@ -224,7 +224,7 @@ class CapacityMemberUpdate(TeamBoardCommand):
             return None
         value = value.strip()
         if not value:
-            raise ValueError("full_name must not be blank")
+            raise ValueError("ФИО не может быть пустым")
         return value
 
 

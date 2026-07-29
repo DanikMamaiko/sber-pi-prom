@@ -203,8 +203,8 @@ function bindLanding(){
   document.querySelectorAll('.q-btn').forEach(b=>b.onclick=async()=>{
     if(!cyclesApiReady){
       toast(cyclesApiUnavailable
-        ? 'Backend PI-циклов недоступен. Проверьте API и обновите страницу.'
-        : 'PI-циклы загружаются из backend. Попробуйте ещё раз через несколько секунд.',
+        ? 'Сервер PI-циклов недоступен. Проверьте API и обновите страницу.'
+        : 'PI-циклы загружаются с сервера. Попробуйте ещё раз через несколько секунд.',
         {type:cyclesApiUnavailable?'warn':'info'});
       return;
     }

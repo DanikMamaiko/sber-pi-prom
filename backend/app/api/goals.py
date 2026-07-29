@@ -197,7 +197,7 @@ async def create_goal(
     ):
         raise HTTPException(
             status_code=422,
-            detail="Goal team is not part of this PI cycle",
+            detail="Команда цели не входит в данный PI-цикл",
         )
     if payload.initiative_id is not None and not await session.scalar(
         select(Initiative).where(
@@ -207,7 +207,7 @@ async def create_goal(
     ):
         raise HTTPException(
             status_code=422,
-            detail="Goal initiative is not part of this PI cycle",
+            detail="Инициатива цели не входит в данный PI-цикл",
         )
     goal = PiGoal(cycle_id=cycle_id, **payload.model_dump())
     session.add(goal)

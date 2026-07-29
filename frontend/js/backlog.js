@@ -68,7 +68,7 @@ async function executeBacklogCommand(path,method,body={},allowCascade=false){
 }
 
 function viewBacklog(){
-  if(!backlogBoard) return `<div class="card"><h2>Бэклог команд ${activeBadge()}</h2><div class="note">Backend бэклога недоступен. Локальные или демонстрационные данные не используются.</div></div>`;
+  if(!backlogBoard) return `<div class="card"><h2>Бэклог команд ${activeBadge()}</h2><div class="note">Сервер бэклога недоступен. Локальные или демонстрационные данные не используются.</div></div>`;
   if(!state.ui.backlogTribe) return viewBacklogSelect();
   const tribes=backlogRefs().tribes.map(row=>row.name);
   if(!tribes.includes(state.ui.backlogTribe)){ state.ui.backlogTribe=null; return viewBacklogSelect(); }

@@ -114,7 +114,7 @@ async def replace_team_boards(
 ) -> TeamBoardsRead:
     issue_keys = [row.issue_key.strip().casefold() for row in payload.initiatives]
     if len(issue_keys) != len(set(issue_keys)):
-        raise ValueError("An initiative can only occur once in the team boards payload")
+        raise ValueError("Инициатива может встречаться в составе командных досок только один раз")
 
     story_uids = [
         story.client_uid.strip().casefold()
@@ -122,14 +122,14 @@ async def replace_team_boards(
         for story in initiative.stories
     ]
     if len(story_uids) != len(set(story_uids)):
-        raise ValueError("Story UID must be unique inside a PI cycle")
+        raise ValueError("UID истории должен быть уникален в пределах PI-цикла")
     work_uids = [
         item.client_uid.strip().casefold()
         for initiative in payload.initiatives
         for item in initiative.work_items
     ]
     if len(work_uids) != len(set(work_uids)):
-        raise ValueError("Work item UID must be unique inside a PI cycle")
+        raise ValueError("UID задачи должен быть уникален в пределах PI-цикла")
 
     existing = await _initiatives_query(session, cycle.id)
     by_id = {row.id: row for row in existing}
@@ -150,19 +150,19 @@ async def replace_team_boards(
         initiative = by_id.get(source.id) if source.id else None
         key_match = by_key.get(issue_key.casefold())
         if source.id is not None and initiative is None:
-            raise ValueError(f"Initiative ID is not found in this PI cycle: {source.id}")
+            raise ValueError(f"ID инициативы не найден в данном PI-цикле: {source.id}")
         if initiative is not None and key_match is not None and initiative.id != key_match.id:
-            raise ValueError(f"Initiative ID does not match Issue ID: {issue_key}")
+            raise ValueError(f"ID инициативы не соответствует Issue: {issue_key}")
         if initiative is None:
             initiative = key_match
         if initiative is None:
-            raise ValueError(f"Initiative is not found in this PI cycle: {issue_key}")
+            raise ValueError(f"Инициатива не найдена в данном PI-цикле: {issue_key}")
 
         validate_sprint_position(
             cycle,
             source.sprint_index,
             source.week_index,
-            f"Initiative {issue_key}",
+            f"Инициатива {issue_key}",
         )
         primary_executor = min(
             initiative.executors,
@@ -198,10 +198,10 @@ async def replace_team_boards(
             uid_match = existing_stories_by_uid.get(uid.casefold())
             if source_story.id is not None and story is None:
                 raise ValueError(
-                    f"Story ID is not found for initiative {issue_key}: {source_story.id}"
+                    f"ID истории не найден для инициативы {issue_key}: {source_story.id}"
                 )
             if story is not None and uid_match is not None and story.id != uid_match.id:
-                raise ValueError(f"Story ID does not match client UID: {uid}")
+                raise ValueError(f"ID истории не соответствует клиентскому UID: {uid}")
             if story is None:
                 story = uid_match
             if story is None:
@@ -219,12 +219,12 @@ async def replace_team_boards(
                 cycle,
                 source_story.sprint_index,
                 source_story.week_index,
-                f"Story {uid}",
+                f"История {uid}",
             )
             story.effort_by_competency = normalized_effort(
                 source_story.effort_by_competency,
                 allowed_competencies,
-                f"Story {uid}",
+                f"История {uid}",
             )
             story.sprint_index = source_story.sprint_index
             story.week_index = source_story.week_index
@@ -245,10 +245,10 @@ async def replace_team_boards(
             uid_match = existing_items_by_uid.get(uid.casefold())
             if source_item.id is not None and item is None:
                 raise ValueError(
-                    f"Work item ID is not found for initiative {issue_key}: {source_item.id}"
+                    f"ID задачи не найден для инициативы {issue_key}: {source_item.id}"
                 )
             if item is not None and uid_match is not None and item.id != uid_match.id:
-                raise ValueError(f"Work item ID does not match client UID: {uid}")
+                raise ValueError(f"ID задачи не соответствует клиентскому UID: {uid}")
             if item is None:
                 item = uid_match
             if item is None:
@@ -264,18 +264,18 @@ async def replace_team_boards(
                 story = desired_stories_by_uid.get(source_item.story_client_uid.strip().casefold())
                 if story is None:
                     raise ValueError(
-                        f"Story UID is not found for work item {uid}: {source_item.story_client_uid}"
+                        f"UID истории не найден для задачи {uid}: {source_item.story_client_uid}"
                     )
             validate_sprint_position(
                 cycle,
                 source_item.sprint_index,
                 source_item.week_index,
-                f"Work item {uid}",
+                f"Задача {uid}",
             )
             competency = source_item.competency.strip().upper()
             if competency not in allowed_competencies:
                 raise ValueError(
-                    f"Work item {uid}: competency is not configured for an executor team: "
+                    f"Задача {uid}: компетенция не настроена для команды-исполнителя: "
                     f"{competency}"
                 )
             assignee_name = source_item.assignee_name.strip()
@@ -286,10 +286,10 @@ async def replace_team_boards(
                     None,
                 )
                 if assigned_member is None:
-                    raise ValueError(f"Work item {uid}: assignee is not in an executor team")
+                    raise ValueError(f"Задача {uid}: исполнитель не входит в команду-исполнитель")
                 if assigned_member.competency.strip().upper() != competency:
                     raise ValueError(
-                        f"Work item {uid}: assignee competency does not match {competency}"
+                        f"Задача {uid}: компетенция исполнителя не совпадает с {competency}"
                     )
                 assignee_name = assigned_member.full_name
             if assigned_member is None:
@@ -345,9 +345,9 @@ async def _initiative_for_command(
         .where(Initiative.cycle_id == cycle.id, Initiative.id == initiative_id)
     )
     if initiative is None:
-        raise ValueError("Initiative is not found in this PI cycle")
+        raise ValueError("Инициатива не найдена в данном PI-цикле")
     if not initiative.on_board:
-        raise ValueError("Initiative is not published to the team boards")
+        raise ValueError("Инициатива не опубликована на командные доски")
     return initiative
 
 
@@ -400,7 +400,7 @@ async def _assert_client_uid_available(
     if current_id is not None:
         statement = statement.where(model.id != current_id)
     if await session.scalar(statement):
-        raise ValueError(f"Client UID must be unique inside a PI cycle: {client_uid}")
+        raise ValueError(f"Клиентский UID должен быть уникален в пределах PI-цикла: {client_uid}")
 
 
 def _validate_assignee(
@@ -422,7 +422,7 @@ def _validate_assignee(
     )
     if member is None:
         raise ValueError(
-            f"Work item {uid}: assignee is not available with competency {competency}"
+            f"Задача {uid}: нет доступного исполнителя с компетенцией {competency}"
         )
     return member
 
@@ -437,10 +437,10 @@ def _resolve_assignee(
     if member_id is not None:
         member = next((row for row in roster if row.id == member_id), None)
         if member is None:
-            raise ValueError(f"Work item {uid}: assignee is not in an executor team")
+            raise ValueError(f"Задача {uid}: исполнитель не входит в команду-исполнитель")
         if member.competency.strip().upper() != competency:
             raise ValueError(
-                f"Work item {uid}: assignee competency does not match {competency}"
+                f"Задача {uid}: компетенция исполнителя не совпадает с {competency}"
             )
         return member.id, member.full_name
     member = _validate_assignee(uid, assignee_name, competency, roster)
@@ -474,7 +474,7 @@ async def update_board_initiative(
         for value in payload.tags or []:
             canonical = configured_tags.get(value.strip().casefold())
             if canonical is None:
-                raise ValueError(f"Tag is not configured for this PI cycle: {value}")
+                raise ValueError(f"Тэг не настроен для данного PI-цикла: {value}")
             if canonical not in normalized_tags:
                 normalized_tags.append(canonical)
         initiative.tags = normalized_tags
@@ -485,19 +485,19 @@ async def update_board_initiative(
             default=None,
         )
         if primary_executor is None:
-            raise ValueError("Initiative has no executor team")
+            raise ValueError("У инициативы нет команды-исполнителя")
         competencies, _ = await _initiative_board_context(session, cycle, initiative)
         primary_executor.effort_by_competency = normalized_effort(
             payload.effort_by_competency or {},
             competencies,
-            f"Initiative {initiative.issue_key}",
+            f"Инициатива {initiative.issue_key}",
         )
     if "agreed" in fields:
         initiative.agreed = bool(payload.agreed)
     if "sprint_index" in fields or "week_index" in fields:
         sprint_index = payload.sprint_index if "sprint_index" in fields else initiative.sprint_index
         week_index = payload.week_index if "week_index" in fields else initiative.week_index
-        validate_sprint_position(cycle, sprint_index, week_index, f"Initiative {initiative.issue_key}")
+        validate_sprint_position(cycle, sprint_index, week_index, f"Инициатива {initiative.issue_key}")
         initiative.sprint_index = sprint_index
         initiative.week_index = week_index
     if "board_sort_order" in fields:
@@ -517,7 +517,7 @@ async def create_board_story(
     competencies, _ = await _initiative_board_context(session, cycle, initiative)
     uid = payload.client_uid.strip()
     await _assert_client_uid_available(session, cycle, Story, uid)
-    validate_sprint_position(cycle, payload.sprint_index, payload.week_index, f"Story {uid}")
+    validate_sprint_position(cycle, payload.sprint_index, payload.week_index, f"История {uid}")
     story = Story(
         id=uuid.uuid4(),
         initiative_id=initiative.id,
@@ -525,7 +525,7 @@ async def create_board_story(
         external_key=payload.external_key.strip(),
         title=payload.title.strip(),
         effort_by_competency=normalized_effort(
-            payload.effort_by_competency, competencies, f"Story {uid}"
+            payload.effort_by_competency, competencies, f"История {uid}"
         ),
         sprint_index=payload.sprint_index,
         week_index=payload.week_index,
@@ -548,7 +548,7 @@ async def update_board_story(
     initiative = await _initiative_for_command(session, cycle, initiative_id)
     story = next((row for row in initiative.stories if row.id == story_id), None)
     if story is None:
-        raise ValueError("Story is not found for this initiative")
+        raise ValueError("История не найдена для этой инициативы")
     competencies, _ = await _initiative_board_context(session, cycle, initiative)
     fields = payload.model_fields_set
     if "external_key" in fields:
@@ -557,12 +557,12 @@ async def update_board_story(
         story.title = (payload.title or "").strip()
     if "effort_by_competency" in fields:
         story.effort_by_competency = normalized_effort(
-            payload.effort_by_competency or {}, competencies, f"Story {story.client_uid}"
+            payload.effort_by_competency or {}, competencies, f"История {story.client_uid}"
         )
     if "sprint_index" in fields or "week_index" in fields:
         sprint_index = payload.sprint_index if "sprint_index" in fields else story.sprint_index
         week_index = payload.week_index if "week_index" in fields else story.week_index
-        validate_sprint_position(cycle, sprint_index, week_index, f"Story {story.client_uid}")
+        validate_sprint_position(cycle, sprint_index, week_index, f"История {story.client_uid}")
         story.sprint_index = sprint_index
         story.week_index = week_index
     if "sort_order" in fields:
@@ -583,7 +583,7 @@ async def delete_board_story(
     initiative = await _initiative_for_command(session, cycle, initiative_id)
     story = next((row for row in initiative.stories if row.id == story_id), None)
     if story is None:
-        raise ValueError("Story is not found for this initiative")
+        raise ValueError("История не найдена для этой инициативы")
     children = [row for row in initiative.work_items if row.story_id == story.id]
     affected = [
         {"kind": "work_item", "id": str(row.id), "label": row.client_uid}
@@ -591,7 +591,7 @@ async def delete_board_story(
     ]
     if affected and not payload.confirm_cascade:
         raise TeamBoardCascadeRequired(
-            "Deleting the story also deletes its work items and their board connections",
+            "Удаление истории также удалит её задачи и связи на доске",
             affected,
         )
     await session.delete(story)
@@ -612,7 +612,7 @@ async def _story_by_client_uid(
         None,
     )
     if story is None:
-        raise ValueError(f"Story UID is not found for work item: {value}")
+        raise ValueError(f"UID истории не найден для задачи: {value}")
     return story
 
 
@@ -628,7 +628,7 @@ async def create_board_work_item(
     await _assert_client_uid_available(session, cycle, WorkItem, uid)
     competency = payload.competency.strip().upper()
     if competency not in competencies:
-        raise ValueError(f"Work item {uid}: competency is not configured: {competency}")
+        raise ValueError(f"Задача {uid}: компетенция не настроена: {competency}")
     assignee_id, assignee = _resolve_assignee(
         uid,
         payload.assignee_member_id,
@@ -637,7 +637,7 @@ async def create_board_work_item(
         roster,
     )
     story = await _story_by_client_uid(initiative, payload.story_client_uid)
-    validate_sprint_position(cycle, payload.sprint_index, payload.week_index, f"Work item {uid}")
+    validate_sprint_position(cycle, payload.sprint_index, payload.week_index, f"Задача {uid}")
     session.add(
         WorkItem(
             id=uuid.uuid4(),
@@ -669,7 +669,7 @@ async def update_board_work_item(
     initiative = await _initiative_for_command(session, cycle, initiative_id)
     item = next((row for row in initiative.work_items if row.id == work_item_id), None)
     if item is None:
-        raise ValueError("Work item is not found for this initiative")
+        raise ValueError("Задача не найдена для этой инициативы")
     competencies, roster = await _initiative_board_context(session, cycle, initiative)
     fields = payload.model_fields_set
     competency = (
@@ -679,7 +679,7 @@ async def update_board_work_item(
     )
     if competency not in competencies:
         raise ValueError(
-            f"Work item {item.client_uid}: competency is not configured: {competency}"
+            f"Задача {item.client_uid}: компетенция не настроена: {competency}"
         )
     assignee = (
         (payload.assignee_name or "").strip()
@@ -705,7 +705,7 @@ async def update_board_work_item(
     if "sprint_index" in fields or "week_index" in fields:
         sprint_index = payload.sprint_index if "sprint_index" in fields else item.sprint_index
         week_index = payload.week_index if "week_index" in fields else item.week_index
-        validate_sprint_position(cycle, sprint_index, week_index, f"Work item {item.client_uid}")
+        validate_sprint_position(cycle, sprint_index, week_index, f"Задача {item.client_uid}")
         item.sprint_index = sprint_index
         item.week_index = week_index
     if "sort_order" in fields:
@@ -726,7 +726,7 @@ async def delete_board_work_item(
     initiative = await _initiative_for_command(session, cycle, initiative_id)
     item = next((row for row in initiative.work_items if row.id == work_item_id), None)
     if item is None:
-        raise ValueError("Work item is not found for this initiative")
+        raise ValueError("Задача не найдена для этой инициативы")
     connections = list(
         (
             await session.scalars(
@@ -742,7 +742,7 @@ async def delete_board_work_item(
     )
     if connections and not payload.confirm_cascade:
         raise TeamBoardCascadeRequired(
-            "Deleting the work item also deletes its Program Board connections",
+            "Удаление задачи также удалит её связи в Program Board",
             [
                 {"kind": "connection", "id": str(row.id), "label": row.client_uid}
                 for row in connections

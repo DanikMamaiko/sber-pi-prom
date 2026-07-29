@@ -55,20 +55,20 @@ def resolve_cycle_team(
     clean_team = team_name.strip()
     clean_tribe = tribe_name.strip()
     if not clean_team:
-        raise ValueError("Team name is required")
+        raise ValueError("Укажите название команды")
     if clean_tribe:
         team = by_key.get((normalize_name(clean_tribe), normalize_name(clean_team)))
         if team is None:
             raise ValueError(
-                f"Team is not included in this PI cycle: {clean_tribe} / {clean_team}"
+                f"Команда не входит в данный PI-цикл: {clean_tribe} / {clean_team}"
             )
         return team
     matches = by_name.get(normalize_name(clean_team), [])
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
-        raise ValueError(f"Team name is ambiguous across tribes: {clean_team}")
-    raise ValueError(f"Team is not included in this PI cycle: {clean_team}")
+        raise ValueError(f"Имя команды неоднозначно среди трайбов: {clean_team}")
+    raise ValueError(f"Команда не входит в данный PI-цикл: {clean_team}")
 
 
 def validate_sprint_position(
@@ -79,14 +79,14 @@ def validate_sprint_position(
 ) -> None:
     if sprint_index is None:
         if week_index is not None:
-            raise ValueError(f"{label}: week cannot be set without a sprint")
+            raise ValueError(f"{label}: неделя не может быть указана без спринта")
         return
     if sprint_index < 0 or sprint_index >= cycle.sprint_count:
         raise ValueError(
-            f"{label}: sprint index must be between 0 and {cycle.sprint_count - 1}"
+            f"{label}: индекс спринта должен быть от 0 до {cycle.sprint_count - 1}"
         )
     if week_index not in {None, 0, 1}:
-        raise ValueError(f"{label}: week index must be 0 or 1")
+        raise ValueError(f"{label}: индекс недели должен быть 0 или 1")
 
 
 def normalized_effort(
@@ -98,13 +98,13 @@ def normalized_effort(
     for raw_code, raw_value in values.items():
         code = str(raw_code).strip().upper()
         if not code:
-            raise ValueError(f"{label}: competency code cannot be empty")
+            raise ValueError(f"{label}: код компетенции не может быть пустым")
         if code in result:
-            raise ValueError(f"{label}: competency occurs more than once: {code}")
+            raise ValueError(f"{label}: компетенция встречается более одного раза: {code}")
         if allowed_competencies is not None and code not in allowed_competencies:
-            raise ValueError(f"{label}: competency is not configured for the team: {code}")
+            raise ValueError(f"{label}: компетенция не настроена для команды: {code}")
         value = float(raw_value)
         if not math.isfinite(value) or value < 0:
-            raise ValueError(f"{label}: effort must be a non-negative finite number")
+            raise ValueError(f"{label}: трудоёмкость должна быть неотрицательным конечным числом")
         result[code] = value
     return result

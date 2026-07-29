@@ -53,7 +53,7 @@ class BacklogCascadeRequired(ValueError):
             "entity": entity,
             "affected": affected,
         }
-        super().__init__("Cascade confirmation is required")
+        super().__init__("Требуется подтверждение каскадных изменений")
 
 
 class BacklogNotFound(ValueError):
@@ -64,8 +64,8 @@ def normalize_issue_key(raw: str) -> str:
     value = str(raw or "").strip()
     if not ISSUE_KEY_PATTERN.fullmatch(value):
         raise ValueError(
-            "Issue ID must start with a letter or digit and contain only letters, "
-            "digits, dots, underscores or hyphens"
+            "Issue должен начинаться с буквы или цифры и содержать только буквы, "
+            "цифры, точки, подчёркивания или дефисы"
         )
     return value
 
@@ -281,7 +281,7 @@ async def _resolve_tribe(
         select(Tribe).where(func.lower(Tribe.name) == value.casefold())
     )
     if tribe is None:
-        raise ValueError(f"Unknown tribe: {value}")
+        raise ValueError(f"Неизвестный трайб: {value}")
     cache[value] = tribe
     return tribe
 
@@ -317,8 +317,8 @@ async def _resolve_team(
         cache[key] = teams[0]
         return teams[0]
     if len(teams) > 1:
-        raise ValueError(f"Team name is ambiguous across tribes: {value}")
-    raise ValueError(f"Unknown team in tribe {preferred_tribe.name}: {value}")
+        raise ValueError(f"Имя команды неоднозначно среди трайбов: {value}")
+    raise ValueError(f"Неизвестная команда в трайбе {preferred_tribe.name}: {value}")
 
 
 async def _apply_item_fields(
@@ -337,12 +337,12 @@ async def _apply_item_fields(
     issue_key = normalize_issue_key(source.issue_key)
     status = (source.status or "").strip() or "Нет оценки"
     if status not in BACKLOG_STATUSES:
-        raise ValueError(f"Unknown backlog status: {status}")
+        raise ValueError(f"Неизвестный статус бэклога: {status}")
     current_status = (item.status or "Нет оценки").strip()
     if status == SENT_STATUS and current_status != SENT_STATUS:
-        raise ValueError("Sent status can only be assigned by the dispatch command")
+        raise ValueError("Статус «Отправлена в Pre PI Planning» можно задать только командой отправки на Pre PI Planning")
     if current_status == SENT_STATUS and status != SENT_STATUS:
-        raise ValueError("A dispatched initiative cannot be returned to an editable status")
+        raise ValueError("Отправленную инициативу нельзя вернуть в редактируемый статус")
     if cycle_context is None:
         tribe = await _resolve_tribe(session, source.tribe, tribe_cache)
         owner = await _resolve_team(
@@ -357,7 +357,7 @@ async def _apply_item_fields(
             if candidate_tribe == tribe_key
         ]
         if not tribe_teams or not tribe_teams[0].tribe:
-            raise ValueError(f"Tribe is not included in this PI cycle: {source.tribe}")
+            raise ValueError(f"Трайб не включён в данный PI-цикл: {source.tribe}")
         tribe = tribe_teams[0].tribe
         owner = (
             resolve_cycle_team(
@@ -399,12 +399,12 @@ async def _apply_item_fields(
             continue
         if team.id in executor_team_ids:
             raise ValueError(
-                f"Executor team is included more than once for {issue_key}: {team.name}"
+                f"Команда-исполнитель включена более одного раза для {issue_key}: {team.name}"
             )
         executor_team_ids.add(team.id)
         record = existing_executors_by_id.get(executor.id) if executor.id else None
         if executor.id is not None and record is None:
-            raise BacklogNotFound(f"Backlog executor ID is not found: {executor.id}")
+            raise BacklogNotFound(f"Исполнитель бэклога не найден: {executor.id}")
         if record is None:
             record = existing_executors.get(team.id)
         if record is None:
@@ -437,7 +437,7 @@ async def _apply_item_fields(
         record.effort_by_competency = normalized_effort(
             executor.effort_by_competency,
             allowed_competencies,
-            f"Backlog {issue_key} / {team.name}",
+            f"Бэклог {issue_key} / {team.name}",
         )
         executors.append(record)
     item.executors = executors
@@ -467,7 +467,7 @@ async def create_backlog_item(
     if await session.scalar(
         select(BacklogItem).where(func.lower(BacklogItem.issue_key) == issue_key.casefold())
     ):
-        raise ValueError(f"Issue ID already exists in the global backlog: {issue_key}")
+        raise ValueError(f"Такой Issue уже существует в глобальном бэклоге: {issue_key}")
     item = BacklogItem(
         id=uuid.uuid4(),
         issue_key=issue_key,
@@ -494,7 +494,7 @@ async def update_backlog_item(
         .where(BacklogItem.id == item_id)
     )
     if item is None:
-        raise BacklogNotFound("Backlog item not found")
+        raise BacklogNotFound("Элемент бэклога не найден")
     issue_key = normalize_issue_key(payload.issue_key)
     duplicate = await session.scalar(
         select(BacklogItem).where(
@@ -503,7 +503,7 @@ async def update_backlog_item(
         )
     )
     if duplicate is not None:
-        raise ValueError(f"Issue ID already exists in the global backlog: {issue_key}")
+        raise ValueError(f"Такой Issue уже существует в глобальном бэклоге: {issue_key}")
     cycle_context = await cycle_team_context(session, cycle_id) if cycle_id else None
     await _apply_item_fields(session, item, payload, {}, {}, cycle_context)
     await _mark_board_initialized(session)
@@ -551,7 +551,7 @@ async def delete_backlog_item(
 ) -> None:
     item = await session.scalar(select(BacklogItem).where(BacklogItem.id == item_id))
     if item is None:
-        raise BacklogNotFound("Backlog item not found")
+        raise BacklogNotFound("Элемент бэклога не найден")
     dispatched_links = int(
         await session.scalar(
             select(func.count())
@@ -580,9 +580,9 @@ async def reorder_backlog_items(
     by_id = {item.id: item for item in items}
     ordered_ids = list(dict.fromkeys(payload.item_ids))
     if len(ordered_ids) != len(payload.item_ids):
-        raise ValueError("An item appears more than once in the reorder command")
+        raise ValueError("Элемент встречается в команде изменения порядка более одного раза")
     if set(ordered_ids) != set(by_id):
-        raise ValueError("Reorder command must list every backlog item exactly once")
+        raise ValueError("Команда изменения порядка должна содержать все элементы бэклога ровно по одному разу")
     for order, item_id in enumerate(ordered_ids):
         by_id[item_id].sort_order = order
     await _mark_board_initialized(session)
@@ -595,7 +595,7 @@ async def replace_backlog_board(
 ) -> None:
     normalized_keys = [normalize_issue_key(item.issue_key).casefold() for item in payload.items]
     if len(normalized_keys) != len(set(normalized_keys)):
-        raise ValueError("Issue ID must be unique across the global backlog")
+        raise ValueError("Issue должен быть уникален в пределах глобального бэклога")
 
     existing = await _items_query(session)
     by_id = {item.id: item for item in existing}
@@ -618,11 +618,11 @@ async def replace_backlog_board(
         item = by_id.get(source.id) if source.id else None
         key_match = by_key.get(issue_key.casefold())
         if source.id is not None and item is None:
-            raise ValueError(f"Backlog item ID is not found: {source.id}")
+            raise ValueError(f"Элемент бэклога не найден: {source.id}")
         if item is None:
             item = key_match
         if item is not None and item.id in used_ids:
-            raise ValueError(f"Backlog item is included more than once: {issue_key}")
+            raise ValueError(f"Элемент бэклога включён более одного раза: {issue_key}")
         if item is None:
             item = BacklogItem(
                 id=uuid.uuid4(),
@@ -691,14 +691,14 @@ async def dispatch_backlog_items(
     )
     if target is None:
         raise ValueError(
-            f"PI cycle {target_key} is not created yet — open it on «Данные PI-цикла» first"
+            f"PI-цикл {target_key} ещё не создан — сначала откройте его на вкладке «Данные PI-цикла»"
         )
 
     tribe = await session.scalar(
         select(Tribe).where(func.lower(Tribe.name) == payload.tribe.strip().casefold())
     )
     if tribe is None:
-        raise ValueError(f"Unknown tribe: {payload.tribe}")
+        raise ValueError(f"Неизвестный трайб: {payload.tribe}")
 
     candidates = list(
         (
@@ -716,7 +716,7 @@ async def dispatch_backlog_items(
     )
     if not candidates:
         raise ValueError(
-            f"No initiatives for {payload.tribe} with realization period {target_key}"
+            f"Нет инициатив для трайба {payload.tribe} с периодом реализации {target_key}"
         )
 
     already_sent = [
@@ -724,7 +724,7 @@ async def dispatch_backlog_items(
     ]
     if already_sent:
         raise ValueError(
-            f"Initiatives are already dispatched to {target_key}: "
+            f"Инициативы уже отправлены на {target_key}: "
             f"{', '.join(already_sent)}"
         )
 
@@ -732,18 +732,18 @@ async def dispatch_backlog_items(
     for source in candidates:
         if source.owner_team_id is not None and source.owner_team_id not in competencies_by_team:
             raise ValueError(
-                f"Owner team is not part of {target_key} for {source.issue_key}"
+                f"Команда-владелец не входит в {target_key} для {source.issue_key}"
             )
         for executor in source.executors:
             if executor.team_id not in competencies_by_team:
                 raise ValueError(
-                    f"Executor team is not part of {target_key} for {source.issue_key}"
+                    f"Команда-исполнитель не входит в {target_key} для {source.issue_key}"
                 )
             # Reject backlog effort that references a competency the cycle team does not own.
             normalized_effort(
                 executor.effort_by_competency or {},
                 competencies_by_team[executor.team_id],
-                f"Backlog {source.issue_key} / dispatch",
+                f"Бэклог {source.issue_key} / отправка",
             )
 
     issue_keys = [item.issue_key for item in candidates]
@@ -770,7 +770,7 @@ async def dispatch_backlog_items(
     ]
     if conflicts:
         raise ValueError(
-            "PI cycle already contains initiatives linked to another backlog item: "
+            "PI-цикл уже содержит инициативы, связанные с другим элементом бэклога: "
             + ", ".join(conflicts)
         )
 

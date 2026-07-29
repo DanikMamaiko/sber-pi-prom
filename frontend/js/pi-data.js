@@ -36,7 +36,7 @@ async function executePiDataCommand(path,options={},cascadeBody=null){
   }
   await refreshPiProjectionsAfterDataCommand().catch(error=>console.error('Projection refresh failed',error));
   render();
-  toast('Изменения сохранены в backend',{type:'success'});
+  toast('Изменения сохранены на сервере',{type:'success'});
 }
 function prototypePirRow(row,editable){
   const ro=editable?'':'readonly', dis=editable?'':'disabled';
@@ -68,7 +68,7 @@ function prototypeNamedRow(kind,row,editable){
 }
 function viewData(){
   const view=piDataViews[currentCycleId()];
-  if(!view) return `<div class="card"><h2>Данные PI-цикла</h2><div class="note">Данные backend не загружены. Локальная копия PI-цикла не используется.</div></div>`;
+  if(!view) return `<div class="card"><h2>Данные PI-цикла</h2><div class="note">Данные с сервера не загружены. Локальная копия PI-цикла не используется.</div></div>`;
   const editable=!!state.ui.dataEdit;
   const dis=editable?'':'disabled';
   const refs=view.reference_data||{team_types:['Agile','ИТ-проект'],competencies:['SA','DEV','QA','FE','BE','DES'],sprint_count_min:1,sprint_count_max:20};
@@ -121,7 +121,7 @@ function bindData(){
         await executePiDataCommand('/data',{method:'PUT',body:piDataFormPayload()},{confirm_cascade:true});
         state.ui.dataEdit=false;save(false);render();
       }catch(error){
-        if(!(error&&error.status===409))toast(error.message||'Backend не выполнил команду',{type:'warn',timeout:7000});
+        if(!(error&&error.status===409))toast(error.message||'Сервер не выполнил команду',{type:'warn',timeout:7000});
         button.disabled=false;
       }
     }

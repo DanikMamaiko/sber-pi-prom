@@ -51,7 +51,7 @@ class CascadeRequired(ValueError):
             "entity": entity,
             "affected": affected,
         }
-        super().__init__("Cascade confirmation is required")
+        super().__init__("Требуется подтверждение каскадных изменений")
 
 
 def _clean_unique(values: list[str]) -> list[str]:
@@ -75,10 +75,10 @@ def _cycle_end(cycle: PiCycle):
 def _validate_event_date(cycle: PiCycle, value) -> None:
     end_date = _cycle_end(cycle)
     if cycle.start_date is None or end_date is None:
-        raise ValueError("PI start date must be set before adding a PIR")
+        raise ValueError("Перед добавлением ПИР необходимо указать дату начала PI")
     if value < cycle.start_date or value > end_date:
         raise ValueError(
-            f"PIR date must be between {cycle.start_date.isoformat()} and {end_date.isoformat()}"
+            f"Дата ПИР должна быть в диапазоне от {cycle.start_date.isoformat()} до {end_date.isoformat()}"
         )
 
 
@@ -333,7 +333,7 @@ async def create_pir(
             func.lower(PiEvent.name) == name.casefold(),
         )
     ):
-        raise ValueError("PIR name must be unique inside a PI cycle")
+        raise ValueError("Название ПИР должно быть уникальным в пределах PI-цикла")
     session.add(
         PiEvent(
             cycle_id=cycle.id,
@@ -357,7 +357,7 @@ async def update_pir(
         select(PiEvent).where(PiEvent.id == event_id, PiEvent.cycle_id == cycle.id)
     )
     if event is None:
-        raise ValueError("PIR not found in this PI cycle")
+        raise ValueError("ПИР не найден в данном PI-цикле")
     name = payload.name.strip()
     _validate_event_date(cycle, payload.date)
     duplicate = await session.scalar(
@@ -368,7 +368,7 @@ async def update_pir(
         )
     )
     if duplicate:
-        raise ValueError("PIR name must be unique inside a PI cycle")
+        raise ValueError("Название ПИР должно быть уникальным в пределах PI-цикла")
     event.name = name
     event.event_date = payload.date
     return await _finish_data(session, cycle, commit=commit)
@@ -385,7 +385,7 @@ async def delete_pir(
         select(PiEvent).where(PiEvent.id == event_id, PiEvent.cycle_id == cycle.id)
     )
     if event is None:
-        raise ValueError("PIR not found in this PI cycle")
+        raise ValueError("ПИР не найден в данном PI-цикле")
     await session.delete(event)
     return await _finish_data(session, cycle, commit=commit)
 
@@ -421,9 +421,9 @@ def _validate_team_payload(payload) -> list[str]:
     competencies = _clean_unique(payload.competencies)
     unknown = [code for code in competencies if code not in COMPETENCIES]
     if unknown:
-        raise ValueError(f"Unsupported competencies: {', '.join(unknown)}")
+        raise ValueError(f"Неподдерживаемые компетенции: {', '.join(unknown)}")
     if not competencies:
-        raise ValueError("At least one competency is required")
+        raise ValueError("Требуется хотя бы одна компетенция")
     return competencies
 
 
@@ -442,7 +442,7 @@ async def create_cycle_team(
             PiCycleTeam.team_id == team.id,
         )
     ):
-        raise ValueError("Team is already included in this PI cycle")
+        raise ValueError("Команда уже включена в данный PI-цикл")
     row = PiCycleTeam(
         cycle_id=cycle.id,
         team_id=team.id,
@@ -513,7 +513,7 @@ async def _relink_cycle_team(
             InitiativeExecutor.team_id == target_team.id,
         )
     ):
-        raise ValueError("An initiative already contains the target team as executor")
+        raise ValueError("В инициативе уже есть целевая команда как исполнитель")
     await session.execute(
         update(Initiative)
         .where(Initiative.cycle_id == cycle.id, Initiative.owner_team_id == old_team.id)
@@ -568,7 +568,7 @@ async def update_cycle_team(
         .where(PiCycleTeam.id == cycle_team_id, PiCycleTeam.cycle_id == cycle.id)
     )
     if row is None:
-        raise ValueError("Team is not included in this PI cycle")
+        raise ValueError("Команда не входит в данный PI-цикл")
     competencies = _validate_team_payload(payload)
     old_team = row.team
     _, target_team = await _resolve_tribe_team(session, payload.tribe, payload.name)
@@ -581,7 +581,7 @@ async def update_cycle_team(
             )
         )
         if duplicate_membership:
-            raise ValueError("Target team is already included in this PI cycle")
+            raise ValueError("Целевая команда уже включена в данный PI-цикл")
         await _relink_cycle_team(session, cycle, row, target_team)
 
     removed = {item.code for item in row.competencies} - set(competencies)
@@ -692,7 +692,7 @@ async def delete_cycle_team(
         .where(PiCycleTeam.id == cycle_team_id, PiCycleTeam.cycle_id == cycle.id)
     )
     if row is None:
-        raise ValueError("Team is not included in this PI cycle")
+        raise ValueError("Команда не входит в данный PI-цикл")
     team_id = row.team_id
     affected = {
         "owners": int(
@@ -825,7 +825,7 @@ async def create_goal_option(
 ):
     name = payload.name.strip()
     if await _unique_named(session, PiCycleGoalOption, cycle.id, name):
-        raise ValueError("Goal option must be unique inside a PI cycle")
+        raise ValueError("Вариант цели должен быть уникальным в пределах PI-цикла")
     session.add(
         PiCycleGoalOption(
             cycle_id=cycle.id,
@@ -851,10 +851,10 @@ async def update_goal_option(
         )
     )
     if row is None:
-        raise ValueError("Goal option not found in this PI cycle")
+        raise ValueError("Вариант цели не найден в данном PI-цикле")
     name = payload.name.strip()
     if await _unique_named(session, PiCycleGoalOption, cycle.id, name, row.id):
-        raise ValueError("Goal option must be unique inside a PI cycle")
+        raise ValueError("Вариант цели должен быть уникальным в пределах PI-цикла")
     row.name = name
     return await _finish_data(session, cycle, commit=commit)
 
@@ -873,7 +873,7 @@ async def delete_goal_option(
         )
     )
     if row is None:
-        raise ValueError("Goal option not found in this PI cycle")
+        raise ValueError("Вариант цели не найден в данном PI-цикле")
     await session.delete(row)
     return await _finish_data(session, cycle, commit=commit)
 
@@ -887,7 +887,7 @@ async def create_tag(
 ):
     name = payload.name.strip()
     if await _unique_named(session, PiCycleTag, cycle.id, name):
-        raise ValueError("Tag must be unique inside a PI cycle")
+        raise ValueError("Тэг должен быть уникальным в пределах PI-цикла")
     session.add(
         PiCycleTag(
             cycle_id=cycle.id,
@@ -910,10 +910,10 @@ async def update_tag(
         select(PiCycleTag).where(PiCycleTag.id == tag_id, PiCycleTag.cycle_id == cycle.id)
     )
     if row is None:
-        raise ValueError("Tag not found in this PI cycle")
+        raise ValueError("Тэг не найден в данном PI-цикле")
     name = payload.name.strip()
     if await _unique_named(session, PiCycleTag, cycle.id, name, row.id):
-        raise ValueError("Tag must be unique inside a PI cycle")
+        raise ValueError("Тэг должен быть уникальным в пределах PI-цикла")
     old_name = row.name
     initiatives = (
         await session.scalars(select(Initiative).where(Initiative.cycle_id == cycle.id))
@@ -935,7 +935,7 @@ async def delete_tag(
         select(PiCycleTag).where(PiCycleTag.id == tag_id, PiCycleTag.cycle_id == cycle.id)
     )
     if row is None:
-        raise ValueError("Tag not found in this PI cycle")
+        raise ValueError("Тэг не найден в данном PI-цикле")
     initiatives = (
         await session.scalars(select(Initiative).where(Initiative.cycle_id == cycle.id))
     ).all()
@@ -948,16 +948,16 @@ async def delete_tag(
 def _require_unique(values: list[str], label: str) -> None:
     normalized = [value.strip().casefold() for value in values]
     if len(normalized) != len(set(normalized)):
-        raise ValueError(f"{label} must be unique inside a PI cycle")
+        raise ValueError(f"{label} должен быть уникальным в пределах PI-цикла")
 
 
 def _validate_snapshot_ids(items, existing, label: str) -> None:
     existing_ids = {row.id for row in existing}
     supplied_ids = [item.id for item in items if item.id is not None]
     if len(supplied_ids) != len(set(supplied_ids)):
-        raise ValueError(f"Duplicate {label} id in PI data command")
+        raise ValueError(f"В команде данных PI дублируется ID: {label}")
     if any(item_id not in existing_ids for item_id in supplied_ids):
-        raise ValueError(f"{label} does not belong to this PI cycle")
+        raise ValueError(f"{label} не относится к данному PI-циклу")
 
 
 async def replace_pi_cycle_data(
@@ -970,17 +970,17 @@ async def replace_pi_cycle_data(
     teams_by_id = {row.id: row for row in teams}
     goals_by_id = {row.id: row for row in goals}
     tags_by_id = {row.id: row for row in tags}
-    _validate_snapshot_ids(payload.pirs, events, "PIR")
-    _validate_snapshot_ids(payload.teams, teams, "cycle team")
-    _validate_snapshot_ids(payload.goal_options, goals, "goal option")
-    _validate_snapshot_ids(payload.tags, tags, "tag")
-    _require_unique([item.name for item in payload.pirs], "PIR names")
+    _validate_snapshot_ids(payload.pirs, events, "ПИР")
+    _validate_snapshot_ids(payload.teams, teams, "команда PI-цикла")
+    _validate_snapshot_ids(payload.goal_options, goals, "вариант цели")
+    _validate_snapshot_ids(payload.tags, tags, "тэг")
+    _require_unique([item.name for item in payload.pirs], "Название ПИР")
     _require_unique(
         [f"{item.tribe.strip()}\0{item.name.strip()}" for item in payload.teams],
-        "Teams",
+        "Команда",
     )
-    _require_unique([item.name for item in payload.goal_options], "Goal options")
-    _require_unique([item.name for item in payload.tags], "Tags")
+    _require_unique([item.name for item in payload.goal_options], "Вариант цели")
+    _require_unique([item.name for item in payload.tags], "Тэг")
 
     keep_event_ids = {item.id for item in payload.pirs if item.id is not None}
     keep_team_ids = {item.id for item in payload.teams if item.id is not None}

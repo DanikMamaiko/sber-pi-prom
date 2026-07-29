@@ -275,8 +275,8 @@ function viewRisks(){
   }
   const view=state.ui.riskView==='team'?'team':'general';
   let html=`<div class="card"><h2>Риски ${cycleBadge()}</h2>`;
-  if(!risksApiReady&&!risksBoards[currentCycleId()])return html+`<div class="muted">Загрузка рисков с backend...</div></div>`;
-  if(!cycleBackendIds[currentCycleId()])return html+`<div class="muted">Backend недоступен или PI-цикл не выбран.</div></div>`;
+  if(!risksApiReady&&!risksBoards[currentCycleId()])return html+`<div class="muted">Загрузка рисков с сервера...</div></div>`;
+  if(!cycleBackendIds[currentCycleId()])return html+`<div class="muted">Сервер недоступен или PI-цикл не выбран.</div></div>`;
   if(!teams.length&&!tribes.length)return html+`<div class="muted">Добавьте трайбы и команды на вкладке «Данные PI-цикла». Риски не создаются из демонстрационных данных.</div></div>`;
   html+=`<div style="margin-bottom:18px">
     <span class="pill ${view==='general'?'sel':''}" data-risk-view="general">Общие риски</span>

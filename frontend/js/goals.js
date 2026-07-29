@@ -181,8 +181,8 @@ function handleCommandError(error,repeat){
 function legacyViewGoalsCrud(){
   const tribes=goalTribeOptions(),teams=goalTeamOptions();
   let html=`<div class="card"><h2>Цели ${cycleBadge()}</h2>`;
-  if(!goalsApiReady&&!goalsBoards[currentCycleId()])return html+`<div class="muted">Загрузка целей с backend...</div></div>`;
-  if(!cycleBackendIds[currentCycleId()])return html+`<div class="muted">Backend недоступен или PI-цикл не выбран.</div></div>`;
+  if(!goalsApiReady&&!goalsBoards[currentCycleId()])return html+`<div class="muted">Загрузка целей с сервера...</div></div>`;
+  if(!cycleBackendIds[currentCycleId()])return html+`<div class="muted">Сервер недоступен или PI-цикл не выбран.</div></div>`;
   if(!teams.length)return html+`<div class="muted">Добавьте трайбы и команды на вкладке «Данные PI-цикла». Цели не создаются из демонстрационных данных.</div></div>`;
   const tribeFilter=state.ui.goalsTribeId||'',teamFilter=state.ui.goalsTeamId||'',statusFilter=state.ui.goalsStatus||'';
   const filteredTeams=tribeFilter?teams.filter(t=>String(t.tribe_id)===String(tribeFilter)):teams;
@@ -289,7 +289,7 @@ function legacyOpenGoalModal(goalId){
   };
 }
 function deleteGoalUi(goalId){
-  showConfirm('Удаление цели','Цель будет удалена из активного PI-цикла. Если есть связанные инициативы, backend потребует отдельное подтверждение.',[],async()=>{
+  showConfirm('Удаление цели','Цель будет удалена из активного PI-цикла. Если есть связанные инициативы, сервер потребует отдельное подтверждение.',[],async()=>{
     const run=confirm_cascade=>goalsBoardCommand(`/goals/${goalId}`,'DELETE',{confirm_cascade});
     try{await run(false);toast('Цель удалена',{type:'info'});}
     catch(error){handleCommandError(error,async()=>{await run(true);toast('Цель удалена',{type:'info'});});}

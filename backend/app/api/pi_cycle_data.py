@@ -397,7 +397,7 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
     if tribe is None:
         raise HTTPException(
             status_code=422,
-            detail="Tribe not found",
+            detail="Трайб не найден",
         )
     existing = await session.scalar(
         select(Team).where(Team.tribe_id == payload.tribe_id, Team.name == payload.name.strip())
@@ -412,7 +412,7 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
     if not competencies:
         raise HTTPException(
             status_code=422,
-            detail="At least one team competency is required",
+            detail="Требуется хотя бы одна компетенция команды",
         )
     team = Team(
         tribe_id=payload.tribe_id,
@@ -434,7 +434,7 @@ async def create_team_member(payload: TeamMemberCreate, session: AsyncSession = 
     if await session.get(Team, payload.team_id) is None:
         raise HTTPException(
             status_code=422,
-            detail="Team not found",
+            detail="Команда не найдена",
         )
     member = TeamMember(**payload.model_dump())
     session.add(member)

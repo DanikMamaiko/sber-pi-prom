@@ -172,32 +172,32 @@ async def create_initiative(
     ):
         raise HTTPException(
             status_code=422,
-            detail="Issue ID must be unique inside a PI cycle",
+            detail="Issue должен быть уникален в пределах PI-цикла",
         )
     _, _, competencies_by_team = await cycle_team_context(session, cycle.id)
     team_ids = [row.team_id for row in payload.executors]
     if len(team_ids) != len(set(team_ids)):
         raise HTTPException(
             status_code=422,
-            detail="Executor team can only occur once",
+            detail="Команда-исполнитель может встречаться только один раз",
         )
     if payload.owner_team_id is not None and payload.owner_team_id not in competencies_by_team:
         raise HTTPException(
             status_code=422,
-            detail="Owner team is not part of this PI cycle",
+            detail="Команда-владелец не входит в данный PI-цикл",
         )
     normalized_executors = []
     try:
         for executor in payload.executors:
             if executor.team_id not in competencies_by_team:
-                raise ValueError(f"Executor team is not part of this PI cycle: {executor.team_id}")
+                raise ValueError(f"Команда-исполнитель не входит в данный PI-цикл: {executor.team_id}")
             normalized_executors.append(
                 (
                     executor.team_id,
                     normalized_effort(
                         executor.effort_by_competency,
                         competencies_by_team[executor.team_id],
-                        f"Initiative {payload.issue_key}",
+                        f"Инициатива {payload.issue_key}",
                     ),
                 )
             )

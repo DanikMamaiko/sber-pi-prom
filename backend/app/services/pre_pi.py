@@ -73,7 +73,7 @@ def _is_it_project(team_type: str) -> bool:
 
 def validate_status_transition(current: str, target: str) -> None:
     if target not in STATUS_TRANSITIONS.get(current, set()):
-        raise ValueError(f"Invalid initiative status transition: {current} -> {target}")
+        raise ValueError(f"Недопустимый переход статуса инициативы: {current} -> {target}")
 
 
 async def _cycle_teams(session: AsyncSession, cycle_id: uuid.UUID) -> list[PiCycleTeam]:
@@ -321,7 +321,7 @@ async def _initiative_or_error(session: AsyncSession, cycle_id: uuid.UUID, initi
     rows = await _initiatives_query(session, cycle_id)
     item = next((row for row in rows if row.id == initiative_id), None)
     if item is None:
-        raise ValueError("Initiative is not found in this PI cycle")
+        raise ValueError("Инициатива не найдена в данном PI-цикле")
     return item
 
 
@@ -344,16 +344,16 @@ async def _replace_executors(
         if source.team_id:
             team = next((value for value in teams_by_key.values() if value.id == source.team_id), None)
             if team is None:
-                raise ValueError("Executor team is not part of this PI cycle")
+                raise ValueError("Команда-исполнитель не входит в данный PI-цикл")
         else:
             team = resolve_cycle_team(teams_by_key, teams_by_name, source.tribe, source.team)
         record = existing_by_id.get(source.id) if source.id else existing_by_team.get(team.id)
         if source.id and record is None:
-            raise ValueError("Executor ID is not part of this initiative")
+            raise ValueError("ID исполнителя не относится к этой инициативе")
         if record is None:
             record = InitiativeExecutor(id=uuid.uuid4(), team_id=team.id)
         if record.id in used or any(value.team_id == team.id for value in result):
-            raise ValueError(f"Executor team is included more than once: {team.name}")
+            raise ValueError(f"Команда-исполнитель включена более одного раза: {team.name}")
         used.add(record.id)
         record.team_id = team.id
         record.effort_by_competency = normalized_effort(
@@ -372,26 +372,26 @@ async def _replace_executors(
         for attraction_position, source_attraction in enumerate(source.attractions):
             target = initiatives_by_id.get(source_attraction.target_initiative_id) if source_attraction.target_initiative_id else initiatives_by_key.get(source_attraction.issue_key.strip().casefold())
             if target is None:
-                raise ValueError("Attraction initiative is not found in this PI cycle")
+                raise ValueError("Инициатива для привлечения не найдена в данном PI-цикле")
             if target.id == item.id:
-                raise ValueError("An initiative cannot attract itself")
+                raise ValueError("Инициатива не может привлекать сама себя")
             target_team = None
             if source_attraction.target_team_id:
                 target_team = next((value for value in teams_by_key.values() if value.id == source_attraction.target_team_id), None)
             elif source_attraction.team.strip():
                 target_team = resolve_cycle_team(teams_by_key, teams_by_name, "", source_attraction.team)
             if target_team is None:
-                raise ValueError("Attraction target team is required")
+                raise ValueError("Укажите команду-цель привлечения")
             if source_attraction.sprint_index is None:
-                raise ValueError("Attraction sprint is required")
-            validate_sprint_position(cycle, source_attraction.sprint_index, None, "Attraction")
+                raise ValueError("Укажите спринт привлечения")
+            validate_sprint_position(cycle, source_attraction.sprint_index, None, "Привлечение")
             key = (target.id, target_team.id, source_attraction.sprint_index)
             if key in attraction_keys:
-                raise ValueError("Duplicate attraction request")
+                raise ValueError("Дублирующийся запрос на привлечение")
             attraction_keys.add(key)
             attraction = existing_attractions.get(source_attraction.id) if source_attraction.id else natural_attractions.get(key)
             if source_attraction.id and attraction is None:
-                raise ValueError("Attraction ID is not part of this executor")
+                raise ValueError("ID привлечения не относится к этому исполнителю")
             if attraction is None:
                 attraction = InitiativeAttraction(id=uuid.uuid4(), approval_status="pending")
             attraction.target_initiative_id = target.id
@@ -416,7 +416,7 @@ async def update_pre_pi_initiative(
     if "owner_team_id" in payload.model_fields_set:
         cycle_teams = await _cycle_teams(session, cycle.id)
         if owner_team_id is not None and owner_team_id not in {row.team_id for row in cycle_teams}:
-            raise ValueError("Owner team is not part of this PI cycle")
+            raise ValueError("Команда-владелец не входит в данный PI-цикл")
         item.owner_team_id = owner_team_id
     for field, value in changes.items():
         if isinstance(value, str):
@@ -511,7 +511,7 @@ async def move_pre_pi_initiative(
     if payload.before_id is not None:
         index = next((position for position, row in enumerate(target) if row.id == payload.before_id), -1)
         if index < 0:
-            raise ValueError("Target position is not in the selected block")
+            raise ValueError("Целевая позиция не входит в выбранный блок")
     target.insert(index, item)
     for position, row in enumerate(target):
         row.sort_order = position
@@ -569,7 +569,7 @@ async def replace_pre_pi(session: AsyncSession, cycle: PiCycle, payload: PrePiWr
     """Compatibility bulk command; the active frontend uses focused commands."""
     normalized_keys = [row.issue_key.strip().casefold() for row in payload.initiatives]
     if len(normalized_keys) != len(set(normalized_keys)):
-        raise ValueError("Issue ID must be unique inside a PI cycle")
+        raise ValueError("Issue должен быть уникален в пределах PI-цикла")
     existing = await _initiatives_query(session, cycle.id)
     by_id = {row.id: row for row in existing}
     by_key = {row.issue_key.casefold(): row for row in existing}
@@ -580,7 +580,7 @@ async def replace_pre_pi(session: AsyncSession, cycle: PiCycle, payload: PrePiWr
     for position, source in enumerate(payload.initiatives):
         item = by_id.get(source.id) if source.id else by_key.get(source.issue_key.strip().casefold())
         if source.id and item is None:
-            raise ValueError("Initiative ID is not found in this PI cycle")
+            raise ValueError("ID инициативы не найден в данном PI-цикле")
         if item is None:
             item = Initiative(id=uuid.uuid4(), cycle_id=cycle.id, issue_key=source.issue_key.strip(), title="")
             session.add(item)
@@ -600,7 +600,7 @@ async def replace_pre_pi(session: AsyncSession, cycle: PiCycle, payload: PrePiWr
         item.owner_team_id = owner.id if owner else None
         item.tags = _clean_unique(source.tags)
         item.sort_order = source.sort_order if source.sort_order is not None else position
-        validate_sprint_position(cycle, item.sprint_index, item.week_index, f"Initiative {item.issue_key}")
+        validate_sprint_position(cycle, item.sprint_index, item.week_index, f"Инициатива {item.issue_key}")
         await _replace_executors(session, cycle, item, source.executors)
     removed = [row for row in existing if row.id not in used_ids]
     if removed:

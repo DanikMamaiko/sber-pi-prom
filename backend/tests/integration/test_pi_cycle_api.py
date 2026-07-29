@@ -668,7 +668,7 @@ async def test_optimistic_locking_rejects_stale_cycle_and_backlog_updates(api_cl
     assert stale.status_code == 409
     assert stale.json()["detail"] == {
         "code": "version_conflict",
-        "message": "Aggregate was changed by another editor",
+        "message": "Данные были изменены в другом окне",
         "aggregate": "pi_cycle",
         "expected_version": editor_version,
         "current_version": editor_version + 1,

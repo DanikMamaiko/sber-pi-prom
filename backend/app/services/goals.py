@@ -50,7 +50,7 @@ IT_REQUIRED_FIELDS = (("cel", "Цель/Веха", "goal_text"),)
 
 class PrePiValidationError(ValueError):
     def __init__(self, problems: list[dict]):
-        super().__init__("Required Pre PI fields are not filled")
+        super().__init__("Заполните обязательные поля Pre PI")
         self.problems = problems
 
 
@@ -198,7 +198,7 @@ async def _resolve_team(
         .where(Tribe.name == tribe_name.strip(), Team.name == team_name.strip())
     )
     if team is None:
-        raise ValueError(f"Team is not configured for this PI cycle: {tribe_name} / {team_name}")
+        raise ValueError(f"Команда не настроена для данного PI-цикла: {tribe_name} / {team_name}")
     return team
 
 
@@ -214,7 +214,7 @@ async def _resolve_initiative(
         )
     )
     if initiative is None:
-        raise ValueError(f"Initiative is not found in this PI cycle: {issue_key}")
+        raise ValueError(f"Инициатива не найдена в данном PI-цикле: {issue_key}")
     return initiative
 
 
@@ -242,7 +242,7 @@ async def _cycle_team_by_id(
         .where(PiCycleTeam.cycle_id == cycle.id, PiCycleTeam.team_id == team_id)
     )
     if cycle_team is None:
-        raise ValueError("Goal team is not part of this PI cycle")
+        raise ValueError("Команда цели не входит в данный PI-цикл")
     return cycle_team.team
 
 
@@ -255,14 +255,14 @@ async def _cycle_tribe_by_id(
         return None
     tribe = await session.get(Tribe, tribe_id)
     if tribe is None:
-        raise ValueError("Goal tribe is not found")
+        raise ValueError("Трайб цели не найден")
     exists = await session.scalar(
         select(PiCycleTeam)
         .join(Team, PiCycleTeam.team_id == Team.id)
         .where(PiCycleTeam.cycle_id == cycle.id, Team.tribe_id == tribe_id)
     )
     if exists is None:
-        raise ValueError("Goal tribe is not part of this PI cycle")
+        raise ValueError("Трайб цели не входит в данный PI-цикл")
     return tribe
 
 
@@ -288,7 +288,7 @@ async def _cycle_initiatives_by_ids(
     by_id = {initiative.id: initiative for initiative in initiatives}
     missing = [str(initiative_id) for initiative_id in seen if initiative_id not in by_id]
     if missing:
-        raise ValueError("Goal initiative is not part of this PI cycle: " + ", ".join(missing))
+        raise ValueError("Инициатива цели не входит в данный PI-цикл: " + ", ".join(missing))
     return [by_id[initiative_id] for initiative_id in seen]
 
 
@@ -351,7 +351,7 @@ async def _get_goal(session: AsyncSession, cycle: PiCycle, goal_id: uuid.UUID) -
         .where(PiGoal.cycle_id == cycle.id, PiGoal.id == goal_id)
     )
     if goal is None:
-        raise ValueError("Goal is not found in this PI cycle")
+        raise ValueError("Цель не найдена в данном PI-цикле")
     return goal
 
 
@@ -420,7 +420,7 @@ async def update_goal_command(
         removed = old_ids - new_ids
         if removed and not payload.confirm_cascade:
             raise GoalsCascadeRequired(
-                "Goal link changes require confirmation",
+                "Изменение связей цели требует подтверждения",
                 [
                     {"id": item["id"], "issue_key": item["issue_key"], "title": item["title"]}
                     for item in _affected_initiatives(goal)
@@ -460,7 +460,7 @@ async def delete_goal_command(
     goal = await _get_goal(session, cycle, goal_id)
     affected = _affected_initiatives(goal)
     if affected and not payload.confirm_cascade:
-        raise GoalsCascadeRequired("Goal deletion requires confirmation", affected)
+        raise GoalsCascadeRequired("Удаление цели требует подтверждения", affected)
     await session.delete(goal)
     cycle.goals_initialized = True
     await session.commit()
@@ -477,7 +477,7 @@ async def reorder_goals_command(
     ).all()
     by_id = {goal.id: goal for goal in goals}
     if set(payload.goal_ids) != set(by_id):
-        raise ValueError("Goal order must include every goal in the PI cycle")
+        raise ValueError("Порядок должен включать все цели данного PI-цикла")
     for index, goal_id in enumerate(payload.goal_ids):
         by_id[goal_id].sort_order = index
     cycle.goals_initialized = True
@@ -532,9 +532,9 @@ async def remove_goal_link_command(
     goal = await _get_goal(session, cycle, goal_id)
     link = next((item for item in goal.initiative_links if item.initiative_id == initiative_id), None)
     if link is None:
-        raise ValueError("Goal initiative link is not found")
+        raise ValueError("Связь цели с инициативой не найдена")
     if not payload.confirm_cascade:
-        raise GoalsCascadeRequired("Goal link deletion requires confirmation", _affected_initiatives(goal))
+        raise GoalsCascadeRequired("Удаление связи цели требует подтверждения", _affected_initiatives(goal))
     await session.delete(link)
     remaining = [item for item in goal.initiative_links if item.initiative_id != initiative_id]
     goal.initiative_id = remaining[0].initiative_id if remaining else None
@@ -553,7 +553,7 @@ async def replace_goals(
         for row in payload.goals
     ]
     if len(normalized_keys) != len(set(normalized_keys)):
-        raise ValueError("An initiative can only occur once in a team's goals")
+        raise ValueError("Инициатива может встречаться в целях команды только один раз")
 
     existing = await _goals_query(session, cycle.id)
     by_id = {row.id: row for row in existing}
@@ -574,13 +574,13 @@ async def replace_goals(
         )
         if cycle_team is None:
             raise ValueError(
-                f"Team is not part of this PI cycle: {source.tribe} / {source.team}"
+                f"Команда не входит в данный PI-цикл: {source.tribe} / {source.team}"
             )
         initiative = await _resolve_initiative(session, cycle.id, source.issue_key)
         goal = by_id.get(source.id) if source.id else None
         pair_match = by_pair.get((team.id, initiative.id))
         if goal is not None and pair_match is not None and goal.id != pair_match.id:
-            raise ValueError(f"Goal row already exists: {source.team} / {source.issue_key}")
+            raise ValueError(f"Запись цели уже существует: {source.team} / {source.issue_key}")
         if goal is None:
             goal = pair_match
         if goal is None:
@@ -594,7 +594,7 @@ async def replace_goals(
             )
             session.add(goal)
         if goal.id in used_ids:
-            raise ValueError(f"Goal row is included more than once: {source.issue_key}")
+            raise ValueError(f"Запись цели включена более одного раза: {source.issue_key}")
         used_ids.add(goal.id)
 
         goal.team_id = team.id
@@ -641,7 +641,7 @@ async def submit_pre_pi(
         for row in payload.teams
     ]
     if len(team_keys) != len(set(team_keys)):
-        raise ValueError("A team can only be submitted once")
+        raise ValueError("Команда может быть отправлена только один раз")
 
     selected: list[tuple[Team, str]] = []
     for source in payload.teams:
@@ -653,7 +653,7 @@ async def submit_pre_pi(
             )
         )
         if cycle_team is None:
-            raise ValueError(f"Team is not part of this PI cycle: {source.name}")
+            raise ValueError(f"Команда не входит в данный PI-цикл: {source.name}")
         selected.append((team, cycle_team.team_type or team.team_type))
 
     initiatives = list(
@@ -760,7 +760,7 @@ async def submit_pre_pi(
                     cycle,
                     attraction.sprint_index,
                     None,
-                    f"Attraction {referenced.issue_key}",
+                    f"Привлечение {referenced.issue_key}",
                 )
                 if referenced.owner_team_id is None:
                     referenced.owner_team_id = fallback_owner

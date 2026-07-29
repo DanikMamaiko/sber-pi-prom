@@ -13,7 +13,7 @@ BACKLOG_STATE_ID = 1
 def _conflict_detail(aggregate: str, expected: int, current: int) -> dict[str, object]:
     return {
         "code": "version_conflict",
-        "message": "Aggregate was changed by another editor",
+        "message": "Данные были изменены в другом окне",
         "aggregate": aggregate,
         "expected_version": expected,
         "current_version": current,
@@ -29,7 +29,7 @@ async def lock_cycle(
         select(PiCycle).where(PiCycle.id == cycle_id).with_for_update()
     )
     if cycle is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PI cycle not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PI-цикл не найден")
     if expected_version is not None and cycle.version != expected_version:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

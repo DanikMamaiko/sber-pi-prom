@@ -50,7 +50,7 @@ async function cycleRead(id,path){
 function cycleMutation(id,path,options={}){
   const run=aggregateMutationChain.then(async()=>{
     const expected=cycleVersions[id];
-    if(!Number.isInteger(expected))throw new Error(`PI cycle version is not loaded: ${id}`);
+    if(!Number.isInteger(expected))throw new Error(`Версия PI-цикла не загружена: ${id}`);
     const result=await cycleApi(path,{
       method:options.method||'PUT',
       body:{...(options.body||{}),expected_version:expected},
@@ -97,7 +97,7 @@ function reportCycleSyncError(error){
   const now=Date.now();
   if(now-lastCycleSyncErrorAt>5000 && typeof toast==='function'){
     lastCycleSyncErrorAt=now;
-    toast('Не удалось сохранить PI-цикл в backend. Проверьте доступность API.',{type:'warn',timeout:5000});
+    toast('Не удалось сохранить PI-цикл на сервере. Проверьте доступность API.',{type:'warn',timeout:5000});
   }
 }
 async function persistCycle(id,force=false){
@@ -157,7 +157,7 @@ async function loadCyclesFromApi(){
   state.cycles=loaded;
 }
 function applyPiDataView(id,view){
-  if(!view||!view.cycle) throw new Error('Backend returned an invalid PI data view');
+  if(!view||!view.cycle) throw new Error('Сервер вернул некорректные данные PI-цикла');
   piDataViews[id]=view;
   cycleBackendIds[id]=view.cycle.id;
   cycleVersions[id]=view.cycle.version;
@@ -182,7 +182,7 @@ function applyPiDataView(id,view){
 }
 async function loadPiDataView(id){
   const backendId=cycleBackendIds[id];
-  if(!backendId) throw new Error(`PI cycle is not loaded: ${id}`);
+  if(!backendId) throw new Error(`PI-цикл не загружен: ${id}`);
   return applyPiDataView(id,await cycleApi(`/pi-cycles/${backendId}/data`));
 }
 async function loadPiDataViews(){
@@ -191,10 +191,10 @@ async function loadPiDataViews(){
 function piDataCommand(path,options={}){
   const id=currentCycleId();
   const backendId=id&&cycleBackendIds[id];
-  if(!id||!piDataViews[id]||!backendId) return Promise.reject(new Error('PI data is not loaded'));
+  if(!id||!piDataViews[id]||!backendId) return Promise.reject(new Error('Данные PI-цикла не загружены'));
   const run=aggregateMutationChain.then(async()=>{
     const view=piDataViews[id];
-    if(!view) throw new Error('PI data is not loaded');
+    if(!view) throw new Error('Данные PI-цикла не загружены');
     const result=await cycleApi(`/pi-cycles/${backendId}${path}`,{
       method:options.method||'POST',
       body:{...(options.body||{}),expected_version:view.cycle.version},
@@ -301,7 +301,7 @@ function reportPrePiSyncError(error){
   const now=Date.now();
   if(now-lastPrePiSyncErrorAt>5000 && typeof toast==='function'){
     lastPrePiSyncErrorAt=now;
-    toast('Не удалось сохранить Pre PI Planning в backend.',{type:'warn',timeout:5000});
+    toast('Не удалось сохранить Pre PI Planning на сервере.',{type:'warn',timeout:5000});
   }
 }
 async function prePiCommand(path,method='POST',body={}){
@@ -385,12 +385,12 @@ function reportGoalsSyncError(error){
   const now=Date.now();
   if(now-lastGoalsSyncErrorAt>5000 && typeof toast==='function'){
     lastGoalsSyncErrorAt=now;
-    toast('Не удалось сохранить вкладку «Цели» в backend.',{type:'warn',timeout:5000});
+    toast('Не удалось сохранить вкладку «Цели» на сервере.',{type:'warn',timeout:5000});
   }
 }
 async function goalsBoardCommand(path,method='POST',body={}){
   const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
-  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  if(!id||!backendId)throw new Error('PI-цикл не загружен');
   const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/goals-board${path}`,{method,body});
   applyGoals(state.cycles[id],aggregate,id);
   activateCycle(id);
@@ -524,7 +524,7 @@ function reportTeamBoardsSyncError(error){
   const now=Date.now();
   if(now-lastTeamBoardsSyncErrorAt>5000&&typeof toast==='function'){
     lastTeamBoardsSyncErrorAt=now;
-    toast('Не удалось сохранить командные доски в backend.',{type:'warn',timeout:5000});
+    toast('Не удалось сохранить командные доски на сервере.',{type:'warn',timeout:5000});
   }
 }
 async function persistTeamBoardsCycle(id,force=false){
@@ -570,7 +570,7 @@ async function loadTeamBoardsCycles(){
 }
 async function teamBoardCommand(path,method='PATCH',body={}){
   const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
-  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  if(!id||!backendId)throw new Error('PI-цикл не загружен');
   const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/team-boards${path}`,{method,body});
   applyTeamBoards(state.cycles[id],aggregate);
   persistedTeamBoardHashes[id]=teamBoardsPayloadHash(id,state.cycles[id]);
@@ -698,7 +698,7 @@ function reportCapacitySyncError(error){
   const now=Date.now();
   if(now-lastCapacitySyncErrorAt>5000&&typeof toast==='function'){
     lastCapacitySyncErrorAt=now;
-    toast('Не удалось сохранить ёмкость команды в backend.',{type:'warn',timeout:5000});
+    toast('Не удалось сохранить ёмкость команды на сервере.',{type:'warn',timeout:5000});
   }
 }
 async function persistCapacityCycle(id,force=false){
@@ -742,7 +742,7 @@ async function loadCapacityCycles(){
 }
 async function capacityMemberCommand(path,method='PATCH',body={}){
   const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
-  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  if(!id||!backendId)throw new Error('PI-цикл не загружен');
   const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/capacity${path}`,{method,body});
   applyCapacity(state.cycles[id],aggregate,id);
   persistedCapacityHashes[id]=capacityPayloadHash(id,state.cycles[id]);
@@ -776,7 +776,7 @@ function reportProgramBoardSyncError(error){
   const now=Date.now();
   if(now-lastProgramBoardSyncErrorAt>5000&&typeof toast==='function'){
     lastProgramBoardSyncErrorAt=now;
-    toast('Не удалось выполнить команду Program Board в backend.',{type:'warn',timeout:5000});
+    toast('Не удалось выполнить команду Program Board на сервере.',{type:'warn',timeout:5000});
   }
 }
 async function loadProgramBoardCycles(){
@@ -790,14 +790,14 @@ async function loadProgramBoardCycles(){
 }
 async function reloadProgramBoard(id=currentCycleId()){
   const backendId=id&&cycleBackendIds[id];
-  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  if(!id||!backendId)throw new Error('PI-цикл не загружен');
   const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/program-board`);
   applyProgramBoard(state.cycles[id],aggregate,id);
   return aggregate;
 }
 async function programBoardCommand(path,method='PATCH',body={}){
   const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
-  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  if(!id||!backendId)throw new Error('PI-цикл не загружен');
   const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/program-board${path}`,{method,body});
   applyProgramBoard(state.cycles[id],aggregate,id);
   return aggregate;
@@ -879,12 +879,12 @@ function reportRisksSyncError(error){
   const now=Date.now();
   if(now-lastRisksSyncErrorAt>5000&&typeof toast==='function'){
     lastRisksSyncErrorAt=now;
-    toast('Не удалось сохранить риски в backend.',{type:'warn',timeout:5000});
+    toast('Не удалось сохранить риски на сервере.',{type:'warn',timeout:5000});
   }
 }
 async function risksBoardCommand(path,method='POST',body={}){
   const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
-  if(!id||!backendId)throw new Error('PI cycle is not loaded');
+  if(!id||!backendId)throw new Error('PI-цикл не загружен');
   const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/risks-board${path}`,{method,body});
   applyRisks(state.cycles[id],aggregate,id);
   activateCycle(id);

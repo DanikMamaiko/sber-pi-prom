@@ -32,8 +32,8 @@ function goalRowsForTeam(team){
 function viewGoals(){
   const cycleId=currentCycleId();
   let html=`<div class="card"><h2>Цели ${cycleBadge()}</h2>`;
-  if(!goalsApiReady&&!goalsBoards[cycleId])return html+`<div class="muted">Загрузка целей с backend...</div></div>`;
-  if(!cycleBackendIds[cycleId])return html+`<div class="muted">Backend недоступен или PI-цикл не выбран.</div></div>`;
+  if(!goalsApiReady&&!goalsBoards[cycleId])return html+`<div class="muted">Загрузка целей с сервера...</div></div>`;
+  if(!cycleBackendIds[cycleId])return html+`<div class="muted">Сервер недоступен или PI-цикл не выбран.</div></div>`;
 
   const tribes=goalTribeOptions();
   if(!tribes.length){
@@ -222,13 +222,13 @@ function pbConflictsHTML(board){
 function viewPB(){
   const board=programBoardViews[currentCycleId()];
   if(!programBoardApiReady||!board){
-    return `<div class="card"><h2>Program Board ${cycleBadge()}</h2><div class="muted">Загрузка Program Board с backend...</div></div>`;
+    return `<div class="card"><h2>Program Board ${cycleBadge()}</h2><div class="muted">Загрузка Program Board с сервера...</div></div>`;
   }
   const sprints=board.sprints||[];
   const tribes=board.tribes||[];
   const activeFilter=pbFiltersActive();
   let html=`<div class="card"><div class="flex-between"><h2>Program Board ${cycleBadge()}</h2>
-    <div class="hint">Сформировано backend из активного PI, Pre PI Planning и «Командных досок». Перетаскивайте стикеры между спринтами — позиция сохраняется атомарно и сразу видна на командной доске.</div></div>`;
+    <div class="hint">Сформировано на сервере из активного PI, Pre PI Planning и «Командных досок». Перетаскивайте стикеры между спринтами — позиция сохраняется атомарно и сразу видна на командной доске.</div></div>`;
   html+=pbConflictsHTML(board);
   html+=pbFiltersHTML();
   html+=`<div class="pb-wrap${activeFilter?' lane-focus':''}"><table class="pb"><thead><tr>

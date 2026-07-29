@@ -409,7 +409,7 @@ function viewCapacity(t){
       <td><input data-ci="${i}" data-ck="fio" value="${esc(p.fio)}"></td>
       <td><select data-ci="${i}" data-ck="role">${memberRoles.map(r=>`<option ${p.role===r?'selected':''}>${r}</option>`).join('')}</select></td>
       <td><input type="number" min="0" max="1" step="0.05" style="width:70px" data-ci="${i}" data-ck="rate" value="${esc(p.rate??1)}"></td>
-      <td class="auto">${planned===null?'—':round1(planned)+' дн.'} <span style="font-size:10px">(backend: раб. дни PI × ставка)</span></td>
+      <td class="auto">${planned===null?'—':round1(planned)+' дн.'} <span style="font-size:10px">(сервер: раб. дни PI × ставка)</span></td>
       <td><button class="vac-chip${vacLabel?'':' empty'}" data-vacedit="${i}">
         <span class="vac-cal">📅</span>${vacLabel||'Указать даты'}
       </button></td>

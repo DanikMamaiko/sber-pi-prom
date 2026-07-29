@@ -94,19 +94,19 @@ async def replace_cycle_setup(
         for item in payload.teams
     ]
     if len(team_keys) != len(set(team_keys)):
-        raise ValueError("A team can only occur once in a PI cycle")
+        raise ValueError("Команда может входить в PI-цикл только один раз")
     for item in payload.teams:
         if not item.tribe.strip() or not item.name.strip():
-            raise ValueError("Tribe and team names are required")
+            raise ValueError("Укажите трайб и название команды")
         if item.team_type not in {"Agile", "ИТ-проект"}:
-            raise ValueError(f"Unsupported team type: {item.team_type}")
+            raise ValueError(f"Неподдерживаемый тип команды: {item.team_type}")
         competencies = _unique_non_empty([value.upper() for value in item.competencies])
         if not competencies:
-            raise ValueError(f"At least one competency is required for team: {item.name}")
+            raise ValueError(f"Для команды требуется хотя бы одна компетенция: {item.name}")
         if any(len(code) > 32 for code in competencies):
-            raise ValueError(f"Competency code is too long for team: {item.name}")
+            raise ValueError(f"Код компетенции слишком длинный для команды: {item.name}")
     if any(not event.name.strip() for event in payload.pirs):
-        raise ValueError("PIR name cannot be empty")
+        raise ValueError("Название ПИР не может быть пустым")
 
     cycle.start_date = payload.start_date
     cycle.sprint_count = payload.sprint_count

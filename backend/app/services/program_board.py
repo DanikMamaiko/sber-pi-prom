@@ -357,7 +357,7 @@ async def replace_program_board(
 ) -> ProgramBoardRead:
     client_uids = [row.client_uid.strip().casefold() for row in payload.connections]
     if len(client_uids) != len(set(client_uids)):
-        raise ValueError("Connection UID must be unique inside a PI cycle")
+        raise ValueError("UID связи должен быть уникален в пределах PI-цикла")
 
     initiatives_by_ref, _, work_items_by_ref, _ = await _endpoint_maps(session, cycle.id)
 
@@ -366,11 +366,11 @@ async def replace_program_board(
         if kind == "c":
             initiative = initiatives_by_ref.get(normalized_ref)
             if initiative is None:
-                raise ValueError(f"Initiative endpoint is not found in this PI cycle: {ref}")
+                raise ValueError(f"Инициатива как точка связи не найдена в данном PI-цикле: {ref}")
             return "initiative", initiative.id
         item = work_items_by_ref.get(normalized_ref)
         if item is None:
-            raise ValueError(f"Work item endpoint is not found in this PI cycle: {ref}")
+            raise ValueError(f"Задача как точка связи не найдена в данном PI-цикле: {ref}")
         return "work_item", item.id
 
     resolved = []
@@ -379,10 +379,10 @@ async def replace_program_board(
         source_kind, source_id = resolve(source.source.kind, source.source.ref)
         target_kind, target_id = resolve(source.target.kind, source.target.ref)
         if source_kind == target_kind and source_id == target_id:
-            raise ValueError("A connection cannot point to itself")
+            raise ValueError("Связь не может указывать сама на себя")
         edge_key = (source_kind, source_id, target_kind, target_id)
         if edge_key in edge_keys:
-            raise ValueError("The same directed connection can only occur once")
+            raise ValueError("Одинаковая направленная связь может существовать только один раз")
         edge_keys.add(edge_key)
         resolved.append((source, source_kind, source_id, target_kind, target_id))
 
@@ -403,10 +403,10 @@ async def replace_program_board(
         uid_match = existing_by_uid.get(uid.casefold())
         if source.id is not None and connection is None:
             raise ValueError(
-                f"Connection ID is not found in this PI cycle: {source.id}"
+                f"ID связи не найден в данном PI-цикле: {source.id}"
             )
         if connection is not None and uid_match is not None and connection.id != uid_match.id:
-            raise ValueError(f"Connection ID does not match client UID: {uid}")
+            raise ValueError(f"ID связи не соответствует клиентскому UID: {uid}")
         if connection is None:
             connection = uid_match
         if connection is None:
@@ -477,9 +477,9 @@ async def _initiative_with_executors(
         .where(Initiative.cycle_id == cycle.id, Initiative.id == initiative_id)
     )
     if initiative is None:
-        raise ValueError("Initiative is not found in this PI cycle")
+        raise ValueError("Инициатива не найдена в данном PI-цикле")
     if not initiative.on_board:
-        raise ValueError("Initiative is not published to the team boards")
+        raise ValueError("Инициатива не опубликована на командные доски")
     return initiative
 
 
@@ -499,10 +499,10 @@ async def move_program_board_initiative(
     payload: ProgramBoardMoveCommand,
 ) -> ProgramBoardRead:
     initiative = await _initiative_with_executors(session, cycle, initiative_id)
-    validate_sprint_position(cycle, payload.sprint_index, None, f"Initiative {initiative.issue_key}")
+    validate_sprint_position(cycle, payload.sprint_index, None, f"Инициатива {initiative.issue_key}")
     primary_team_id = _primary_team_id(initiative)
     if primary_team_id is None:
-        raise ValueError("Initiative has no executor team")
+        raise ValueError("У инициативы нет команды-исполнителя")
     active_team = await session.scalar(
         select(PiCycleTeam.id).where(
             PiCycleTeam.cycle_id == cycle.id,
@@ -510,7 +510,7 @@ async def move_program_board_initiative(
         )
     )
     if active_team is None:
-        raise ValueError("Initiative executor is not part of this PI cycle")
+        raise ValueError("Команда-исполнитель инициативы не входит в данный PI-цикл")
 
     lane_candidates = list(
         (
@@ -556,7 +556,7 @@ async def _resolve_endpoint_id(
             )
         )
         if initiative is None:
-            raise ValueError("Initiative endpoint is not on the active PI boards")
+            raise ValueError("Инициатива как точка связи отсутствует на активных досках PI")
         return "initiative", initiative.id
     item = await session.scalar(
         select(WorkItem)
@@ -568,7 +568,7 @@ async def _resolve_endpoint_id(
         )
     )
     if item is None:
-        raise ValueError("Work item endpoint is not on the active PI boards")
+        raise ValueError("Задача как точка связи отсутствует на активных досках PI")
     return "work_item", item.id
 
 
@@ -583,7 +583,7 @@ async def _assert_edge_available(
     current_id: uuid.UUID | None = None,
 ) -> None:
     if source_kind == target_kind and source_id == target_id:
-        raise ValueError("A connection cannot point to itself")
+        raise ValueError("Связь не может указывать сама на себя")
     statement = select(BoardConnection.id).where(
         BoardConnection.cycle_id == cycle.id,
         BoardConnection.source_kind == source_kind,
@@ -594,7 +594,7 @@ async def _assert_edge_available(
     if current_id is not None:
         statement = statement.where(BoardConnection.id != current_id)
     if await session.scalar(statement):
-        raise ValueError("The same directed connection can only occur once")
+        raise ValueError("Одинаковая направленная связь может существовать только один раз")
 
 
 async def create_program_board_connection(
@@ -643,7 +643,7 @@ async def _connection_for_command(
         )
     )
     if connection is None:
-        raise ValueError("Connection is not found in this PI cycle")
+        raise ValueError("Связь не найдена в данном PI-цикле")
     return connection
 
 

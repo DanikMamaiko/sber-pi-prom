@@ -31,7 +31,7 @@ def _range_dates(value: dict) -> tuple[date, date]:
     start = date.fromisoformat(str(value["start"]))
     end = date.fromisoformat(str(value["end"]))
     if end < start:
-        raise ValueError("Unavailable range end cannot be earlier than start")
+        raise ValueError("Конец периода недоступности не может быть раньше начала")
     return start, end
 
 
@@ -316,14 +316,14 @@ async def replace_capacity(
         for row in payload.teams
     ]
     if len(team_keys) != len(set(team_keys)):
-        raise ValueError("A team can only occur once in the capacity payload")
+        raise ValueError("Команда может встречаться в составе ёмкости только один раз")
     member_uids = [
         member.client_uid.strip().casefold()
         for team in payload.teams
         for member in team.members
     ]
     if len(member_uids) != len(set(member_uids)):
-        raise ValueError("Capacity member UID must be unique inside a PI cycle")
+        raise ValueError("UID сотрудника должен быть уникален в пределах PI-цикла")
 
     cycle_teams = await _cycle_teams(session, cycle.id)
     teams_by_key = {
@@ -344,7 +344,7 @@ async def replace_capacity(
         team = teams_by_key.get(key)
         if team is None:
             raise ValueError(
-                f"Team is not included in this PI cycle: {source_team.tribe} / {source_team.team}"
+                f"Команда не входит в данный PI-цикл: {source_team.tribe} / {source_team.team}"
             )
         for position, source in enumerate(source_team.members):
             uid = source.client_uid.strip()
@@ -352,10 +352,10 @@ async def replace_capacity(
             uid_match = existing_by_uid.get(uid.casefold())
             if source.id is not None and member is None:
                 raise ValueError(
-                    f"Capacity member ID is not found in this PI cycle: {source.id}"
+                    f"Сотрудник не найден в данном PI-цикле: {source.id}"
                 )
             if member is not None and uid_match is not None and member.id != uid_match.id:
-                raise ValueError(f"Capacity member ID does not match client UID: {uid}")
+                raise ValueError(f"ID сотрудника не соответствует клиентскому UID: {uid}")
             if member is None:
                 member = uid_match
             if member is None:
@@ -376,7 +376,7 @@ async def replace_capacity(
             competency = source.competency.strip().upper()
             if competency not in competencies_by_team.get(team.id, set()):
                 raise ValueError(
-                    f"Capacity member {uid}: competency is not configured for team "
+                    f"Сотрудник {uid}: компетенция не настроена для команды "
                     f"{team.name}: {competency}"
                 )
             member.team_id = team.id
@@ -418,7 +418,7 @@ async def _capacity_team_by_name(
         None,
     )
     if cycle_team is None:
-        raise ValueError(f"Team is not included in this PI cycle: {tribe} / {team}")
+        raise ValueError(f"Команда не входит в данный PI-цикл: {tribe} / {team}")
     return cycle_team
 
 
@@ -450,12 +450,12 @@ async def create_capacity_member(
             PiCycleCapacityMember.client_uid.ilike(uid),
         )
     ):
-        raise ValueError(f"Capacity member UID must be unique inside a PI cycle: {uid}")
+        raise ValueError(f"UID сотрудника должен быть уникален в пределах PI-цикла: {uid}")
     competency = payload.competency.strip().upper()
     allowed = {row.code.strip().upper() for row in cycle_team.competencies}
     if competency not in allowed:
         raise ValueError(
-            f"Capacity member {uid}: competency is not configured for team "
+            f"Сотрудник {uid}: компетенция не настроена для команды "
             f"{cycle_team.team.name}: {competency}"
         )
     values = _capacity_values(
@@ -489,20 +489,20 @@ async def update_capacity_member(
         )
     )
     if member is None:
-        raise ValueError("Capacity member is not found in this PI cycle")
+        raise ValueError("Сотрудник не найден в данном PI-цикле")
     cycle_team = next(
         (row for row in await _cycle_teams(session, cycle.id) if row.team_id == member.team_id),
         None,
     )
     if cycle_team is None:
-        raise ValueError("Capacity member team is not included in this PI cycle")
+        raise ValueError("Команда сотрудника не входит в данный PI-цикл")
     values = _capacity_values(payload, exclude={"expected_version"})
     if "competency" in values:
         competency = str(values["competency"]).strip().upper()
         allowed = {row.code.strip().upper() for row in cycle_team.competencies}
         if competency not in allowed:
             raise ValueError(
-                f"Capacity member {member.client_uid}: competency is not configured for team "
+                f"Сотрудник {member.client_uid}: компетенция не настроена для команды "
                 f"{cycle_team.team.name}: {competency}"
             )
         values["competency"] = competency
@@ -526,7 +526,7 @@ async def delete_capacity_member(
         )
     )
     if member is None:
-        raise ValueError("Capacity member is not found in this PI cycle")
+        raise ValueError("Сотрудник не найден в данном PI-цикле")
     assigned = list(
         (
             await session.scalars(
@@ -543,7 +543,7 @@ async def delete_capacity_member(
         from app.services.team_boards import TeamBoardCascadeRequired
 
         raise TeamBoardCascadeRequired(
-            "Deleting the capacity member clears assignments on work items",
+            "Удаление сотрудника очистит назначения на задачи",
             [
                 {"kind": "work_item", "id": str(row.id), "label": row.client_uid}
                 for row in assigned

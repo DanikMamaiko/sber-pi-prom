@@ -183,7 +183,7 @@ async def _validate_tribe(
         .where(PiCycleTeam.cycle_id == cycle.id, Team.tribe_id == tribe_id)
     )
     if exists is None:
-        raise ValueError("Risk tribe is not part of this PI cycle")
+        raise ValueError("Трайб риска не входит в данный PI-цикл")
     return tribe_id
 
 
@@ -200,7 +200,7 @@ async def _validate_team(
         .where(PiCycleTeam.cycle_id == cycle.id, PiCycleTeam.team_id == team_id)
     )
     if cycle_team is None:
-        raise ValueError("Risk team is not part of this PI cycle")
+        raise ValueError("Команда риска не входит в данный PI-цикл")
     return cycle_team.team
 
 
@@ -215,7 +215,7 @@ async def _validate_initiative(
         select(Initiative).where(Initiative.cycle_id == cycle.id, Initiative.id == initiative_id)
     )
     if exists is None:
-        raise ValueError("Risk initiative is not part of this PI cycle")
+        raise ValueError("Инициатива риска не входит в данный PI-цикл")
     return initiative_id
 
 
@@ -232,7 +232,7 @@ async def _apply_risk_link(
 ) -> None:
     if scope == "general":
         if tribe_id or team_id or initiative_id:
-            raise ValueError("A general risk cannot reference a tribe, team or initiative")
+            raise ValueError("Общий риск не может ссылаться на трайб, команду или инициативу")
         risk.scope = "general"
         risk.tribe_id = None
         risk.team_id = None
@@ -242,14 +242,14 @@ async def _apply_risk_link(
         risk.scope = "tribe"
         risk.tribe_id = await _validate_tribe(session, cycle, tribe_id)
         if risk.tribe_id is None:
-            raise ValueError("A tribe risk must reference a tribe")
+            raise ValueError("Риск трайба должен ссылаться на трайб")
         risk.team_id = None
         risk.initiative_id = None
         risk.is_shared = False
     elif scope == "team":
         team = await _validate_team(session, cycle, team_id)
         if team is None:
-            raise ValueError("A team risk must reference a team")
+            raise ValueError("Командный риск должен ссылаться на команду")
         risk.scope = "team"
         risk.tribe_id = team.tribe_id
         risk.team_id = team.id
@@ -261,10 +261,10 @@ async def _apply_risk_link(
         risk.team_id = None
         risk.initiative_id = await _validate_initiative(session, cycle, initiative_id)
         if risk.initiative_id is None:
-            raise ValueError("An initiative risk must reference an initiative")
+            raise ValueError("Риск инициативы должен ссылаться на инициативу")
         risk.is_shared = False
     else:
-        raise ValueError("Unknown risk scope")
+        raise ValueError("Неизвестная область риска")
 
 
 async def _get_risk(session: AsyncSession, cycle: PiCycle, risk_id: uuid.UUID) -> Risk:
@@ -272,7 +272,7 @@ async def _get_risk(session: AsyncSession, cycle: PiCycle, risk_id: uuid.UUID) -
         select(Risk).where(Risk.cycle_id == cycle.id, Risk.id == risk_id)
     )
     if risk is None:
-        raise ValueError("Risk is not found in this PI cycle")
+        raise ValueError("Риск не найден в данном PI-цикле")
     return risk
 
 
@@ -379,7 +379,7 @@ async def reorder_risks_command(
     risks = (await session.scalars(select(Risk).where(Risk.cycle_id == cycle.id))).all()
     by_id = {risk.id: risk for risk in risks}
     if set(payload.risk_ids) != set(by_id):
-        raise ValueError("Risk order must include every risk in the PI cycle")
+        raise ValueError("Порядок должен включать все риски данного PI-цикла")
     for index, risk_id in enumerate(payload.risk_ids):
         by_id[risk_id].sort_order = index
     cycle.risks_initialized = True
@@ -442,7 +442,7 @@ async def replace_risks(
 ) -> RisksRead:
     client_uids = [row.client_uid.strip().casefold() for row in payload.risks]
     if len(client_uids) != len(set(client_uids)):
-        raise ValueError("Risk UID must be unique inside a PI cycle")
+        raise ValueError("UID риска должен быть уникален в пределах PI-цикла")
 
     teams = await _cycle_team_map(session, cycle.id)
     resolved: list[tuple] = []
@@ -450,17 +450,17 @@ async def replace_risks(
         team = None
         if source.scope == "general":
             if source.team is not None:
-                raise ValueError("A general risk cannot reference a team")
+                raise ValueError("Общий риск не может ссылаться на команду")
             if source.is_shared:
-                raise ValueError("Only a team risk can be shared")
+                raise ValueError("Общим может быть только командный риск")
         elif source.scope == "team":
             if source.team is None:
-                raise ValueError("A team risk must reference a team")
+                raise ValueError("Командный риск должен ссылаться на команду")
             key = (source.team.tribe.strip().casefold(), source.team.name.strip().casefold())
             team = teams.get(key)
             if team is None:
                 raise ValueError(
-                    "Risk team is not found in this PI cycle: "
+                    "Команда риска не найдена в данном PI-цикле: "
                     f"{source.team.tribe} / {source.team.name}"
                 )
         elif source.scope == "tribe":
@@ -483,9 +483,9 @@ async def replace_risks(
         risk = existing_by_id.get(source.id) if source.id else None
         uid_match = existing_by_uid.get(uid.casefold())
         if source.id is not None and risk is None:
-            raise ValueError(f"Risk ID is not found in this PI cycle: {source.id}")
+            raise ValueError(f"Риск не найден в данном PI-цикле: {source.id}")
         if risk is not None and uid_match is not None and risk.id != uid_match.id:
-            raise ValueError(f"Risk ID does not match client UID: {uid}")
+            raise ValueError(f"ID риска не соответствует клиентскому UID: {uid}")
         if risk is None:
             risk = uid_match
         if risk is None:
