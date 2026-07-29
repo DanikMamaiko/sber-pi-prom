@@ -52,7 +52,7 @@ async def _run_goal_command(session: AsyncSession, operation):
         )
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/goals-board", response_model=GoalsRead)
@@ -75,7 +75,7 @@ async def put_goals_board(
         return await replace_goals(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.post(
@@ -196,7 +196,7 @@ async def create_goal(
         )
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="Goal team is not part of this PI cycle",
         )
     if payload.initiative_id is not None and not await session.scalar(
@@ -206,7 +206,7 @@ async def create_goal(
         )
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="Goal initiative is not part of this PI cycle",
         )
     goal = PiGoal(cycle_id=cycle_id, **payload.model_dump())

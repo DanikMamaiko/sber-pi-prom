@@ -44,3 +44,26 @@ def test_team_boards_do_not_persist_business_data_in_browser_or_use_demo_rosters
     assert "return t && Array.isArray(t.comps) ? t.comps.slice() : []" in utils
     assert "sessionStorage.setItem('piPlanning'" in state
     assert "const out={storageVersion:STORAGE_VERSION,ui:state.ui,budgets:state.budgets}" in state
+
+
+def test_team_board_forms_close_only_after_successful_commands():
+    boards = source("team-boards.js")
+    create_start = boards.index("$('#m_save').onclick=async()=>{")
+    create_handler = boards[create_start : boards.index("/* ---- Модальное окно Истории", create_start)]
+    save_start = boards.index("$('#w_save').onclick=async()=>{")
+    save_handler = boards[save_start : boards.index("/* ---- Геометрия краёв", save_start)]
+
+    assert create_handler.index("const created=await runBoardCommand") < create_handler.index("root.innerHTML='';")
+    assert "if(!created)return;" in create_handler
+    assert "if(await runBoardCommand" in save_handler
+    assert save_handler.index("if(await runBoardCommand") < save_handler.index("root.innerHTML='';")
+
+
+def test_capacity_member_is_created_from_validated_modal():
+    boards = source("team-boards.js")
+
+    assert "function openCapacityMemberModal(t)" in boards
+    assert "if(!fullName)" in boards
+    assert "full_name:fullName" in boards
+    assert "full_name:''" not in boards
+    assert "addCap.onclick=()=>openCapacityMemberModal(t)" in boards

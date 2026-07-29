@@ -230,7 +230,8 @@ async function sendBacklogToPrePI(tribe){
       tribe,target_year:+y,target_quarter:q,
     });
     const sent=backlogRows().filter(row=>!before.has(row.id)&&(row.sent_to||[]).includes(target)).length;
-    await loadPrePiCycles().catch(()=>{});
+    await loadPrePiCycles();
+    render();
     toast(`Отправлено на Pre PI (${target}): ${sent} ${sent===1?'инициатива':'инициатив'}`,{type:'success',title:'Отправлено на Pre PI Planning'});
   }catch(error){
     if(error&&error.status===409)return;

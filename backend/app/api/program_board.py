@@ -46,7 +46,7 @@ async def put_program_board(
         return await replace_program_board(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 async def _run_command(session: AsyncSession, operation):
@@ -55,7 +55,7 @@ async def _run_command(session: AsyncSession, operation):
     except ValueError as error:
         await session.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+            status_code=422, detail=str(error)
         )
 
 

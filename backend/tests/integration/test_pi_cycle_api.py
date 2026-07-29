@@ -1786,6 +1786,20 @@ async def test_team_board_focused_commands_capacity_assignments_and_cascades(api
         201,
     )
     story = board["initiatives"][0]["stories"][0]
+    invalid_assignee = await api_client.raw.post(
+        f"{path}/team-boards/initiatives/{initiative['id']}/work-items",
+        json={
+            "expected_version": board["version"],
+            "client_uid": "team-work-invalid",
+            "assignee_name": "Неизвестный сотрудник",
+            "competency": "SA",
+            "effort": 1,
+            "sprint_index": 0,
+            "week_index": 1,
+        },
+    )
+    assert invalid_assignee.status_code == 422
+
     board = assert_ok(
         await api_client.raw.post(
             f"{path}/team-boards/initiatives/{initiative['id']}/work-items",

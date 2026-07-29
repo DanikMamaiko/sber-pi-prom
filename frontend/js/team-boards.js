@@ -430,6 +430,39 @@ function viewCapacity(t){
   </div>`;
   return html;
 }
+function openCapacityMemberModal(t){
+  const roles=teamComps(t.name);
+  if(!roles.length){
+    toast('У команды не настроены компетенции в активном PI-цикле',{type:'warn'});
+    return;
+  }
+  const root=$('#modalRoot');
+  root.innerHTML=`<div class="overlay"><div class="modal">
+    <h3>Новый сотрудник · ${esc(t.name)}</h3>
+    <label><span>ФИО</span><input id="cm_fio" maxlength="220" autocomplete="off" autofocus></label>
+    <label><span>Роль</span><select id="cm_role">${roles.map(role=>`<option>${esc(role)}</option>`).join('')}</select></label>
+    <label><span>Ставка</span><input id="cm_rate" type="number" min="0" max="1" step="0.05" value="1"></label>
+    <div class="vac-err" id="cm_err"></div>
+    <div class="modal-actions">
+      <button id="cm_cancel">Отмена</button>
+      <button class="primary" id="cm_save">Добавить</button>
+    </div>
+  </div></div>`;
+  $('#cm_cancel').onclick=()=>root.innerHTML='';
+  $('#cm_save').onclick=async()=>{
+    const fullName=$('#cm_fio').value.trim();
+    const rate=Number($('#cm_rate').value);
+    if(!fullName){ $('#cm_err').textContent='Укажите ФИО сотрудника.'; return; }
+    if(!Number.isFinite(rate)||rate<0||rate>1){ $('#cm_err').textContent='Ставка должна быть от 0 до 1.'; return; }
+    const created=await runCapacityCommand('/members','POST',{
+      tribe:t.tribe,team:t.name,client_uid:uid(),full_name:fullName,competency:$('#cm_role').value,
+      rate,vacation_ranges:[],extra_unavailable_ranges:[],ceremony_percent:0,
+      risk_percent:0,efficiency:null,sort_order:(state.capacity[teamKey(t.tribe,t.name)]||[]).length,
+    });
+    if(created)root.innerHTML='';
+  };
+  $('#cm_fio').focus();
+}
 // Модальное окно выбора одного или нескольких периодов дат.
 function openDateRangesModal(t,i,opts){
   const key=teamKey(t.tribe,t.name);
@@ -471,9 +504,10 @@ function openDateRangesModal(t,i,opts){
   $('#vm_clear').onclick=async()=>{
     if(!person._backendId)return;
     const apiField=field==='vacation'?'vacation_ranges':'extra_unavailable_ranges';
-    close();
-    if(await runCapacityCommand(`/members/${person._backendId}`,'PATCH',{[apiField]:[]}))
+    if(await runCapacityCommand(`/members/${person._backendId}`,'PATCH',{[apiField]:[]})){
+      close();
       toast(`${opts.title} очищен`,{type:'info'});
+    }
   };
   $('#vm_save').onclick=async()=>{
     const out=[];
@@ -487,9 +521,10 @@ function openDateRangesModal(t,i,opts){
     if(!person._backendId)return;
     const apiField=field==='vacation'?'vacation_ranges':'extra_unavailable_ranges';
     const ranges=draft.filter(r=>r.start).map(r=>({start:r.start,end:r.end||r.start}));
-    close();
-    if(await runCapacityCommand(`/members/${person._backendId}`,'PATCH',{[apiField]:ranges}))
+    if(await runCapacityCommand(`/members/${person._backendId}`,'PATCH',{[apiField]:ranges})){
+      close();
       toast(`${opts.title}: ${formatRangesShort(out.join('; '))||'не указан'}`,{type:'success',title:`${opts.title} сохранён`});
+    }
   };
 }
 function openVacationModal(t,i){
@@ -562,15 +597,7 @@ function bindTeams(){
   if(!t) return;
 
   // --- Ёмкость ---
-  const addCap=$('#addCap');if(addCap)addCap.onclick=async()=>{
-    const role=teamComps(t.name)[0];
-    if(!role){toast('У команды не настроены компетенции в активном PI-цикле',{type:'warn'});return;}
-    await runCapacityCommand('/members','POST',{
-      tribe:t.tribe,team:t.name,client_uid:uid(),full_name:'',competency:role,
-      rate:1,vacation_ranges:[],extra_unavailable_ranges:[],ceremony_percent:0,
-      risk_percent:0,efficiency:null,sort_order:(state.capacity[teamKey(t.tribe,t.name)]||[]).length,
-    });
-  };
+  const addCap=$('#addCap');if(addCap)addCap.onclick=()=>openCapacityMemberModal(t);
   document.querySelectorAll('[data-ci]').forEach(el=>el.onchange=async()=>{
     const key=teamKey(t.tribe,t.name);
     const member=state.capacity[key][+el.dataset.ci];if(!member||!member._backendId)return;
@@ -848,10 +875,10 @@ function openStickerModal(issueId){
   });
   const tagPick=root.querySelector('.tag-picker');
   if(tagPick) tagPick.onclick=e=>e.stopPropagation();
-  $('#sm_close').onclick=async()=>{ const body=sync();root.innerHTML='';await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body); };
-  const ap=$('#sm_approve'); if(ap)ap.onclick=async()=>{ const body={...sync(),agreed:true};root.innerHTML='';await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body,'Привлечение согласовано'); };
-  $('#sm_decomp').onclick=async()=>{ const body=sync();root.innerHTML='';if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openSubtaskModal(iss.id); };
-  $('#sm_story').onclick=async()=>{ const body=sync();root.innerHTML='';if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openStoryModal(iss.id, null); };
+  $('#sm_close').onclick=async()=>{ const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))root.innerHTML=''; };
+  const ap=$('#sm_approve'); if(ap)ap.onclick=async()=>{ const body={...sync(),agreed:true};if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body,'Привлечение согласовано'))root.innerHTML=''; };
+  $('#sm_decomp').onclick=async()=>{ const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openSubtaskModal(iss.id); };
+  $('#sm_story').onclick=async()=>{ const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openStoryModal(iss.id, null); };
 }
 
 /* ---- Модальное окно подзадачи ---- */
@@ -885,13 +912,13 @@ function openSubtaskModal(issueId,storyUid){
     const u=uid();
     const white={uid:u,fio:$('#m_fio').value.trim(),role:$('#m_role').value,cap:+$('#m_cap').value||0,sprint:+$('#m_sprint').value,week:+$('#m_week').value};
     if(storyUid) white.storyUid=storyUid; // принадлежит Истории
-    root.innerHTML='';
     const created=await runBoardCommand(`/initiatives/${iss._backendId}/work-items`,'POST',{
       client_uid:white.uid,story_client_uid:white.storyUid||null,assignee_name:white.fio,
       competency:white.role,effort:white.cap,sprint_index:white.sprint,week_index:white.week,
       sort_order:(iss.subtasks||[]).length,board_sort_order:(iss.subtasks||[]).length,
     });
     if(!created)return;
+    root.innerHTML='';
     // дефолтная стрелка декомпозиции только для белых напрямую под задачей
     if(!storyUid){
       const refreshed=(state.issues||[]).find(row=>row._backendId===iss._backendId);
@@ -950,35 +977,33 @@ function openStoryModal(issueId,storyUid){
   $('#sy_save').onclick=async()=>{
     const f=readForm();
     if(!f.id){ toast('Укажите ID истории',{type:'warn'}); return; }
-    root.innerHTML='';
     if(isNew){
-      await runBoardCommand(`/initiatives/${iss._backendId}/stories`,'POST',{
+      if(await runBoardCommand(`/initiatives/${iss._backendId}/stories`,'POST',{
         client_uid:uid(),external_key:f.id,title:f.name,effort_by_competency:f.comps,
         sprint_index:f.sprint,week_index:f.week,sort_order:(iss.stories||[]).length,
         board_sort_order:(iss.stories||[]).length,
-      });
+      }))root.innerHTML='';
     }else{
-      await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'PATCH',{
+      if(await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'PATCH',{
         external_key:f.id,title:f.name,effort_by_competency:f.comps,
         sprint_index:f.sprint,week_index:f.week,board_sort_order:sy.ord||0,
-      });
+      }))root.innerHTML='';
     }
   };
   const del=$('#sy_del'); if(del)del.onclick=async()=>{
-    root.innerHTML='';
     try{
       await teamBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'DELETE',{confirm_cascade:false});
-      save(false);render();
+      root.innerHTML='';save(false);render();
     }catch(error){
       if(error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required'&&
           window.confirm('Удалить историю вместе с её подзадачами и связями?')){
-        await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'DELETE',{confirm_cascade:true});
+        if(await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'DELETE',{confirm_cascade:true}))root.innerHTML='';
       }else reportTeamBoardsSyncError(error);
     }
   };
   const dec=$('#sy_decomp'); if(dec)dec.onclick=async()=>{
     // сохранить правки Истории, затем открыть добавление белой подзадачи в неё
-    const f=readForm();root.innerHTML='';
+    const f=readForm();
     if(await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'PATCH',{
       external_key:f.id,title:f.name,effort_by_competency:f.comps,
       sprint_index:f.sprint,week_index:f.week,board_sort_order:sy.ord||0,
@@ -1012,14 +1037,13 @@ function openWhiteModal(issueId,si){
   </div></div>`;
   $('#w_cancel').onclick=()=>root.innerHTML='';
   $('#w_del').onclick=async()=>{
-    root.innerHTML='';
     try{
       await teamBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'DELETE',{confirm_cascade:false});
-      save(false);render();
+      root.innerHTML='';save(false);render();
     }catch(error){
       if(error.status===409&&error.detail&&error.detail.code==='cascade_confirmation_required'&&
           window.confirm('Удалить подзадачу вместе с её связями?')){
-        await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'DELETE',{confirm_cascade:true});
+        if(await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'DELETE',{confirm_cascade:true}))root.innerHTML='';
       }else reportTeamBoardsSyncError(error);
     }
   };
@@ -1029,8 +1053,7 @@ function openWhiteModal(issueId,si){
       effort:+$('#w_cap').value||0,sprint_index:+$('#w_sprint').value,
       week_index:+$('#w_week').value,board_sort_order:st.ord||0,
     };
-    root.innerHTML='';
-    await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'PATCH',body);
+    if(await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'PATCH',body))root.innerHTML='';
   };
 }
 

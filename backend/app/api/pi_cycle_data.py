@@ -78,7 +78,7 @@ async def _run_pi_data_command(session: AsyncSession, operation):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.detail)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.get("/pi-cycles", response_model=list[PiCycleRead])
@@ -157,7 +157,7 @@ async def put_pi_cycle_setup(
     try:
         return await replace_cycle_setup(session, cycle, payload)
     except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/data", response_model=PiCycleDataRead)
@@ -396,7 +396,7 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
     tribe = await session.get(Tribe, payload.tribe_id)
     if tribe is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="Tribe not found",
         )
     existing = await session.scalar(
@@ -411,7 +411,7 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
             competencies.append(code)
     if not competencies:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="At least one team competency is required",
         )
     team = Team(
@@ -433,7 +433,7 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
 async def create_team_member(payload: TeamMemberCreate, session: AsyncSession = Depends(get_session)):
     if await session.get(Team, payload.team_id) is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="Team not found",
         )
     member = TeamMember(**payload.model_dump())

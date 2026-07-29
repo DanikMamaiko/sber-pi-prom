@@ -283,7 +283,7 @@ function teamOptionsHTML(teamOptions,selected,withTribe=false){
 function execBlockHTML(iss, ex, ei, kind, teamOptions){
   const total=iss.executors.length;
   const idAttr = kind==='bk' ? iss._uid : iss.id;
-  const avail = kind==='bk' ? backlogTeamCompetencies(ex.team) : teamCompsFor(ex.team);
+  const avail = kind==='bk' ? backlogTeamCompetencies(ex.team) : teamComps(ex.team);
   const selAttr = kind==='bk' ? `data-bk-exec="${esc(idAttr)}"` : `data-pi-exec="${esc(idAttr)}"`;
   const delAttr = kind==='bk' ? `data-bk-execdel="${esc(idAttr)}"` : `data-pi-execdel="${esc(idAttr)}"`;
   const addAttr = kind==='bk' ? `data-bk-execadd="${esc(idAttr)}"` : `data-pi-execadd="${esc(idAttr)}"`;

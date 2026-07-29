@@ -46,7 +46,7 @@ async def _run_backlog_command(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.get("/backlog-board", response_model=BacklogBoardRead)

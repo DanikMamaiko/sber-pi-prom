@@ -26,3 +26,11 @@ def test_program_board_business_data_is_not_saved_in_browser_storage():
     assert "localStorage" not in state_source
     save_source = state_source[state_source.index("function save("):state_source.index("function save(") + 700]
     assert "state.cycles" not in save_source
+
+
+def test_program_board_renders_unscheduled_initiatives():
+    board = source("program-board.js")
+
+    assert "pb-unscheduled-head\">Не назначено" in board
+    assert "card.sprint_index===null||card.sprint_index===undefined" in board
+    assert 'class="pb-cell pb-unscheduled"' in board

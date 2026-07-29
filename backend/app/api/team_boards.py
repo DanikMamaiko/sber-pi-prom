@@ -58,7 +58,7 @@ async def _run_board_command(session: AsyncSession, operation):
         )
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/team-boards", response_model=TeamBoardsRead)
@@ -81,7 +81,7 @@ async def put_team_boards(
         return await replace_team_boards(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.patch(
@@ -224,7 +224,7 @@ async def put_capacity(
         return await replace_capacity(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.post(

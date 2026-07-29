@@ -53,7 +53,7 @@ async def put_pre_pi(
         return await replace_pre_pi(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.patch(
@@ -71,7 +71,7 @@ async def patch_pre_pi_initiative(
         return await update_pre_pi_initiative(session, cycle, initiative_id, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.post(
@@ -99,7 +99,7 @@ async def post_pre_pi_move(
         )
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.delete(
@@ -127,7 +127,7 @@ async def remove_pre_pi_initiative(
         )
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.post("/pi-cycles/{cycle_id}/pre-pi/submit", response_model=PrePiSubmitRead)
@@ -142,7 +142,7 @@ async def post_pre_pi_submit(
     except PrePiValidationError as error:
         await session.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail={
                 "message": "Заполните обязательные поля Pre PI",
                 "problems": error.problems,
@@ -150,7 +150,7 @@ async def post_pre_pi_submit(
         )
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.post(
@@ -171,19 +171,19 @@ async def create_initiative(
         )
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="Issue ID must be unique inside a PI cycle",
         )
     _, _, competencies_by_team = await cycle_team_context(session, cycle.id)
     team_ids = [row.team_id for row in payload.executors]
     if len(team_ids) != len(set(team_ids)):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="Executor team can only occur once",
         )
     if payload.owner_team_id is not None and payload.owner_team_id not in competencies_by_team:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="Owner team is not part of this PI cycle",
         )
     normalized_executors = []
@@ -202,7 +202,7 @@ async def create_initiative(
                 )
             )
     except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
     data = payload.model_dump(exclude={"executors"})
     data["issue_key"] = payload.issue_key.strip()
     initiative = Initiative(cycle_id=cycle_id, **data)

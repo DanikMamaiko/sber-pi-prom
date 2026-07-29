@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TeamBoardStoryWrite(BaseModel):
@@ -126,7 +126,7 @@ class CapacityDateRange(BaseModel):
 class CapacityMemberWrite(BaseModel):
     id: uuid.UUID | None = None
     client_uid: str = Field(min_length=1, max_length=80)
-    full_name: str = Field(default="", max_length=220)
+    full_name: str = Field(min_length=1, max_length=220)
     competency: str = Field(min_length=1, max_length=32)
     rate: float = Field(default=1, ge=0, le=1)
     vacation_ranges: list[CapacityDateRange] = Field(default_factory=list)
@@ -135,6 +135,14 @@ class CapacityMemberWrite(BaseModel):
     risk_percent: float = Field(default=0, ge=0, le=100)
     efficiency: float | None = Field(default=None, ge=0, le=1)
     sort_order: int = Field(default=0, ge=0)
+
+    @field_validator("full_name")
+    @classmethod
+    def validate_full_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("full_name must not be blank")
+        return value
 
 
 class CapacitySprintRead(BaseModel):
@@ -199,7 +207,7 @@ class CapacityMemberCreate(TeamBoardCommand, CapacityMemberWrite):
 
 
 class CapacityMemberUpdate(TeamBoardCommand):
-    full_name: str | None = Field(default=None, max_length=220)
+    full_name: str | None = Field(default=None, min_length=1, max_length=220)
     competency: str | None = Field(default=None, min_length=1, max_length=32)
     rate: float | None = Field(default=None, ge=0, le=1)
     vacation_ranges: list[CapacityDateRange] | None = None
@@ -208,5 +216,15 @@ class CapacityMemberUpdate(TeamBoardCommand):
     risk_percent: float | None = Field(default=None, ge=0, le=100)
     efficiency: float | None = Field(default=None, ge=0, le=1)
     sort_order: int | None = Field(default=None, ge=0)
+
+    @field_validator("full_name")
+    @classmethod
+    def validate_full_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("full_name must not be blank")
+        return value
 
 

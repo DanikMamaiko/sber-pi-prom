@@ -44,3 +44,10 @@ def test_pre_pi_uses_only_backend_entities_for_executors_and_attractions():
     assert "target_initiative_id" in section
     assert "target_team_id" in section
     assert "— выберите инициативу —" in section
+
+
+def test_pre_pi_executor_editor_uses_active_cycle_competencies():
+    source = frontend_source()
+
+    assert "kind==='bk' ? backlogTeamCompetencies(ex.team) : teamComps(ex.team)" in source
+    assert "kind==='bk' ? backlogTeamCompetencies(ex.team) : teamCompsFor(ex.team)" not in source

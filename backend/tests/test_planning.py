@@ -8,6 +8,8 @@ from app.schemas.pi_cycle import (
     BacklogBoardWrite,
     BacklogDispatchWrite,
     CapacityWrite,
+    CapacityMemberCreate,
+    CapacityMemberUpdate,
     GoalsWrite,
     PiCycleCreate,
     PiCycleSetupWrite,
@@ -254,6 +256,30 @@ def test_capacity_accepts_cycle_members_and_date_ranges():
 
     assert payload.teams[0].members[0].vacation_ranges[0].start == date(2026, 7, 6)
     assert payload.teams[0].members[0].efficiency == 0.9
+
+
+def test_capacity_member_rejects_blank_names_and_trims_valid_names():
+    with pytest.raises(ValidationError):
+        CapacityMemberCreate(
+            expected_version=0,
+            tribe="Розничный бизнес",
+            team="СБОЛ",
+            client_uid="person-blank",
+            full_name="   ",
+            competency="SA",
+        )
+    with pytest.raises(ValidationError):
+        CapacityMemberUpdate(expected_version=0, full_name="   ")
+
+    member = CapacityMemberCreate(
+        expected_version=0,
+        tribe="Розничный бизнес",
+        team="СБОЛ",
+        client_uid="person-trimmed",
+        full_name="  Иванов Иван  ",
+        competency="SA",
+    )
+    assert member.full_name == "Иванов Иван"
 
 
 def test_capacity_formula_matches_prototype():

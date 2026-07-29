@@ -68,3 +68,13 @@ def test_backlog_keeps_the_prototype_structure_and_empty_states():
         "bk-table",
     ):
         assert marker in view
+
+
+def test_backlog_dispatch_refreshes_and_renders_pre_pi_data():
+    source = _source()
+    start = source.index("async function sendBacklogToPrePI(")
+    handler = source[start : source.index("function budgetIssueKey", start)]
+
+    assert "await loadPrePiCycles();" in handler
+    assert handler.index("await loadPrePiCycles();") < handler.index("render();")
+    assert "loadPrePiCycles().catch(()=>{})" not in handler

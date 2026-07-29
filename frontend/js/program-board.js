@@ -232,7 +232,7 @@ function viewPB(){
   html+=pbConflictsHTML(board);
   html+=pbFiltersHTML();
   html+=`<div class="pb-wrap${activeFilter?' lane-focus':''}"><table class="pb"><thead><tr>
-    <th>Трайб</th><th>Команда</th>`+
+    <th>Трайб</th><th>Команда</th><th class="sp pb-unscheduled-head">Не назначено</th>`+
     sprints.map(s=>`<th class="sp"><div class="sp-head"><div class="num">Спринт ${s.number}</div>
       <div class="dates">${pbDate(s.start_date)}–${pbDate(s.end_date)}</div>
       ${(s.events||[]).map(event=>`<div class="pir">${esc(event.name)} ${pbDate(event.event_date)}</div>`).join('')}</div></th>`).join('')+
@@ -243,6 +243,11 @@ function viewPB(){
       html+=`<tr>`;
       if(ti===0) html+=`<td class="tribe-cell" rowspan="${teams.length}">${esc(tribe.name)}</td>`;
       html+=`<td class="team-cell">${esc(t.name)}</td>`;
+      const unscheduled=(board.cards||[]).filter(card=>
+        card.primary_team_id===t.id&&(card.sprint_index===null||card.sprint_index===undefined)
+      );
+      html+=`<td class="pb-cell pb-unscheduled" data-pb-team="${esc(t.id)}">`+
+        unscheduled.map(card=>pbCardHTML(card,activeFilter&&issueMatchesPBFilters(card)?'lane-on':'')).join('')+`</td>`;
       sprints.forEach(s=>{
         const cards=(board.cards||[]).filter(card=>card.primary_team_id===t.id&&card.sprint_index===s.index);
         html+=`<td class="pb-cell dropzone" data-pb-sprint="${s.index}" data-pb-team="${esc(t.id)}">`+

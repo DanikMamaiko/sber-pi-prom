@@ -41,7 +41,7 @@ async def _run_risk_command(session: AsyncSession, operation):
         return await operation
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.get("/pi-cycles/{cycle_id}/risks", response_model=list[RiskRead])
@@ -73,7 +73,7 @@ async def put_risks_board(
         return await replace_risks(session, cycle, payload)
     except ValueError as error:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.post(
@@ -197,7 +197,7 @@ async def create_risk(
     await lock_cycle(session, cycle_id)
     if payload.scope == "general" and (payload.team_id is not None or payload.is_shared):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=422,
             detail="A general risk cannot reference a team or be shared",
         )
     if payload.scope == "team":
@@ -208,7 +208,7 @@ async def create_risk(
             )
         ):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=422,
                 detail="Risk team is not part of this PI cycle",
             )
     risk_id = uuid.uuid4()
