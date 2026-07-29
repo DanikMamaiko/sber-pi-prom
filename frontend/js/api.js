@@ -1,5 +1,9 @@
 async function cycleApi(path,options={}){
-  const init={method:options.method||'GET',headers:{'Content-Type':'application/json'}};
+  const init={
+    method:options.method||'GET',
+    headers:{'Content-Type':'application/json','Cache-Control':'no-store','Pragma':'no-cache'},
+    cache:'no-store',
+  };
   if(options.body!==undefined) init.body=JSON.stringify(options.body);
   const response=await fetch(API_BASE+path,init);
   if(!response.ok){

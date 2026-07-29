@@ -34,6 +34,9 @@ docker compose up --build
 - API: http://localhost:8000
 - OpenAPI: http://localhost:8000/docs
 
+UI обслуживается frontend-контейнером nginx на `:8080`. Backend на `:8000`
+отдаёт только API/OpenAPI и не должен использоваться как точка входа в интерфейс.
+
 ## Тесты
 
 Быстрые unit/schema-тесты:

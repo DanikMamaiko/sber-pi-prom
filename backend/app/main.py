@@ -1,8 +1,5 @@
-from pathlib import Path
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import get_settings
@@ -21,6 +18,16 @@ app.add_middleware(
 
 app.include_router(api_router)
 
-frontend_path = Path(__file__).resolve().parents[2] / "frontend"
-if frontend_path.exists():
-    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+
+@app.middleware("http")
+async def _cache_control_headers(request: Request, call_next):
+    """Запретить браузеру кэшировать ответы API.
+
+    Статику отдаёт nginx, а данные API всегда должны запрашиваться заново.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
