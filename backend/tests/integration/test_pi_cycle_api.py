@@ -317,6 +317,7 @@ async def test_full_pi_cycle_flow_persists_and_deletes_dependencies(api_client):
     )
     assert team_boards["initiatives"][0]["stories"][0]["client_uid"] == "story-e2e-1"
     assert team_boards["initiatives"][0]["work_items"][0]["client_uid"] == "work-e2e-1"
+    work_item = team_boards["initiatives"][0]["work_items"][0]
 
     program_board = assert_ok(
         await api_client.put(
@@ -334,6 +335,63 @@ async def test_full_pi_cycle_flow_persists_and_deletes_dependencies(api_client):
         )
     )
     assert program_board["connections"][0]["bend"] == {"dx": 25.0, "dy": -10.0}
+    assert [row["number"] for row in program_board["sprints"]] == [1, 2, 3]
+    assert program_board["sprints"][1]["events"][0]["name"] == "ПИР E2E"
+    assert program_board["cards"][0]["id"] == initiative["id"]
+    assert program_board["cards"][0]["primary_team"] == "Команда Альфа"
+
+    moved = assert_ok(
+        await api_client.raw.patch(
+            f"/pi-cycles/{cycle_id}/program-board/initiatives/{initiative['id']}/position",
+            json={
+                "expected_version": program_board["version"],
+                "sprint_index": 1,
+                "sort_order": 0,
+            },
+        )
+    )
+    assert moved["cards"][0]["sprint_index"] == 1
+    linked_team_board = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/team-boards"))
+    assert linked_team_board["initiatives"][0]["sprint_index"] == 1
+    stale_move = await api_client.raw.patch(
+        f"/pi-cycles/{cycle_id}/program-board/initiatives/{initiative['id']}/position",
+        json={
+            "expected_version": program_board["version"],
+            "sprint_index": 2,
+            "sort_order": 0,
+        },
+    )
+    assert stale_move.status_code == 409
+    assert stale_move.json()["detail"]["code"] == "version_conflict"
+
+    connection_id = moved["connections"][0]["id"]
+    straight = assert_ok(
+        await api_client.raw.patch(
+            f"/pi-cycles/{cycle_id}/program-board/connections/{connection_id}",
+            json={"expected_version": moved["version"], "clear_bend": True},
+        )
+    )
+    assert straight["connections"][0]["bend"] is None
+    deleted_edge = assert_ok(
+        await api_client.raw.request(
+            "DELETE",
+            f"/pi-cycles/{cycle_id}/program-board/connections/{connection_id}",
+            json={"expected_version": straight["version"]},
+        )
+    )
+    assert deleted_edge["connections"] == []
+    program_board = assert_ok(
+        await api_client.raw.post(
+            f"/pi-cycles/{cycle_id}/program-board/connections",
+            json={
+                "expected_version": deleted_edge["version"],
+                "source": {"kind": "work_item", "id": work_item["id"]},
+                "target": {"kind": "initiative", "id": initiative["id"]},
+            },
+        ),
+        201,
+    )
+    assert program_board["connections"][0]["client_uid"] == program_board["connections"][0]["id"]
 
     risks = assert_ok(
         await api_client.put(

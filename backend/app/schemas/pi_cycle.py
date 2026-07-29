@@ -55,7 +55,10 @@ from app.schemas.team_boards import (  # noqa: F401
 
 from app.schemas.program_board import (  # noqa: F401
     ProgramBoardEndpoint, ProgramBoardBend, ProgramBoardConnectionWrite, ProgramBoardConnectionRead,
-    ProgramBoardWrite, ProgramBoardRead,
+    ProgramBoardWrite, ProgramBoardRead, ProgramBoardEvent, ProgramBoardSprint,
+    ProgramBoardTribe, ProgramBoardTeam, ProgramBoardExecutor, ProgramBoardCard,
+    ProgramBoardConflict, ProgramBoardCommand, ProgramBoardMoveCommand,
+    ProgramBoardEndpointId, ProgramBoardConnectionCreate, ProgramBoardConnectionUpdate,
 )
 
 from app.schemas.goals import (  # noqa: F401

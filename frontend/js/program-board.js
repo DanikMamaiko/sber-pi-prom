@@ -167,26 +167,17 @@ async function moveGoal(fromId,targetId,after){
 }
 
 function pbTeamFilterOptions(){
-  const seen=[];
-  const add=name=>{
-    const v=String(name||'').trim();
-    if(v && !seen.includes(v)) seen.push(v);
-  };
-  (state.pi.teams||[]).forEach(t=>add(t.name));
-  (state.issues||[]).forEach(i=>{
-    add(i.owner);
-    issueExecTeams(i).forEach(add);
-  });
-  return seen;
+  const board=programBoardViews[currentCycleId()];
+  return board?(board.teams||[]).map(team=>team.name):[];
 }
 function pbFiltersActive(){
   return !!(state.ui.pbOwnerFilter || state.ui.pbExecutorFilter);
 }
-function issueMatchesPBFilters(iss){
+function issueMatchesPBFilters(card){
   const owner=state.ui.pbOwnerFilter;
   const executor=state.ui.pbExecutorFilter;
-  if(owner && iss.owner!==owner) return false;
-  if(executor && !issueExecTeams(iss).includes(executor)) return false;
+  if(owner && card.owner_team!==owner) return false;
+  if(executor && !(card.executors||[]).some(row=>row.team===executor)) return false;
   return true;
 }
 function pbFiltersHTML(){
@@ -204,29 +195,58 @@ function pbFiltersHTML(){
     ${active?`<button class="ghost" id="pbFilterClear">Сбросить</button>`:''}
   </div>`;
 }
+function pbDate(value){
+  const parts=String(value||'').split('-');
+  return parts.length===3?`${parts[2]}.${parts[1]}.${parts[0]}`:'—';
+}
+function pbCardHTML(card,extraClass=''){
+  const primary=(card.executors||[]).find(row=>row.team_id===card.primary_team_id)||card.executors[0];
+  const effort=primary?Object.entries(primary.effort_by_competency||{}).map(([key,value])=>`${key} ${round1(value)}`).join(' · '):'—';
+  const tags=(card.tags||[]).map(tag=>`<span class="sttag">#${esc(tag)}</span>`).join('');
+  const conflict=(card.conflict_codes||[]).length?`<span class="pb-conflict-mark" title="Есть предупреждение">!</span>`:'';
+  return `<div class="sticker ${esc(card.visual_state)}${extraClass?' '+extraClass:''}" draggable="true"
+    data-drag="pb-initiative" data-id="${esc(card.id)}" data-pb-card="${esc(card.id)}" data-issue-key="${esc(card.issue_key)}">
+    <div class="stid">${esc(card.issue_key)}${conflict}</div>
+    ${tags?`<div class="sttags">${tags}</div>`:''}
+    <div class="stteam"><span>Владелец: <b>${esc(card.owner_team)||'—'}</b></span><span>Исполнитель: <b>${esc((card.executors||[]).map(row=>row.team).join(', '))||'—'}</b></span></div>
+    <div class="eff">${esc(effort)}</div>
+  </div>`;
+}
+function pbConflictsHTML(board){
+  const conflicts=board.conflicts||[];
+  if(!conflicts.length)return '';
+  return `<div class="pb-conflicts"><b>Предупреждения плана: ${conflicts.length}</b>`+
+    conflicts.slice(0,6).map(row=>`<span class="${row.severity==='error'?'error':''}">${esc(row.message)}</span>`).join('')+
+    (conflicts.length>6?`<span>Ещё ${conflicts.length-6}</span>`:'')+`</div>`;
+}
 function viewPB(){
-  const sprints=computeSprints();
-  const tribes=allTribes();
+  const board=programBoardViews[currentCycleId()];
+  if(!programBoardApiReady||!board){
+    return `<div class="card"><h2>Program Board ${cycleBadge()}</h2><div class="muted">Загрузка Program Board с backend...</div></div>`;
+  }
+  const sprints=board.sprints||[];
+  const tribes=board.tribes||[];
   const activeFilter=pbFiltersActive();
   let html=`<div class="card"><div class="flex-between"><h2>Program Board ${cycleBadge()}</h2>
-    <div class="hint">Сформировано автоматически из «Данных PI-цикла». Перетаскивайте стикеры между спринтами — позиция синхронизируется с командной доской.</div></div>`;
+    <div class="hint">Сформировано backend из активного PI, Pre PI Planning и «Командных досок». Перетаскивайте стикеры между спринтами — позиция сохраняется атомарно и сразу видна на командной доске.</div></div>`;
+  html+=pbConflictsHTML(board);
   html+=pbFiltersHTML();
   html+=`<div class="pb-wrap${activeFilter?' lane-focus':''}"><table class="pb"><thead><tr>
     <th>Трайб</th><th>Команда</th>`+
-    sprints.map(s=>`<th class="sp"><div class="sp-head"><div class="num">Спринт ${s.index+1}</div>
-      <div class="dates">${fmt(s.start)}–${fmt(s.end)}</div>
-      ${s.pirs.map(p=>`<div class="pir">${esc(p.name)} ${fmt(parseISO(p.date))}</div>`).join('')}</div></th>`).join('')+
+    sprints.map(s=>`<th class="sp"><div class="sp-head"><div class="num">Спринт ${s.number}</div>
+      <div class="dates">${pbDate(s.start_date)}–${pbDate(s.end_date)}</div>
+      ${(s.events||[]).map(event=>`<div class="pir">${esc(event.name)} ${pbDate(event.event_date)}</div>`).join('')}</div></th>`).join('')+
     `</tr></thead><tbody>`;
   tribes.forEach(tribe=>{
-    const teams=state.pi.teams.filter(t=>t.tribe===tribe);
+    const teams=(board.teams||[]).filter(team=>team.tribe_id===tribe.id);
     teams.forEach((t,ti)=>{
       html+=`<tr>`;
-      if(ti===0) html+=`<td class="tribe-cell" rowspan="${teams.length}">${esc(tribe)}</td>`;
+      if(ti===0) html+=`<td class="tribe-cell" rowspan="${teams.length}">${esc(tribe.name)}</td>`;
       html+=`<td class="team-cell">${esc(t.name)}</td>`;
       sprints.forEach(s=>{
-        const cellIssues=state.issues.filter(i=>issuePrimaryTeam(i)===t.name && i.onBoard && i.sprint===s.index);
-        html+=`<td class="pb-cell dropzone" data-pb-sprint="${s.index}">`+
-          cellIssues.map(i=>stickerHTML(i,false,false,true,activeFilter && issueMatchesPBFilters(i)?'lane-on':'')).join('')+`</td>`;
+        const cards=(board.cards||[]).filter(card=>card.primary_team_id===t.id&&card.sprint_index===s.index);
+        html+=`<td class="pb-cell dropzone" data-pb-sprint="${s.index}" data-pb-team="${esc(t.id)}">`+
+          cards.map(card=>pbCardHTML(card,activeFilter&&issueMatchesPBFilters(card)?'lane-on':'')).join('')+`</td>`;
       });
       html+=`</tr>`;
     });
@@ -343,18 +363,20 @@ function bindPB(){
     state.ui.pbExecutorFilter=null;
     save(); render();
   };
-  document.querySelectorAll('.pb-cell .sticker').forEach(el=>el.onclick=(e)=>{
+  document.querySelectorAll('.pb-cell .sticker').forEach(el=>el.onclick=e=>{
     if(e.target.closest('.x')) return;
-    openStickerModal(el.dataset.id);
+    openStickerModal(el.dataset.issueKey);
   });
-  enableDrag(document, (payload,sprint)=>{
-    if(payload.kind==='issue'){
-      const iss=state.issues.find(i=>i.id===payload.id);
-      if(iss){
-        const ns = sprint==='backlog'?null:+sprint;
-        if(iss.agreed && ns!==iss.sprint) iss.agreed=false; // перенос согласованного → сброс согласования
-        setBoardPeriod(iss,ns,null); save(); render();
-      }
+  enableDrag(document,async(payload,sprint)=>{
+    if(payload.kind!=='pb-initiative')return;
+    try{
+      await programBoardMoveInitiative(payload.id,+sprint,999999);
+      render();
+      toast('Инициатива перемещена. Командная доска обновлена.',{type:'success'});
+    }catch(error){
+      reportProgramBoardSyncError(error);
+      if(error&&error.status===409)await reloadProgramBoard().catch(()=>{});
+      render();
     }
   }, '[data-pb-sprint]', el=>el.dataset.pbSprint);
 }

@@ -152,6 +152,10 @@
   .tribe-block .tribe-name{display:inline-block;min-width:240px;text-align:center;padding:8px 14px;background:var(--panel2);border:1px solid var(--border2);border-radius:8px;font-weight:600;margin-bottom:6px}
   /* ----- Program Board ----- */
   .pb-wrap{overflow:auto;max-height:calc(100vh - 220px);border:1px solid var(--border);border-radius:var(--radius-s);box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+  .pb-conflicts{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:10px 0;padding:8px 10px;border:1px solid #7d6737;border-radius:8px;background:rgba(164,125,42,.12);font-size:12px;color:#e2c47e}
+  .pb-conflicts span{padding:3px 7px;border-radius:999px;background:rgba(164,125,42,.13)}
+  .pb-conflicts span.error{color:#f0a3ae;background:rgba(180,66,82,.14)}
+  .pb-conflict-mark{display:inline-grid;place-items:center;width:15px;height:15px;margin-left:5px;border-radius:50%;background:#f0b84d;color:#272018;font-size:10px;font-weight:800;vertical-align:1px}
   table.pb{border-collapse:separate;border-spacing:0;min-width:1100px}
   table.pb th,table.pb td{border-right:1px solid var(--border);border-bottom:1px solid var(--border);vertical-align:top}
   table.pb th{position:sticky;top:0;z-index:3;background:var(--panel2)}

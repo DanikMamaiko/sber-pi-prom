@@ -97,6 +97,5 @@ document.addEventListener('visibilitychange',()=>{
   if(state.ui.mode!=='pi' || state.ui.tab==='data') return;
   if(document.visibilityState==='hidden' && teamBoardsApiReady) flushTeamBoardsSync().catch(()=>{});
   if(document.visibilityState==='hidden' && capacityApiReady) flushCapacitySync().catch(()=>{});
-  if(document.visibilityState==='hidden' && programBoardApiReady) flushProgramBoardSync().catch(()=>{});
 });
 boot();

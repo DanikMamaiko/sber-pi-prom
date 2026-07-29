@@ -141,6 +141,19 @@ Backend также возвращает расчёт по каждой неде�
 
 - `GET /pi-cycles/{cycle_id}/program-board`
 - `PUT /pi-cycles/{cycle_id}/program-board`
+- `PATCH /pi-cycles/{cycle_id}/program-board/initiatives/{initiative_id}/position`
+- `POST /pi-cycles/{cycle_id}/program-board/connections`
+- `PATCH /pi-cycles/{cycle_id}/program-board/connections/{connection_id}`
+- `DELETE /pi-cycles/{cycle_id}/program-board/connections/{connection_id}`
+
+GET возвращает готовую серверную проекцию: спринты с датами и ПИРами, трайбы и команды
+выбранного PI, опубликованные карточки, связи и предупреждения конфликтов. Frontend не
+вычисляет состав строк/спринтов и не восстанавливает его из browser storage.
+
+Focused-команды требуют `expected_version`, блокируют общую версию PI и атомарно возвращают
+новую каноническую проекцию. Перемещение меняет `Initiative.sprint_index` и нормализованный
+порядок дорожки; та же позиция сразу читается `/team-boards`. Изменение спринта согласованного
+привлечения сбрасывает согласование.
 
 `program-board` хранит направленные связи между инициативами (`kind: "c"`, `ref`: Issue ID)
 и белыми работами (`kind: "w"`, `ref`: стабильный `client_uid`). Для каждой связи сохраняются

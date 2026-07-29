@@ -682,7 +682,7 @@ function bindTeams(){
   if(effFio) effFio.onclick=()=>{ state.ui.showEffortFio=!state.ui.showEffortFio; save(); render(); };
 
   // drag для доски (цветные + белые); zone — сама зона, чтобы знать строку в режиме дорожек
-  enableDrag(document,(payload,zone,ev)=>{
+  enableDrag(document,async(payload,zone,ev)=>{
     const target=zone.dataset.tbSprint;
     const targetWeek=zone.dataset.tbWeek==='' || zone.dataset.tbWeek===undefined ? null : +zone.dataset.tbWeek;
     const cellIssue=zone.dataset.tbIssue; // задаётся только в режиме «Дорожки»
@@ -692,15 +692,17 @@ function bindTeams(){
       const iss=state.issues.find(i=>i.id===payload.id);
       if(iss){
         const ns=target==='backlog'?null:+target;
-        // перенос согласованного (красного) стикера в другой спринт сбрасывает согласование → снова фиолетовый
-        if(iss.agreed && ns!==iss.sprint) iss.agreed=false;
+        const resetAgreement=iss.agreed&&ns!==iss.sprint;
         setBoardPeriod(iss,ns,targetWeek);
         // «Колонки»: свободное размещение среди всех стикеров колонки (цветных и белых)
         if(isColumns && ev){
           const beforeKey=stickerBeforeKey(zone,ev.clientY);
           reorderBoardItem(t.name,ns,targetWeek,'i:'+iss.id,beforeKey);
         }
-        save();render();
+        await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',{
+          sprint_index:ns,week_index:targetWeek,board_sort_order:iss.ord||0,
+          ...(resetAgreement?{agreed:false}:{}),
+        },'Позиция сохранена в Program Board');
       }
     }else if(payload.kind==='story'){
       if(target==='backlog')return; // Истории в бэклог не уходят
@@ -716,7 +718,9 @@ function bindTeams(){
           const beforeKey=stickerBeforeKey(zone,ev.clientY);
           reorderBoardItem(t.name,+target,targetWeek,'g:'+sy.uid,beforeKey);
         }
-        save();render();
+        await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'PATCH',{
+          sprint_index:+target,week_index:targetWeek,board_sort_order:sy.ord||0,
+        });
       }
     }else if(payload.kind==='sub'){
       if(target==='backlog')return; // белые в бэклог не уходят
@@ -738,7 +742,9 @@ function bindTeams(){
           const beforeKey=stickerBeforeKey(zone,ev.clientY);
           reorderBoardItem(t.name,+target,targetWeek,'s:'+st.uid,beforeKey);
         }
-        save();render();
+        await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'PATCH',{
+          sprint_index:+target,week_index:targetWeek,board_sort_order:st.ord||0,
+        });
       }
     }
   },'[data-tb-sprint]',zone=>zone);
@@ -888,10 +894,19 @@ function openSubtaskModal(issueId,storyUid){
     if(!created)return;
     // дефолтная стрелка декомпозиции только для белых напрямую под задачей
     if(!storyUid){
-      state.connections=state.connections||[];
-      state.connections.push({id:newConnId(), from:{kind:'w',uid:u}, to:{kind:'c',id:iss.id}});
+      const refreshed=(state.issues||[]).find(row=>row._backendId===iss._backendId);
+      const item=refreshed&&(refreshed.subtasks||[]).find(row=>row.uid===u);
+      if(item&&item._backendId){
+        try{
+          await programBoardCommand('/connections','POST',{
+            source:{kind:'work_item',id:item._backendId},
+            target:{kind:'initiative',id:iss._backendId},
+            relation_type:'decomposes',
+          });
+        }catch(error){reportProgramBoardSyncError(error);}
+      }
     }
-    save();render();
+    save(false);render();
   };
 }
 /* ---- Модальное окно Истории (зелёный стикер): поля + декомпозиция на белые ---- */
@@ -1051,11 +1066,14 @@ function epIssue(ep){
 }
 function edgeIssue(edge){ return edge ? (epIssue(edge.from)||epIssue(edge.to)) : null; }
 // Удаление связи по id.
-function deleteConnection(id){
-  state.connections=(state.connections||[]).filter(c=>c.id!==id);
-  if(state.ui.selectedArrow===id) state.ui.selectedArrow=null;
-  save(); render();
-  toast('Связь удалена',{type:'info'});
+async function deleteConnection(id){
+  const edge=findConnection(id);if(!edge||!edge._backendId)return;
+  try{
+    await programBoardCommand(`/connections/${edge._backendId}`,'DELETE',{});
+    if(state.ui.selectedArrow===id)state.ui.selectedArrow=null;
+    save(false);render();
+    toast('Связь удалена',{type:'info'});
+  }catch(error){reportProgramBoardSyncError(error);}
 }
 function scrollPoint(scroll,clientX,clientY){
   const cr=scroll.getBoundingClientRect();
@@ -1104,7 +1122,7 @@ function onArrowMove(e){
   prev.setAttribute('d',`M ${arrowDrag.anchor.x} ${arrowDrag.anchor.y} L ${p.x} ${p.y}`);
   prev.setAttribute('opacity','1');
 }
-function onArrowUp(e){
+async function onArrowUp(e){
   document.removeEventListener('mousemove',onArrowMove);
   document.removeEventListener('mouseup',onArrowUp);
   const drag=arrowDrag; arrowDrag=null;
@@ -1123,17 +1141,30 @@ function onArrowUp(e){
       // создание новой связи: from — исходный стикер, to — цель
       const dup=(state.connections||[]).some(c=>sameEp(c.from,drag.from)&&sameEp(c.to,ep));
       if(!sameEp(drag.from,ep) && !dup){
-        const id=newConnId();
-        state.connections.push({id, from:drag.from, to:ep});
-        state.ui.selectedArrow=id; save();
-        toast('Связь создана',{type:'success'});
+        const source=programBoardEndpointPayload(drag.from),targetPayload=programBoardEndpointPayload(ep);
+        if(source&&targetPayload){
+          try{
+            const before=new Set((state.connections||[]).map(row=>row._backendId));
+            await programBoardCommand('/connections','POST',{source,target:targetPayload});
+            const created=(state.connections||[]).find(row=>!before.has(row._backendId));
+            state.ui.selectedArrow=created?created.id:null;save(false);
+            toast('Связь создана',{type:'success'});
+          }catch(error){reportProgramBoardSyncError(error);}
+        }
       }
     }else if(drag.edgeId){
       // перетягивание конца существующей связи на другой стикер
       const edge=findConnection(drag.edgeId);
       if(edge){
         const otherEnd=drag.end==='from'?edge.to:edge.from;
-        if(!sameEp(otherEnd,ep)){ edge[drag.end]=ep; save(); }
+        const endpoint=programBoardEndpointPayload(ep);
+        if(!sameEp(otherEnd,ep)&&endpoint&&edge._backendId){
+          try{
+            await programBoardCommand(`/connections/${edge._backendId}`,'PATCH',{
+              [drag.end==='from'?'source':'target']:endpoint,
+            });
+          }catch(error){reportProgramBoardSyncError(error);}
+        }
       }
     }
   }
@@ -1220,20 +1251,27 @@ function drawArrows(){
         edge.bend={dx:pt.x-mC.x, dy:pt.y-mC.y};
         drawArrows(); // живой предпросмотр изгиба
       };
-      const up=()=>{
+      const up=async()=>{
         document.removeEventListener('mousemove',move);
         document.removeEventListener('mouseup',up);
-        if(moved){ save(); }                 // изгиб сохранён, доска не перерисовывается
-        else { state.ui.selectedArrow = state.ui.selectedArrow===id?null:id; save(); render(); }
+        if(moved&&edge._backendId){
+          try{await programBoardCommand(`/connections/${edge._backendId}`,'PATCH',{bend:edge.bend});}
+          catch(error){reportProgramBoardSyncError(error);await reloadProgramBoard().catch(()=>{});render();}
+        }else if(!moved){state.ui.selectedArrow=state.ui.selectedArrow===id?null:id;save(false);render();}
       };
       document.addEventListener('mousemove',move);
       document.addEventListener('mouseup',up);
     });
     // двойной клик по линии — выпрямить (сбросить изгиб)
-    p.addEventListener('dblclick',(e)=>{
+    p.addEventListener('dblclick',async(e)=>{
       e.stopPropagation();
       const edge=findConnection(p.dataset.arrow);
-      if(edge && edge.bend){ delete edge.bend; save(); render(); toast('Стрелка выпрямлена',{type:'info'}); }
+      if(edge&&edge.bend&&edge._backendId){
+        try{
+          await programBoardCommand(`/connections/${edge._backendId}`,'PATCH',{clear_bend:true});
+          render();toast('Стрелка выпрямлена',{type:'info'});
+        }catch(error){reportProgramBoardSyncError(error);}
+      }
     });
   });
   // удаление связи кнопкой ×

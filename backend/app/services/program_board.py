@@ -1,14 +1,29 @@
 import uuid
+from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.pi_cycle import BoardConnection, Initiative, PiCycle, WorkItem
+from app.models.pi_cycle import (
+    BoardConnection,
+    Initiative,
+    InitiativeExecutor,
+    PiEvent,
+    PiCycle,
+    PiCycleTeam,
+    Team,
+    WorkItem,
+)
 from app.schemas.pi_cycle import (
+    ProgramBoardConnectionCreate,
     ProgramBoardConnectionRead,
+    ProgramBoardConnectionUpdate,
+    ProgramBoardMoveCommand,
     ProgramBoardRead,
     ProgramBoardWrite,
 )
+from app.services.validation import validate_sprint_position
 
 
 async def _endpoint_maps(
@@ -63,7 +78,44 @@ async def read_program_board(
     session: AsyncSession,
     cycle: PiCycle,
 ) -> ProgramBoardRead:
-    _, initiatives, _, work_items = await _endpoint_maps(session, cycle.id)
+    cycle_teams = list(
+        (
+            await session.scalars(
+                select(PiCycleTeam)
+                .options(selectinload(PiCycleTeam.team).selectinload(Team.tribe))
+                .where(PiCycleTeam.cycle_id == cycle.id)
+                .order_by(PiCycleTeam.sort_order, PiCycleTeam.id)
+            )
+        ).all()
+    )
+    active_team_ids = {row.team_id for row in cycle_teams}
+    initiatives_rows = list(
+        (
+            await session.scalars(
+                select(Initiative)
+                .execution_options(populate_existing=True)
+                .options(
+                    selectinload(Initiative.owner_team),
+                    selectinload(Initiative.executors)
+                    .selectinload(InitiativeExecutor.team)
+                    .selectinload(Team.tribe),
+                )
+                .where(Initiative.cycle_id == cycle.id)
+                .order_by(Initiative.sort_order, Initiative.created_at, Initiative.id)
+            )
+        ).all()
+    )
+    initiatives = {row.id: row for row in initiatives_rows}
+    work_items_rows = list(
+        (
+            await session.scalars(
+                select(WorkItem)
+                .join(Initiative, Initiative.id == WorkItem.initiative_id)
+                .where(Initiative.cycle_id == cycle.id)
+            )
+        ).all()
+    )
+    work_items = {row.id: row for row in work_items_rows}
     connections = list(
         (
             await session.scalars(
@@ -78,6 +130,8 @@ async def read_program_board(
         ).all()
     )
     rows: list[ProgramBoardConnectionRead] = []
+    conflicts: list[dict] = []
+    card_conflicts: dict[uuid.UUID, list[str]] = {}
     for connection in connections:
         source = _endpoint_ref(
             connection.source_kind,
@@ -110,10 +164,189 @@ async def read_program_board(
                 sort_order=connection.sort_order,
             )
         )
+
+        def endpoint_sprint(kind: str, endpoint_id: uuid.UUID) -> int | None:
+            if kind in {"initiative", "c"}:
+                entity = initiatives.get(endpoint_id)
+            else:
+                entity = work_items.get(endpoint_id)
+            return entity.sprint_index if entity else None
+
+        source_sprint = endpoint_sprint(connection.source_kind, connection.source_id)
+        target_sprint = endpoint_sprint(connection.target_kind, connection.target_id)
+        if source_sprint is None or target_sprint is None:
+            conflicts.append(
+                {
+                    "code": "unscheduled_dependency",
+                    "message": "У зависимости есть endpoint без назначенного спринта",
+                    "connection_id": connection.id,
+                }
+            )
+        elif source_sprint > target_sprint:
+            conflicts.append(
+                {
+                    "code": "dependency_order",
+                    "message": "Предшественник запланирован позже зависимой работы",
+                    "connection_id": connection.id,
+                }
+            )
+
+    team_rows = []
+    tribe_rows = []
+    seen_tribes: set[uuid.UUID] = set()
+    team_sort: dict[uuid.UUID, int] = {}
+    for position, cycle_team in enumerate(cycle_teams):
+        team = cycle_team.team
+        tribe = team.tribe
+        team_sort[team.id] = position
+        if tribe.id not in seen_tribes:
+            seen_tribes.add(tribe.id)
+            tribe_rows.append(
+                {"id": tribe.id, "name": tribe.name, "sort_order": len(tribe_rows)}
+            )
+        team_rows.append(
+            {
+                "id": team.id,
+                "tribe_id": tribe.id,
+                "tribe": tribe.name,
+                "name": team.name,
+                "sort_order": position,
+            }
+        )
+
+    cards = []
+    for initiative in initiatives_rows:
+        if not initiative.on_board:
+            continue
+        executors = sorted(
+            initiative.executors, key=lambda row: (row.sort_order, str(row.id))
+        )
+        primary = executors[0] if executors else None
+        if primary is None or primary.team_id not in active_team_ids:
+            conflicts.append(
+                {
+                    "code": "missing_active_executor",
+                    "severity": "error",
+                    "message": f"Инициатива {initiative.issue_key} не имеет исполнителя активного PI",
+                    "initiative_id": initiative.id,
+                }
+            )
+            continue
+        codes = card_conflicts.setdefault(initiative.id, [])
+        if initiative.sprint_index is None:
+            codes.append("unscheduled_initiative")
+            conflicts.append(
+                {
+                    "code": "unscheduled_initiative",
+                    "message": f"Инициатива {initiative.issue_key} не назначена на спринт",
+                    "initiative_id": initiative.id,
+                }
+            )
+        elif initiative.sprint_index < 0 or initiative.sprint_index >= cycle.sprint_count:
+            codes.append("sprint_out_of_range")
+            conflicts.append(
+                {
+                    "code": "sprint_out_of_range",
+                    "severity": "error",
+                    "message": f"Инициатива {initiative.issue_key} находится вне спринтов PI",
+                    "initiative_id": initiative.id,
+                }
+            )
+        owner_name = initiative.owner_team.name if initiative.owner_team else ""
+        executor_rows = []
+        total = 0.0
+        for executor in executors:
+            if executor.team_id not in active_team_ids:
+                continue
+            effort = {
+                str(key): float(value or 0)
+                for key, value in dict(executor.effort_by_competency or {}).items()
+            }
+            executor_total = sum(effort.values())
+            total += executor_total
+            executor_rows.append(
+                {
+                    "team_id": executor.team_id,
+                    "team": executor.team.name,
+                    "effort_by_competency": effort,
+                    "total_effort": executor_total,
+                }
+            )
+        visual_state = (
+            "blue"
+            if initiative.owner_team_id in {None, primary.team_id}
+            else ("red" if initiative.agreed else "purple")
+        )
+        cards.append(
+            {
+                "id": initiative.id,
+                "issue_key": initiative.issue_key,
+                "title": initiative.title,
+                "initiative_type": initiative.initiative_type or "",
+                "owner_team_id": initiative.owner_team_id,
+                "owner_team": owner_name,
+                "primary_team_id": primary.team_id,
+                "primary_team": primary.team.name,
+                "primary_tribe_id": primary.team.tribe.id,
+                "primary_tribe": primary.team.tribe.name,
+                "executors": executor_rows,
+                "tags": list(initiative.tags or []),
+                "sprint_index": initiative.sprint_index,
+                "week_index": initiative.week_index,
+                "board_sort_order": initiative.board_sort_order,
+                "agreed": initiative.agreed,
+                "visual_state": visual_state,
+                "total_effort": total,
+                "conflict_codes": codes,
+            }
+        )
+    cards.sort(
+        key=lambda row: (
+            team_sort.get(row["primary_team_id"], 10**9),
+            row["sprint_index"] if row["sprint_index"] is not None else 10**9,
+            row["board_sort_order"],
+            row["issue_key"].casefold(),
+        )
+    )
+
+    sprints = []
+    if cycle.start_date:
+        sorted_events = list(
+            (
+                await session.scalars(
+                    select(PiEvent)
+                    .where(PiEvent.cycle_id == cycle.id)
+                    .order_by(PiEvent.event_date, PiEvent.sort_order, PiEvent.id)
+                )
+            ).all()
+        )
+        for index in range(max(0, cycle.sprint_count)):
+            start = cycle.start_date + timedelta(days=index * 14)
+            end = start + timedelta(days=13)
+            sprints.append(
+                {
+                    "index": index,
+                    "number": index + 1,
+                    "start_date": start,
+                    "end_date": end,
+                    "events": [
+                        {"id": event.id, "name": event.name, "event_date": event.event_date}
+                        for event in sorted_events
+                        if start <= event.event_date <= end
+                    ],
+                }
+            )
     return ProgramBoardRead(
         initialized=cycle.program_board_initialized,
         version=cycle.version,
+        cycle_id=cycle.id,
+        cycle_status=cycle.status,
+        sprints=sprints,
+        tribes=tribe_rows,
+        teams=team_rows,
+        cards=cards,
         connections=rows,
+        conflicts=conflicts,
     )
 
 
@@ -232,3 +465,232 @@ async def delete_dangling_connections(
         )
         if not source_valid or not target_valid:
             await session.delete(connection)
+
+
+async def _initiative_with_executors(
+    session: AsyncSession, cycle: PiCycle, initiative_id: uuid.UUID
+) -> Initiative:
+    initiative = await session.scalar(
+        select(Initiative)
+        .execution_options(populate_existing=True)
+        .options(selectinload(Initiative.executors))
+        .where(Initiative.cycle_id == cycle.id, Initiative.id == initiative_id)
+    )
+    if initiative is None:
+        raise ValueError("Initiative is not found in this PI cycle")
+    if not initiative.on_board:
+        raise ValueError("Initiative is not published to the team boards")
+    return initiative
+
+
+def _primary_team_id(initiative: Initiative) -> uuid.UUID | None:
+    primary = min(
+        initiative.executors,
+        key=lambda row: (row.sort_order, str(row.id)),
+        default=None,
+    )
+    return primary.team_id if primary else None
+
+
+async def move_program_board_initiative(
+    session: AsyncSession,
+    cycle: PiCycle,
+    initiative_id: uuid.UUID,
+    payload: ProgramBoardMoveCommand,
+) -> ProgramBoardRead:
+    initiative = await _initiative_with_executors(session, cycle, initiative_id)
+    validate_sprint_position(cycle, payload.sprint_index, None, f"Initiative {initiative.issue_key}")
+    primary_team_id = _primary_team_id(initiative)
+    if primary_team_id is None:
+        raise ValueError("Initiative has no executor team")
+    active_team = await session.scalar(
+        select(PiCycleTeam.id).where(
+            PiCycleTeam.cycle_id == cycle.id,
+            PiCycleTeam.team_id == primary_team_id,
+        )
+    )
+    if active_team is None:
+        raise ValueError("Initiative executor is not part of this PI cycle")
+
+    lane_candidates = list(
+        (
+            await session.scalars(
+                select(Initiative)
+                .options(selectinload(Initiative.executors))
+                .where(
+                    Initiative.cycle_id == cycle.id,
+                    Initiative.on_board.is_(True),
+                    Initiative.id != initiative.id,
+                    Initiative.sprint_index == payload.sprint_index,
+                )
+                .order_by(Initiative.board_sort_order, Initiative.created_at, Initiative.id)
+            )
+        ).all()
+    )
+    lane = [row for row in lane_candidates if _primary_team_id(row) == primary_team_id]
+    insert_at = min(payload.sort_order, len(lane))
+    lane.insert(insert_at, initiative)
+    for position, row in enumerate(lane):
+        row.board_sort_order = position
+    if initiative.sprint_index != payload.sprint_index:
+        initiative.agreed = False
+    initiative.sprint_index = payload.sprint_index
+    initiative.week_index = None
+    cycle.boards_initialized = True
+    cycle.program_board_initialized = True
+    await session.commit()
+    return await read_program_board(session, cycle)
+
+
+async def _resolve_endpoint_id(
+    session: AsyncSession,
+    cycle: PiCycle,
+    endpoint,
+) -> tuple[str, uuid.UUID]:
+    if endpoint.kind == "initiative":
+        initiative = await session.scalar(
+            select(Initiative).where(
+                Initiative.id == endpoint.id,
+                Initiative.cycle_id == cycle.id,
+                Initiative.on_board.is_(True),
+            )
+        )
+        if initiative is None:
+            raise ValueError("Initiative endpoint is not on the active PI boards")
+        return "initiative", initiative.id
+    item = await session.scalar(
+        select(WorkItem)
+        .join(Initiative, Initiative.id == WorkItem.initiative_id)
+        .where(
+            WorkItem.id == endpoint.id,
+            Initiative.cycle_id == cycle.id,
+            Initiative.on_board.is_(True),
+        )
+    )
+    if item is None:
+        raise ValueError("Work item endpoint is not on the active PI boards")
+    return "work_item", item.id
+
+
+async def _assert_edge_available(
+    session: AsyncSession,
+    cycle: PiCycle,
+    source_kind: str,
+    source_id: uuid.UUID,
+    target_kind: str,
+    target_id: uuid.UUID,
+    *,
+    current_id: uuid.UUID | None = None,
+) -> None:
+    if source_kind == target_kind and source_id == target_id:
+        raise ValueError("A connection cannot point to itself")
+    statement = select(BoardConnection.id).where(
+        BoardConnection.cycle_id == cycle.id,
+        BoardConnection.source_kind == source_kind,
+        BoardConnection.source_id == source_id,
+        BoardConnection.target_kind == target_kind,
+        BoardConnection.target_id == target_id,
+    )
+    if current_id is not None:
+        statement = statement.where(BoardConnection.id != current_id)
+    if await session.scalar(statement):
+        raise ValueError("The same directed connection can only occur once")
+
+
+async def create_program_board_connection(
+    session: AsyncSession,
+    cycle: PiCycle,
+    payload: ProgramBoardConnectionCreate,
+) -> ProgramBoardRead:
+    source_kind, source_id = await _resolve_endpoint_id(session, cycle, payload.source)
+    target_kind, target_id = await _resolve_endpoint_id(session, cycle, payload.target)
+    await _assert_edge_available(
+        session, cycle, source_kind, source_id, target_kind, target_id
+    )
+    connection_id = uuid.uuid4()
+    max_order = await session.scalar(
+        select(func.max(BoardConnection.sort_order)).where(
+            BoardConnection.cycle_id == cycle.id
+        )
+    )
+    session.add(
+        BoardConnection(
+            id=connection_id,
+            cycle_id=cycle.id,
+            client_uid=str(connection_id),
+            source_kind=source_kind,
+            source_id=source_id,
+            target_kind=target_kind,
+            target_id=target_id,
+            relation_type=payload.relation_type.strip(),
+            bend_dx=float(payload.bend.dx) if payload.bend else None,
+            bend_dy=float(payload.bend.dy) if payload.bend else None,
+            sort_order=(int(max_order) + 1) if max_order is not None else 0,
+        )
+    )
+    cycle.program_board_initialized = True
+    await session.commit()
+    return await read_program_board(session, cycle)
+
+
+async def _connection_for_command(
+    session: AsyncSession, cycle: PiCycle, connection_id: uuid.UUID
+) -> BoardConnection:
+    connection = await session.scalar(
+        select(BoardConnection).where(
+            BoardConnection.cycle_id == cycle.id,
+            BoardConnection.id == connection_id,
+        )
+    )
+    if connection is None:
+        raise ValueError("Connection is not found in this PI cycle")
+    return connection
+
+
+async def update_program_board_connection(
+    session: AsyncSession,
+    cycle: PiCycle,
+    connection_id: uuid.UUID,
+    payload: ProgramBoardConnectionUpdate,
+) -> ProgramBoardRead:
+    connection = await _connection_for_command(session, cycle, connection_id)
+    source_kind, source_id = connection.source_kind, connection.source_id
+    target_kind, target_id = connection.target_kind, connection.target_id
+    if payload.source is not None:
+        source_kind, source_id = await _resolve_endpoint_id(session, cycle, payload.source)
+    if payload.target is not None:
+        target_kind, target_id = await _resolve_endpoint_id(session, cycle, payload.target)
+    await _assert_edge_available(
+        session,
+        cycle,
+        source_kind,
+        source_id,
+        target_kind,
+        target_id,
+        current_id=connection.id,
+    )
+    connection.source_kind = source_kind
+    connection.source_id = source_id
+    connection.target_kind = target_kind
+    connection.target_id = target_id
+    if payload.relation_type is not None:
+        connection.relation_type = payload.relation_type.strip()
+    if payload.clear_bend:
+        connection.bend_dx = None
+        connection.bend_dy = None
+    elif payload.bend is not None:
+        connection.bend_dx = float(payload.bend.dx)
+        connection.bend_dy = float(payload.bend.dy)
+    await session.commit()
+    return await read_program_board(session, cycle)
+
+
+async def delete_program_board_connection(
+    session: AsyncSession,
+    cycle: PiCycle,
+    connection_id: uuid.UUID,
+) -> ProgramBoardRead:
+    connection = await _connection_for_command(session, cycle, connection_id)
+    await session.delete(connection)
+    await session.commit()
+    return await read_program_board(session, cycle)

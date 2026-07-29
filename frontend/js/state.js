@@ -104,9 +104,7 @@ let capacitySyncTimer=null;
 let capacitySyncChain=Promise.resolve();
 let lastCapacitySyncErrorAt=0;
 let programBoardApiReady=false;
-let persistedProgramBoardHashes={};
-let programBoardSyncTimer=null;
-let programBoardSyncChain=Promise.resolve();
+let programBoardViews={};
 let lastProgramBoardSyncErrorAt=0;
 let risksApiReady=false;
 let risksBoards={};
@@ -277,7 +275,6 @@ function save(syncCycles=true){
   if(syncCycles && state.ui.mode==='pi' && state.ui.tab!=='data'){
     if(teamBoardsApiReady) queueTeamBoardsSync();
     if(capacityApiReady) queueCapacitySync();
-    if(programBoardApiReady) queueProgramBoardSync();
   }
 }
 
