@@ -15,16 +15,36 @@ services:
       timeout: 5s
       retries: 10
 
+  audit_db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: sberpi_audit
+      POSTGRES_USER: sberpi_audit
+      POSTGRES_PASSWORD: sberpi_audit
+    ports:
+      - "5434:5432"
+    volumes:
+      - audit_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sberpi_audit -d sberpi_audit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: .
       dockerfile: backend/Dockerfile
     env_file:
       - .env
+    environment:
+      AUDIT_DATABASE_URL: postgresql+asyncpg://sberpi_audit:sberpi_audit@audit_db:5432/sberpi_audit
     ports:
       - "8000:8000"
     depends_on:
       db:
+        condition: service_healthy
+      audit_db:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
@@ -41,3 +61,4 @@ services:
 
 volumes:
   postgres_data:
+  audit_postgres_data:

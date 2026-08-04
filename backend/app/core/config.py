@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     session_cookie_name: str = "sberpi_session"
     session_cookie_secure: bool = False
 
+    audit_enabled: bool = True
+    audit_database_url: str = Field(
+        default="postgresql+asyncpg://sberpi_audit:sberpi_audit@localhost:5434/sberpi_audit"
+    )
+    audit_source_service: str = "sberpi-api"
+    audit_host_ip: str = ""
+    audit_trusted_proxy_networks: str = ""
+    audit_connect_timeout_seconds: int = Field(default=3, ge=1, le=30)
+    audit_retry_seconds: int = Field(default=30, ge=1, le=3600)
+
     ad_group_admin: str = "SBERPI_ADMIN"
     ad_group_planning_editor: str = "SBERPI_PLANNING_EDITOR"
     ad_group_business_viewer: str = "SBERPI_BUSINESS_VIEWER"
@@ -41,6 +51,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @property
+    def audit_trusted_proxy_network_list(self) -> list[str]:
+        return [
+            item.strip()
+            for item in self.audit_trusted_proxy_networks.split(",")
+            if item.strip()
+        ]
 
 
 @lru_cache

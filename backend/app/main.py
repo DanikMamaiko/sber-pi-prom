@@ -2,11 +2,22 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
+from app.audit.middleware import AuditMiddleware
+from app.audit.sink import DatabaseAuditSink, DisabledAuditSink
 from app.core.config import get_settings
 
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
+app.state.audit_sink = (
+    DatabaseAuditSink(
+        settings.audit_database_url,
+        connect_timeout_seconds=settings.audit_connect_timeout_seconds,
+        retry_seconds=settings.audit_retry_seconds,
+    )
+    if settings.audit_enabled
+    else DisabledAuditSink()
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,6 +26,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuditMiddleware, settings=settings)
 
 app.include_router(api_router)
 

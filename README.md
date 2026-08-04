@@ -21,6 +21,7 @@
 - Перенос инициатив в PI-цикл.
 - Pre PI, цели, командные доски и Program Board как рабочие доменные сущности.
 - Риски: общие и командные.
+- Аудит всех пользовательских API-действий в отдельной PostgreSQL-базе.
 
 ## Быстрый старт
 
@@ -35,6 +36,7 @@ docker compose up --build
 - UI: http://localhost:8080
 - API: http://localhost:8000
 - OpenAPI: http://localhost:8000/docs
+- audit PostgreSQL: localhost:5434, база `sberpi_audit`;
 
 Тестовые пользователи по умолчанию:
 
@@ -97,6 +99,7 @@ backend/
 frontend/
   index.html
 docs/
+  audit.md
   architecture.md
   backlog-tab.md
   golden-standard-tab.md
