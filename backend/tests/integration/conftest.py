@@ -26,6 +26,13 @@ if not database_name.endswith("_test"):
 # importing app.main/app.db.session.
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["APP_ENV"] = "test"
+os.environ["AUTH_PROVIDER"] = "local"
+os.environ["AUTH_TEST_USERS"] = (
+    "admin:admin123:admin,editor:editor123:planning_editor,"
+    "pm:pm123:business_viewer,user:user123:viewer"
+)
+os.environ["SESSION_SECRET"] = "integration-test-session-secret"
+os.environ["SESSION_TTL_MINUTES"] = "60"
 
 from app.core.config import get_settings  # noqa: E402
 
@@ -133,11 +140,21 @@ class VersionedApiClient:
 
 
 @pytest_asyncio.fixture
-async def api_client(clean_test_database: None) -> AsyncIterator[AsyncClient]:
+async def raw_api_client(clean_test_database: None) -> AsyncIterator[AsyncClient]:
     app.dependency_overrides[get_session] = override_session
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver/api",
     ) as client:
-        yield VersionedApiClient(client)
+        yield client
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def api_client(raw_api_client: AsyncClient) -> AsyncIterator[AsyncClient]:
+    login = await raw_api_client.post(
+        "/auth/login",
+        json={"username": "admin", "password": "admin123"},
+    )
+    login.raise_for_status()
+    yield VersionedApiClient(raw_api_client)

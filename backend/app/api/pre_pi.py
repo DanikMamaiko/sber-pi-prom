@@ -5,6 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._common import get_cycle_or_404
+from app.auth.dependencies import require_http_permission
+from app.auth.permissions import Permission
 from app.db.session import get_session
 from app.models.pi_cycle import Initiative, InitiativeExecutor
 from app.schemas.pi_cycle import (
@@ -30,7 +32,10 @@ from app.services.pre_pi import (
 )
 from app.services.validation import cycle_team_context, normalized_effort
 
-router = APIRouter(tags=["PI Cycle"])
+router = APIRouter(
+    tags=["PI Cycle"],
+    dependencies=[Depends(require_http_permission(Permission.PRE_PI_READ, Permission.PRE_PI_WRITE))],
+)
 
 
 @router.get("/pi-cycles/{cycle_id}/pre-pi", response_model=PrePiRead)

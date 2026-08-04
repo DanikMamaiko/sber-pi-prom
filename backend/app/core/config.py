@@ -11,6 +11,31 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://sberpi:sberpi@localhost:5432/sberpi"
     )
     cors_origins: str = "http://localhost:8080,http://127.0.0.1:8080"
+    auth_provider: str = "local"
+    auth_test_users: str = (
+        "admin:admin123:admin,"
+        "editor:editor123:planning_editor,"
+        "pm:pm123:business_viewer,"
+        "user:user123:viewer"
+    )
+    session_secret: str = "local-development-only-change-me"
+    session_ttl_minutes: int = Field(default=60, ge=1, le=1440)
+    session_cookie_name: str = "sberpi_session"
+    session_cookie_secure: bool = False
+
+    ad_group_admin: str = "SBERPI_ADMIN"
+    ad_group_planning_editor: str = "SBERPI_PLANNING_EDITOR"
+    ad_group_business_viewer: str = "SBERPI_BUSINESS_VIEWER"
+
+    ldap_url: str = "ldaps://ad.company.local:636"
+    ldap_base_dn: str = "DC=company,DC=local"
+    ldap_user_search_base: str = "OU=Users,DC=company,DC=local"
+    ldap_user_filter: str = "(sAMAccountName={username})"
+    ldap_group_search_base: str = "OU=Groups,DC=company,DC=local"
+    ldap_group_filter: str = "(member={user_dn})"
+    ldap_bind_dn: str = ""
+    ldap_bind_password: str = ""
+    ldap_use_tls: bool = True
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @property

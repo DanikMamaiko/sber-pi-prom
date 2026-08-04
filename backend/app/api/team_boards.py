@@ -4,6 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._common import get_cycle_or_404
+from app.auth.dependencies import ensure_permission, require_auth, require_http_permission
+from app.auth.models import CurrentUser
+from app.auth.permissions import Permission
 from app.db.session import get_session
 from app.schemas.pi_cycle import (
     CapacityRead,
@@ -40,7 +43,14 @@ from app.services.team_boards import (
     update_board_work_item,
 )
 
-router = APIRouter(tags=["PI Cycle"])
+router = APIRouter(
+    tags=["PI Cycle"],
+    dependencies=[
+        Depends(
+            require_http_permission(Permission.TEAM_BOARDS_READ, Permission.TEAM_BOARDS_WRITE)
+        )
+    ],
+)
 
 
 async def _run_board_command(session: AsyncSession, operation):
@@ -74,8 +84,11 @@ async def get_team_boards(
 async def put_team_boards(
     cycle_id: uuid.UUID,
     payload: TeamBoardsWrite,
+    user: CurrentUser = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ):
+    # Bulk replacement carries the approval flag for every initiative.
+    ensure_permission(user, Permission.TASKS_APPROVE)
     cycle = await lock_cycle(session, cycle_id, payload.expected_version)
     try:
         return await replace_team_boards(session, cycle, payload)
@@ -92,8 +105,11 @@ async def patch_team_board_initiative(
     cycle_id: uuid.UUID,
     initiative_id: uuid.UUID,
     payload: TeamBoardInitiativeCommand,
+    user: CurrentUser = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ):
+    if payload.agreed is not None:
+        ensure_permission(user, Permission.TASKS_APPROVE)
     cycle = await lock_cycle(session, cycle_id, payload.expected_version)
     return await _run_board_command(
         session, update_board_initiative(session, cycle, initiative_id, payload)

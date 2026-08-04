@@ -272,9 +272,9 @@ function save(syncCycles=true){
   // не нажал «Сохранить», команды ещё не входят в нормализованный PI, поэтому
   // синхронизация зависимых агрегатов дала бы ложные 422 и могла бы затереть
   // незавершённый ввод ответом от более раннего запроса.
-  if(syncCycles && state.ui.mode==='pi' && state.ui.tab!=='data'){
-    if(teamBoardsApiReady) queueTeamBoardsSync();
-    if(capacityApiReady) queueCapacitySync();
+  if(syncCycles && state.ui.mode==='pi' && state.ui.tab!=='data' && canWriteTab(state.ui.tab)){
+    if(teamBoardsApiReady&&hasPermission('team_boards:write')) queueTeamBoardsSync();
+    if(capacityApiReady&&hasPermission('team_boards:write')) queueCapacitySync();
   }
 }
 

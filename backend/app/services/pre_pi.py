@@ -243,10 +243,12 @@ async def read_pre_pi(session: AsyncSession, cycle: PiCycle) -> PrePiRead:
     teams = [
         {
             "id": row.team.id,
+            "cycle_team_id": row.id,
             "tribe_id": row.team.tribe_id,
             "tribe": row.team.tribe.name,
             "name": row.team.name,
             "team_type": row.team_type or row.team.team_type,
+            "excluded_from_goals": row.excluded_from_goals,
             "competencies": [item.code for item in row.competencies],
             "sort_order": row.sort_order,
         }

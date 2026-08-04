@@ -5,6 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._common import get_cycle_or_404
+from app.auth.dependencies import require_http_permission
+from app.auth.permissions import Permission
 from app.db.session import get_session
 from app.models.pi_cycle import PiCycleTeam, Risk
 from app.schemas.pi_cycle import (
@@ -33,7 +35,10 @@ from app.services.risks import (
     update_risk_status_command,
 )
 
-router = APIRouter(tags=["PI Cycle"])
+router = APIRouter(
+    tags=["PI Cycle"],
+    dependencies=[Depends(require_http_permission(Permission.RISKS_READ, Permission.RISKS_WRITE))],
+)
 
 
 async def _run_risk_command(session: AsyncSession, operation):

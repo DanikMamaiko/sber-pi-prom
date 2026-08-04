@@ -852,7 +852,7 @@ function openStickerModal(issueId){
     <div class="note" style="margin:6px 0">Задачу можно декомпозировать <b>двумя способами</b>: сразу на белые подзадачи или на <b>Истории</b> (зелёные), а каждую Историю — уже на белые. Истории и белые на Program Board не выносятся.</div>
     <div class="modal-actions" style="justify-content:space-between">
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${isAttr && !iss.agreed ? `<button class="primary" id="sm_approve">Согласовать</button>`:''}
+        ${isAttr && !iss.agreed && canApproveTasks() ? `<button class="primary" id="sm_approve">Согласовать</button>`:''}
         <button id="sm_story">Добавить историю</button>
         <button id="sm_decomp">Добавить подзадачу</button>
       </div>
@@ -875,7 +875,10 @@ function openStickerModal(issueId){
   });
   const tagPick=root.querySelector('.tag-picker');
   if(tagPick) tagPick.onclick=e=>e.stopPropagation();
-  $('#sm_close').onclick=async()=>{ const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))root.innerHTML=''; };
+  $('#sm_close').onclick=async()=>{
+    if(!canWriteTab('teams')){root.innerHTML='';return;}
+    const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))root.innerHTML='';
+  };
   const ap=$('#sm_approve'); if(ap)ap.onclick=async()=>{ const body={...sync(),agreed:true};if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body,'Привлечение согласовано'))root.innerHTML=''; };
   $('#sm_decomp').onclick=async()=>{ const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openSubtaskModal(iss.id); };
   $('#sm_story').onclick=async()=>{ const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openStoryModal(iss.id, null); };

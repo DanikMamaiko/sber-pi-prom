@@ -5,6 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._common import get_cycle_or_404
+from app.auth.dependencies import require_http_permission
+from app.auth.permissions import Permission
 from app.db.session import get_session
 from app.models.pi_cycle import Initiative, PiCycleTeam, PiGoal
 from app.schemas.pi_cycle import (
@@ -34,7 +36,10 @@ from app.services.goals import (
 )
 from app.services.optimistic_locking import lock_cycle
 
-router = APIRouter(tags=["PI Cycle"])
+router = APIRouter(
+    tags=["PI Cycle"],
+    dependencies=[Depends(require_http_permission(Permission.GOALS_READ, Permission.GOALS_WRITE))],
+)
 
 
 async def _run_goal_command(session: AsyncSession, operation):

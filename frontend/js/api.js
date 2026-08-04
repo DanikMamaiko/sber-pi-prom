@@ -1,8 +1,16 @@
 async function cycleApi(path,options={}){
+  const method=options.method||'GET';
+  const required=apiPermission(path,method);
+  if(required&&!hasPermission(required)){
+    const error=new Error('Недостаточно прав для выполнения операции');
+    error.status=403;error.detail='Недостаточно прав';
+    throw error;
+  }
   const init={
-    method:options.method||'GET',
+    method,
     headers:{'Content-Type':'application/json','Cache-Control':'no-store','Pragma':'no-cache'},
     cache:'no-store',
+    credentials:'include',
   };
   if(options.body!==undefined) init.body=JSON.stringify(options.body);
   const response=await fetch(API_BASE+path,init);
@@ -14,9 +22,22 @@ async function cycleApi(path,options={}){
     const error=new Error(message||`HTTP ${response.status}`);
     error.detail=detail;
     error.status=response.status;
+    if(response.status===401)handleSessionExpired();
     throw error;
   }
   return response.status===204 ? null : response.json();
+}
+function apiPermission(path,method='GET'){
+  const clean=String(path).split('?')[0],read=String(method).toUpperCase()==='GET';
+  if(clean.startsWith('/backlog-board'))return read?'backlog:read':'backlog:write';
+  if(clean.includes('/pre-pi')||/\/pi-cycles\/[^/]+\/initiatives(?:\/|$)/.test(clean))return read?'pre_pi:read':'pre_pi:write';
+  if(clean.includes('/goals-board')||/\/pi-cycles\/[^/]+\/goals(?:\/|$)/.test(clean))return read?'goals:read':'goals:write';
+  if(clean.includes('/team-boards')||clean.includes('/capacity'))return read?'team_boards:read':'team_boards:write';
+  if(clean.includes('/program-board'))return read?'program_board:read':'program_board:write';
+  if(clean.includes('/risks-board')||/\/pi-cycles\/[^/]+\/risks(?:\/|$)/.test(clean))return read?'risks:read':'risks:write';
+  if(clean==='/pi-cycles'||clean==='/pi-cycle-data'||clean.startsWith('/tribes')||clean.startsWith('/teams')||clean.startsWith('/team-members')||clean.includes('/setup')||clean.includes('/data')||clean.includes('/overview')||clean.includes('/pirs')||clean.includes('/cycle-teams')||clean.includes('/goal-options')||clean.includes('/tags'))return read?'pi_data:read':'pi_data:write';
+  if(clean.startsWith('/pi-cycles/'))return read?'pi_data:read':'pi_data:write';
+  return null;
 }
 function optimisticConflictError(aggregate,expected,current){
   const error=new Error('Данные были изменены в другом окне');
@@ -125,7 +146,8 @@ async function persistCycle(id,force=false){
   persistedCycleMetadata[id]=metadataHash;
 }
 async function syncAllCycles(){
-  for(const id of Object.keys(state.cycles||{})) await persistCycle(id);
+  const id=currentCycleId();
+  if(id&&state.cycles[id])await persistCycle(id);
 }
 function runCycleSync(){
   const run=cycleSyncChain.then(syncAllCycles);
@@ -280,6 +302,23 @@ function prePiIssueFromApi(row,prior){
   return it;
 }
 function applyPrePi(c,aggregate,id=currentCycleId()){
+  const context=aggregate&&aggregate.cycle||{};
+  if(context.id){
+    c.pi=c.pi||{};
+    c.pi.startDate=context.start_date||'';
+    c.pi.sprintCount=context.sprint_count||c.pi.sprintCount||6;
+    const priorTeams=new Map((c.pi.teams||[]).map(team=>[String(team._teamId||team.name),team]));
+    c.pi.teams=(aggregate.teams||[]).map(row=>{
+      const prior=priorTeams.get(String(row.id))||priorTeams.get(String(row.name))||{};
+      return {...prior,_cycleTeamId:row.cycle_team_id,_teamId:row.id,_tribeId:row.tribe_id,tribe:row.tribe,name:row.name,
+        type:row.team_type||prior.type||'Agile',excluded:!!row.excluded_from_goals,
+        comps:Array.isArray(row.competencies)?row.competencies.slice():[]};
+    });
+    c.pi.goals=(aggregate.goal_options||[]).map(row=>row.name);
+    c.pi.pirs=Array.isArray(c.pi.pirs)?c.pi.pirs:[];
+    c.pi.tags=Array.isArray(c.pi.tags)?c.pi.tags:[];
+    cycleBackendIds[id]=context.id;
+  }
   const priorById={},priorByKey={};
   (c.issues||[]).forEach(it=>{
     if(it._backendId) priorById[it._backendId]=it;
@@ -294,6 +333,34 @@ function applyPrePi(c,aggregate,id=currentCycleId()){
       if(piDataViews[id]&&piDataViews[id].cycle)piDataViews[id].cycle.version=aggregate.version;
     }
   }
+}
+
+async function loadAuthorizedCycle(id){
+  const c=state.cycles[id],backendId=cycleBackendIds[id];
+  if(!c||!backendId)throw new Error('Выбранный PI-цикл недоступен');
+  if(hasPermission('pi_data:read'))await loadPiDataView(id);
+  if(hasPermission('pre_pi:read')){
+    const prePi=await cycleRead(id,`/pi-cycles/${backendId}/pre-pi`);
+    applyPrePi(c,prePi,id);prePiApiReady=true;
+  }
+  activateCycle(id);
+  if(hasPermission('backlog:read')){await loadBacklogBoard();backlogApiReady=true;}else{backlogBoard=null;backlogApiReady=false;}
+  if(hasPermission('goals:read')){
+    applyGoals(c,await cycleRead(id,`/pi-cycles/${backendId}/goals-board`),id);goalsApiReady=true;
+  }else goalsApiReady=false;
+  if(hasPermission('team_boards:read')){
+    const boards=await cycleRead(id,`/pi-cycles/${backendId}/team-boards`);
+    applyTeamBoards(c,boards);persistedTeamBoardHashes[id]=teamBoardsPayloadHash(id,c);teamBoardsApiReady=true;
+    const capacity=await cycleRead(id,`/pi-cycles/${backendId}/capacity`);
+    applyCapacity(c,capacity,id);persistedCapacityHashes[id]=capacityPayloadHash(id,c);capacityApiReady=true;
+  }else{teamBoardsApiReady=false;capacityApiReady=false;}
+  if(hasPermission('program_board:read')){
+    applyProgramBoard(c,await cycleRead(id,`/pi-cycles/${backendId}/program-board`),id);programBoardApiReady=true;
+  }else programBoardApiReady=false;
+  if(hasPermission('risks:read')){
+    applyRisks(c,await cycleRead(id,`/pi-cycles/${backendId}/risks-board`),id);risksApiReady=true;
+  }else risksApiReady=false;
+  activateCycle(id);
 }
 function reportPrePiSyncError(error){
   console.error('Pre PI API command failed',error);
@@ -542,7 +609,8 @@ async function persistTeamBoardsCycle(id,force=false){
   persistedCapacityHashes[id]=capacityPayloadHash(id,c);
 }
 async function syncAllTeamBoards(){
-  for(const id of Object.keys(state.cycles||{}))await persistTeamBoardsCycle(id);
+  const id=currentCycleId();
+  if(id&&state.cycles[id])await persistTeamBoardsCycle(id);
 }
 function runTeamBoardsSync(){
   const run=teamBoardsSyncChain.then(syncAllTeamBoards);
@@ -713,7 +781,8 @@ async function persistCapacityCycle(id,force=false){
   persistedCapacityHashes[id]=capacityPayloadHash(id,c);
 }
 async function syncAllCapacity(){
-  for(const id of Object.keys(state.cycles||{}))await persistCapacityCycle(id);
+  const id=currentCycleId();
+  if(id&&state.cycles[id])await persistCapacityCycle(id);
 }
 function runCapacitySync(){
   const run=capacitySyncChain.then(async()=>{

@@ -3,12 +3,11 @@
 ===================================================================== */
 function renderNav(){
   const nav=$('#nav');
-  const tabs=state.ui.mode==='budget' ? BUDGET_TABS : PI_TABS;
-  const active=state.ui.mode==='budget' ? state.ui.budgetTab : state.ui.tab;
+  const tabs=availablePiTabs();
+  const active=state.ui.tab;
   nav.innerHTML=tabs.map(t=>`<div class="tab ${active===t.id?'active':''}" data-tab="${t.id}">${t.name}</div>`).join('');
   nav.querySelectorAll('.tab').forEach(el=>el.onclick=()=>{
-    if(state.ui.mode==='budget') state.ui.budgetTab=el.dataset.tab;
-    else state.ui.tab=el.dataset.tab;
+    state.ui.tab=el.dataset.tab;
     save();render();
   });
 }
@@ -83,25 +82,12 @@ function restoreViewPos(pos){
 }
 
 function render(){
+  if(!currentUser){renderLoginScreen();return;}
   const pos=captureViewPos();
   // попап фильтра живёт на body — закрываем его при любой перерисовке;
   // контекст таблиц пересобирают view-функции ниже
   closeColFilterPop(); colFilterCtx={};
-  if(state.ui.mode==='budget' && state.ui.budgetYear){
-    ensureBudgetYear(state.ui.budgetYear);
-    renderNav();
-    const app=$('#app');
-    switch(state.ui.budgetTab){
-      case 'budgetData':       app.innerHTML=viewBudgetData();       bindBudgetData();       break;
-      case 'backlog':          app.innerHTML=viewBacklog();          bindBacklog();          break;
-      case 'budgetAssessment': app.innerHTML=viewBudgetAssessment(); bindBudgetAssessment(); break;
-      case 'budget':           app.innerHTML=viewBudget();           bindBudget();           break;
-      case 'budgetVadarodTeams': app.innerHTML=viewBudgetVadarodTeams(); bindBudgetVadarodTeams(); break;
-      default: state.ui.budgetTab='budgetData'; save(); render(); return;
-    }
-    restoreViewPos(pos);
-    return;
-  }
+  if(state.ui.mode==='budget')state.ui.mode=null;
   const cid=currentCycleId();
   // PI-цикл не выбран — показываем стартовую страницу выбора года/квартала
   if(state.ui.mode!=='pi' || !cid || !state.cycles[cid]){
@@ -110,6 +96,11 @@ function render(){
     return;
   }
   activateCycle(cid);
+  const tabs=availablePiTabs();
+  if(!tabs.some(tab=>tab.id===state.ui.tab)){
+    state.ui.tab=tabs.length?tabs[0].id:null;
+    save(false);
+  }
   renderNav();
   const app=$('#app');
   switch(state.ui.tab){
@@ -121,6 +112,7 @@ function render(){
     case 'teams': app.innerHTML=viewTeams(); bindTeams(); break;
     case 'risks': app.innerHTML=viewRisks(); bindRisks(); break;
   }
+  applyAccessControls(app);
   restoreViewPos(pos);
 }
 
@@ -130,9 +122,14 @@ function render(){
 function viewLanding(){
   const backendYears=Object.keys(state.cycles||{}).map(id=>+String(id).split('-')[0]).filter(Number.isFinite);
   const y=state.ui.landingYear||backendYears[0]||new Date().getFullYear();
-  const years=[...new Set([2026,2027,2028,y,...backendYears])].sort((a,b)=>a-b);
+  const nowYear=new Date().getFullYear();
+  const years=[...new Set([nowYear,nowYear+1,nowYear+2,y,...backendYears])].sort((a,b)=>a-b);
   const yopts=years.map(v=>`<option value="${v}" ${v===y?'selected':''}>${v}</option>`).join('');
-  const qs=['Q1','Q2','Q3','Q4'].map(q=>`<button class="q-btn" data-q="${q}">${q}</button>`).join('');
+  const qs=['Q1','Q2','Q3','Q4'].map(q=>{
+    const exists=!!state.cycles[cycleId(y,q)];
+    const title=exists?'Открыть PI-цикл':'Создать и открыть PI-цикл';
+    return `<button class="q-btn" data-q="${q}" title="${title}">${q}</button>`;
+  }).join('');
   return `
   <div class="landing">
     <div class="landing-inner">
@@ -149,18 +146,12 @@ function viewLanding(){
           <div class="landing-card-head">
             <div>
               <div class="landing-card-title">Бюджетирование</div>
-              <div class="landing-card-sub">Годовой период</div>
+              <div class="landing-card-sub">Раздел находится в разработке</div>
             </div>
             <div class="landing-card-mark">BYN</div>
           </div>
           <div class="landing-card-body">
-            <div class="landing-form-row">
-              <label class="landing-field">
-                <span>Год бюджетирования</span>
-                <select id="budgetLandingYear">${yopts}</select>
-              </label>
-              <button class="primary" id="openBudget">Открыть</button>
-            </div>
+            <div class="coming-soon"><span class="coming-soon-badge">В разработке</span><strong>Будет доступно позже</strong><p>Готовим единый контур оценки инициатив и управления бюджетом.</p></div>
             <div class="landing-foot"><span>Оценка инициатив</span><span>Бюджет Vadarod</span><span>Бюджет Vendor</span></div>
           </div>
         </div>
@@ -187,19 +178,7 @@ function viewLanding(){
 }
 function bindLanding(){
   const ys=$('#landingYear');
-  if(ys) ys.onchange=()=>{ state.ui.landingYear=+ys.value; save(); };
-  const by=$('#budgetLandingYear');
-  if(by) by.onchange=()=>{ state.ui.landingYear=+by.value; save(); };
-  const openBudget=$('#openBudget');
-  if(openBudget) openBudget.onclick=()=>{
-    const year=+((by&&by.value)||state.ui.landingYear||2026);
-    state.ui.mode='budget';
-    state.ui.budgetYear=year;
-    state.ui.landingYear=year;
-    state.ui.budgetTab=state.ui.budgetTab||'budgetData';
-    ensureBudgetYear(year);
-    save(false); render();
-  };
+  if(ys) ys.onchange=()=>{ state.ui.landingYear=+ys.value; save(false); render(); };
   document.querySelectorAll('.q-btn').forEach(b=>b.onclick=async()=>{
     if(!cyclesApiReady){
       toast(cyclesApiUnavailable
@@ -211,28 +190,27 @@ function bindLanding(){
     const year=+((ys&&ys.value)||state.ui.landingYear||2026);
     const q=b.dataset.q;
     const id=cycleId(year,q);
+    b.disabled=true;
     try{
-      if(state.cycles[id]){
-        if(!piDataViews[id]) await loadPiDataView(id);
-      }else{
-        applyPiDataView(id,await cycleApi('/pi-cycle-data',{
-          method:'POST',body:{year,quarter:q,start_date:null,sprint_count:6},
-        }));
+      await ensureNavigationCycle(year,q);
+      state.ui.mode='pi';
+      state.ui.landingYear=year;
+      state.ui.year=year;state.ui.quarter=q;
+      activateCycle(id);
+      const tabs=availablePiTabs();
+      if(!tabs.some(tab=>tab.id===state.ui.tab))state.ui.tab=tabs[0]&&tabs[0].id;
+      await loadAuthorizedCycle(id);
+    }
+    catch(error){
+      if(error.status!==401){
+        console.error('PI cycle load failed',error);
+        toast(error.status===403?'Раздел недоступен для вашей роли.':'Не удалось загрузить выбранный PI-цикл.',{type:'warn'});
       }
+      state.ui.mode=null;state.ui.year=null;state.ui.quarter=null;
+      if(currentUser){b.disabled=false;render();}
+      return;
     }
-    catch(error){ reportCycleSyncError(error); return; }
-    state.ui.mode='pi';
-    state.ui.landingYear=year;
-    state.ui.year=year; state.ui.quarter=q;
-    activateCycle(id);
-    try{
-      await loadBacklogBoard();
-      backlogApiReady=true;
-    }catch(error){
-      backlogApiReady=false;
-      reportBacklogSyncError(error);
-    }
-    save(); render();
+    save(false);render();
   });
 }
 

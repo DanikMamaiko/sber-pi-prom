@@ -18,6 +18,38 @@
 
 - `GET /health`
 
+`GET /health` остаётся публичным. Все остальные бизнес-endpoints требуют действующую
+cookie-сессию и permission. Без сессии API отвечает `401`, без права — `403`.
+
+## Аутентификация и навигация
+
+- `POST /auth/login` — вход по логину/паролю и установка `HttpOnly` cookie;
+- `POST /auth/logout` — завершение текущей сессии;
+- `GET /auth/me` — username, роли, permissions и абсолютное время истечения;
+- `GET /app/navigation` — разрешённые вкладки и минимальный список PI-циклов;
+- `POST /app/pi-cycles` — идемпотентно выбрать или создать минимальный PI-цикл по
+  `year` и `quarter`.
+
+Сессия действует 60 минут от момента входа и не продлевается API-активностью.
+`/app/navigation` возвращает для PI-цикла только `id`, `year`, `quarter`; подробные
+настройки вкладки «Данные PI-цикла» доступны только `admin`.
+Все авторизованные роли имеют `pi_cycle:select`, поэтому могут открыть любой квартал Q1–Q4.
+Создание минимального цикла этим endpoint не даёт доступа к административным настройкам.
+
+Permission-группы API:
+
+| Раздел | Чтение | Изменение |
+|---|---|---|
+| Выбор/инициализация квартала | `pi_cycle:select` | `pi_cycle:select` |
+| Данные PI-цикла и справочники | `pi_data:read` | `pi_data:write` |
+| Бэклог | `backlog:read` | `backlog:write` |
+| Pre PI | `pre_pi:read` | `pre_pi:write` |
+| Цели | `goals:read` | `goals:write` |
+| Командные доски и ёмкость | `team_boards:read` | `team_boards:write` |
+| Согласование задач | — | `tasks:approve` |
+| Program Board | `program_board:read` | `program_board:write` |
+| Риски | `risks:read` | `risks:write` |
+
 ## PI-циклы
 
 - `GET /pi-cycles`

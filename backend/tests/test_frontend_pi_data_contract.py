@@ -9,11 +9,15 @@ def test_pi_business_data_is_not_persisted_in_browser_storage():
     assert "cycles: { '2026-Q1'" not in source
 
 
-def test_active_pi_data_boot_uses_backend_read_model_without_frontend_migration():
+def test_active_pi_data_boot_is_auth_first_and_uses_permission_scoped_read_models():
     source = frontend_source()
     boot = source[source.index("async function boot(){") : source.index("boot();", source.index("async function boot(){"))]
 
-    assert "await loadPiDataViews();" in boot
+    assert "currentUser=await authRequest('/auth/me')" in boot
+    assert "await bootAuthenticated();" in boot
+    assert "await loadPiDataViews();" not in boot
+    assert "if(hasPermission('pi_data:read'))await loadPiDataView(id);" in source
+    assert "async function loadAuthorizedCycle(id)" in source
     assert "loadCycleSetups" not in boot
     assert "normalize();" not in boot
     assert "function piDataCommand(" in source

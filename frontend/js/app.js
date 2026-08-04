@@ -28,74 +28,30 @@ function enableDrag(scope,onDrop,targetSel,targetVal){
   const brand=document.getElementById('brand');
   if(brand) brand.onclick=()=>backToLanding();
 })();
-async function boot(){
-  loadState();
-  render();
-  try{
-    await loadCyclesFromApi();
-    await loadPiDataViews();
-    cyclesApiReady=true;
-    cyclesApiUnavailable=false;
-  }catch(error){
-    cyclesApiReady=false;
-    cyclesApiUnavailable=true;
-    reportCycleSyncError(error);
-  }
-  try{
-    await loadBacklogBoard();
-    backlogApiReady=true;
-  }catch(error){
-    backlogApiReady=false;
-    reportBacklogSyncError(error);
-  }
-  try{
-    await loadPrePiCycles();
-    prePiApiReady=true;
-  }catch(error){
-    prePiApiReady=false;
-    reportPrePiSyncError(error);
-  }
-  try{
-    await loadGoalsCycles();
-    goalsApiReady=true;
-  }catch(error){
-    goalsApiReady=false;
-    reportGoalsSyncError(error);
-  }
-  try{
-    await loadTeamBoardsCycles();
-    teamBoardsApiReady=true;
-  }catch(error){
-    teamBoardsApiReady=false;
-    reportTeamBoardsSyncError(error);
-  }
-  try{
-    await loadCapacityCycles();
-    capacityApiReady=true;
-  }catch(error){
-    capacityApiReady=false;
-    reportCapacitySyncError(error);
-  }
-  try{
-    await loadProgramBoardCycles();
-    programBoardApiReady=true;
-  }catch(error){
-    programBoardApiReady=false;
-    reportProgramBoardSyncError(error);
-  }
-  try{
-    await loadRisksCycles();
-    risksApiReady=true;
-  }catch(error){
-    risksApiReady=false;
-    reportRisksSyncError(error);
-  }
-  save();
+async function bootAuthenticated(){
+  appNavigation=await authRequest('/app/navigation');
+  applyNavigation(appNavigation);
+  normalizeAuthorizedUi();
+  scheduleSessionExpiry();
+  setAuthPage(false);
+  renderUserPanel();
+  save(false);
   render();
 }
+async function boot(){
+  loadState();
+  renderAuthLoading();
+  try{
+    currentUser=await authRequest('/auth/me');
+    await bootAuthenticated();
+  }catch(error){
+    if(error.status===401)renderLoginScreen();
+    else renderLoginScreen('Сервис временно недоступен. Попробуйте ещё раз.');
+  }
+}
 document.addEventListener('visibilitychange',()=>{
-  if(state.ui.mode!=='pi' || state.ui.tab==='data') return;
-  if(document.visibilityState==='hidden' && teamBoardsApiReady) flushTeamBoardsSync().catch(()=>{});
-  if(document.visibilityState==='hidden' && capacityApiReady) flushCapacitySync().catch(()=>{});
+  if(!currentUser||state.ui.mode!=='pi'||state.ui.tab==='data'||!canWriteTab(state.ui.tab))return;
+  if(document.visibilityState==='hidden'&&teamBoardsApiReady&&hasPermission('team_boards:write'))flushTeamBoardsSync().catch(()=>{});
+  if(document.visibilityState==='hidden'&&capacityApiReady&&hasPermission('team_boards:write'))flushCapacitySync().catch(()=>{});
 });
 boot();

@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._common import get_cycle_or_404
+from app.auth.dependencies import require_http_permission
+from app.auth.permissions import Permission
 from app.db.session import get_session
 from app.schemas.pi_cycle import (
     BacklogBoardRead,
@@ -26,7 +28,10 @@ from app.services.backlog_board import (
 )
 from app.services.optimistic_locking import lock_backlog
 
-router = APIRouter(tags=["PI Cycle"])
+router = APIRouter(
+    tags=["PI Cycle"],
+    dependencies=[Depends(require_http_permission(Permission.BACKLOG_READ, Permission.BACKLOG_WRITE))],
+)
 
 
 async def _run_backlog_command(

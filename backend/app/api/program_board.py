@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._common import get_cycle_or_404
+from app.auth.dependencies import require_http_permission
+from app.auth.permissions import Permission
 from app.db.session import get_session
 from app.schemas.pi_cycle import (
     ProgramBoardCommand,
@@ -23,7 +25,14 @@ from app.services.program_board import (
     update_program_board_connection,
 )
 
-router = APIRouter(tags=["PI Cycle"])
+router = APIRouter(
+    tags=["PI Cycle"],
+    dependencies=[
+        Depends(
+            require_http_permission(Permission.PROGRAM_BOARD_READ, Permission.PROGRAM_BOARD_WRITE)
+        )
+    ],
+)
 
 
 @router.get("/pi-cycles/{cycle_id}/program-board", response_model=ProgramBoardRead)

@@ -5,3 +5,4 @@ asyncpg==0.30.0
 pydantic-settings==2.10.1
 python-dotenv==1.1.1
 alembic==1.18.4
+itsdangerous==2.2.0
