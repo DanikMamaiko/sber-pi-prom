@@ -199,6 +199,16 @@ function pbDate(value){
   const parts=String(value||'').split('-');
   return parts.length===3?`${parts[2]}.${parts[1]}.${parts[0]}`:'—';
 }
+function pbEventRange(event){
+  const start=pbDate(event.event_date);
+  if(event.end_date && event.end_date!==event.event_date){
+    return `${start}–${pbDate(event.end_date)}`;
+  }
+  return start;
+}
+function pbEventPillHTML(event){
+  return `<div class="pir${event.event_type==='regression'?' reg':''}">${esc(event.name)} ${pbEventRange(event)}</div>`;
+}
 function pbCardHTML(card,extraClass=''){
   const primary=(card.executors||[]).find(row=>row.team_id===card.primary_team_id)||card.executors[0];
   const effort=primary?Object.entries(primary.effort_by_competency||{}).map(([key,value])=>`${key} ${round1(value)}`).join(' · '):'—';
@@ -235,7 +245,7 @@ function viewPB(){
     <th>Трайб</th><th>Команда</th><th class="sp pb-unscheduled-head">Не назначено</th>`+
     sprints.map(s=>`<th class="sp"><div class="sp-head"><div class="num">Спринт ${s.number}</div>
       <div class="dates">${pbDate(s.start_date)}–${pbDate(s.end_date)}</div>
-      ${(s.events||[]).map(event=>`<div class="pir">${esc(event.name)} ${pbDate(event.event_date)}</div>`).join('')}</div></th>`).join('')+
+      ${(s.events||[]).map(event=>pbEventPillHTML(event)).join('')}</div></th>`).join('')+
     `</tr></thead><tbody>`;
   tribes.forEach(tribe=>{
     const teams=(board.teams||[]).filter(team=>team.tribe_id===tribe.id);

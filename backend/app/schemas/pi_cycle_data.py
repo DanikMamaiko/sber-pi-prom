@@ -6,15 +6,24 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas._base import ORMModel
 
 
+# Типы событий таймлайна PI-цикла.
+EVENT_TYPE_PIR = "pir"
+EVENT_TYPE_REGRESSION = "regression"
+EVENT_TYPES = [EVENT_TYPE_PIR, EVENT_TYPE_REGRESSION]
+
+
 class PiEventCreate(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     event_date: date
+    end_date: date | None = None
 
 
 class PiEventRead(ORMModel):
     id: uuid.UUID
     name: str
     event_date: date
+    end_date: date | None
+    event_type: str
 
 
 class PiCycleCreate(BaseModel):
@@ -55,6 +64,7 @@ class PiCycleRead(ORMModel):
 class PiCycleSetupEvent(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     date: date
+    end_date: date | None = None
 
 
 class PiCycleSetupTeam(BaseModel):
@@ -69,6 +79,7 @@ class PiCycleSetupData(BaseModel):
     start_date: date | None = None
     sprint_count: int = Field(default=6, ge=1, le=20)
     pirs: list[PiCycleSetupEvent] = Field(default_factory=list)
+    regressions: list[PiCycleSetupEvent] = Field(default_factory=list)
     teams: list[PiCycleSetupTeam] = Field(default_factory=list)
     goals: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
@@ -101,11 +112,13 @@ class PiCycleDataUpdate(PiCycleDataCommand):
 class PiEventDataCreate(PiCycleDataCommand):
     name: str = Field(min_length=1, max_length=180)
     date: date
+    end_date: date | None = None
 
 
 class PiEventDataUpdate(PiCycleDataCommand):
     name: str = Field(min_length=1, max_length=180)
     date: date
+    end_date: date | None = None
 
 
 class PiCycleTeamDataCreate(PiCycleDataCommand):
@@ -147,6 +160,7 @@ class PiEventDataWrite(BaseModel):
     id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=180)
     date: date
+    end_date: date | None = None
 
 
 class PiCycleTeamDataWrite(BaseModel):
@@ -172,6 +186,7 @@ class PiCycleDataReplace(PiCycleDataCommand):
     start_date: date | None = None
     sprint_count: int = Field(ge=1, le=20)
     pirs: list[PiEventDataWrite] = Field(default_factory=list)
+    regressions: list[PiEventDataWrite] = Field(default_factory=list)
     teams: list[PiCycleTeamDataWrite] = Field(default_factory=list)
     goal_options: list[PiNamedDataWrite] = Field(default_factory=list)
     tags: list[PiTagDataWrite] = Field(default_factory=list)
@@ -182,6 +197,8 @@ class PiEventDataRead(BaseModel):
     id: uuid.UUID
     name: str
     date: date
+    end_date: date | None
+    event_type: str
     sort_order: int
 
 
@@ -224,6 +241,7 @@ class PiScheduleSprintRead(BaseModel):
     workdays: int
     weeks: list[PiScheduleWeekRead] = Field(default_factory=list)
     pirs: list[PiEventDataRead] = Field(default_factory=list)
+    regressions: list[PiEventDataRead] = Field(default_factory=list)
 
 
 class PiScheduleRead(BaseModel):
@@ -243,6 +261,7 @@ class PiCycleDataRead(BaseModel):
     cycle: PiCycleRead
     schedule: PiScheduleRead
     pirs: list[PiEventDataRead] = Field(default_factory=list)
+    regressions: list[PiEventDataRead] = Field(default_factory=list)
     teams: list[PiCycleTeamDataRead] = Field(default_factory=list)
     goal_options: list[PiGoalOptionDataRead] = Field(default_factory=list)
     tags: list[PiTagDataRead] = Field(default_factory=list)

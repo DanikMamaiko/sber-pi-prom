@@ -246,7 +246,7 @@ function ensureBudgetYear(year){
 }
 // Гарантировать наличие всех структур в объекте цикла.
 function ensureCycleShape(c){
-  if(!c.pi) c.pi={startDate:'',sprintCount:6,pirs:[],goals:[],tags:[],teams:[]};
+  if(!c.pi) c.pi={startDate:'',sprintCount:6,pirs:[],regressions:[],goals:[],tags:[],teams:[]};
   if(!Array.isArray(c.pi.tags)) c.pi.tags=[];
   if(!c.goals || typeof c.goals!=='object') c.goals={};
   if(!c.capacity || typeof c.capacity!=='object') c.capacity={};

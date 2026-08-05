@@ -1,5 +1,5 @@
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,11 @@ from app.schemas.pi_cycle import (
     PiGoalOptionDataUpdate,
     PiTagDataCreate,
     PiTagDataUpdate,
+)
+from app.schemas.pi_cycle_data import (
+    EVENT_TYPES,
+    EVENT_TYPE_PIR,
+    EVENT_TYPE_REGRESSION,
 )
 from app.services.planning import compute_sprints, workdays_between
 from app.services.program_board import delete_dangling_connections
@@ -72,14 +77,39 @@ def _cycle_end(cycle: PiCycle):
     return cycle.start_date + timedelta(days=cycle.sprint_count * 14 - 1)
 
 
-def _validate_event_date(cycle: PiCycle, value) -> None:
-    end_date = _cycle_end(cycle)
-    if cycle.start_date is None or end_date is None:
-        raise ValueError("Перед добавлением ПИР необходимо указать дату начала PI")
-    if value < cycle.start_date or value > end_date:
+def _validate_event_dates(cycle: PiCycle, start, end) -> None:
+    """Валидация диапазона дат события таймлайна (ПИР / регрессия).
+
+    start — дата начала (обязательна); end — дата конца (NULL == однодневное,
+    конец совпадает с началом). Обе границы должны попадать в PI-цикл.
+    """
+    cycle_end = _cycle_end(cycle)
+    if cycle.start_date is None or cycle_end is None:
+        raise ValueError("Перед добавлением события необходимо указать дату начала PI")
+    if start < cycle.start_date or start > cycle_end:
         raise ValueError(
-            f"Дата ПИР должна быть в диапазоне от {cycle.start_date.isoformat()} до {end_date.isoformat()}"
+            f"Дата события должна быть в диапазоне от {cycle.start_date.isoformat()} до {cycle_end.isoformat()}"
         )
+    effective_end = end or start
+    if effective_end < start:
+        raise ValueError("Дата конца события не может быть раньше даты начала")
+    if effective_end > cycle_end:
+        raise ValueError(
+            f"Дата конца события должна быть не позднее {cycle_end.isoformat()}"
+        )
+
+
+def _event_effective_end(row) -> date:
+    """Фактическая дата конца события: event_end_date или event_date."""
+    end = row.get("end_date") if isinstance(row, dict) else getattr(row, "end_date", None)
+    start = row.get("date") if isinstance(row, dict) else getattr(row, "date", None)
+    return end or start
+
+
+def _event_overlaps(row, period_start, period_end) -> bool:
+    """Пересекается ли диапазон события с периодом [period_start, period_end]."""
+    start = row.get("date") if isinstance(row, dict) else getattr(row, "date")
+    return start <= period_end and _event_effective_end(row) >= period_start
 
 
 async def _data_rows(session: AsyncSession, cycle_id: uuid.UUID):
@@ -136,9 +166,15 @@ async def read_pi_cycle_data(
             "id": row.id,
             "name": row.name,
             "date": row.event_date,
+            "end_date": row.event_end_date,
+            "event_type": row.event_type,
             "sort_order": row.sort_order,
         }
         for row in events
+    ]
+    pirs_rows = [row for row in event_rows if row["event_type"] == EVENT_TYPE_PIR]
+    regressions_rows = [
+        row for row in event_rows if row["event_type"] == EVENT_TYPE_REGRESSION
     ]
     sprints = []
     total_workdays = 0
@@ -161,9 +197,12 @@ async def read_pi_cycle_data(
             },
         ]
         sprint_events = [
+            row for row in pirs_rows if _event_overlaps(row, sprint.start_date, sprint.end_date)
+        ]
+        sprint_regressions = [
             row
-            for row in event_rows
-            if sprint.start_date <= row["date"] <= sprint.end_date
+            for row in regressions_rows
+            if _event_overlaps(row, sprint.start_date, sprint.end_date)
         ]
         sprints.append(
             {
@@ -174,6 +213,7 @@ async def read_pi_cycle_data(
                 "workdays": workdays,
                 "weeks": weeks,
                 "pirs": sprint_events,
+                "regressions": sprint_regressions,
             }
         )
 
@@ -184,7 +224,8 @@ async def read_pi_cycle_data(
             "total_workdays": total_workdays,
             "sprints": sprints,
         },
-        pirs=event_rows,
+        pirs=pirs_rows,
+        regressions=regressions_rows,
         teams=[
             {
                 "id": row.id,
@@ -307,7 +348,7 @@ async def update_cycle_data(
             await session.scalars(select(PiEvent).where(PiEvent.cycle_id == cycle.id))
         ).all()
         for event in events:
-            _validate_event_date(cycle, event.event_date)
+            _validate_event_dates(cycle, event.event_date, event.event_end_date)
     return await _finish_data(session, cycle, commit=commit)
 
 
@@ -318,74 +359,90 @@ async def _next_order(session: AsyncSession, model, cycle_id: uuid.UUID) -> int:
     return int(current if current is not None else -1) + 1
 
 
-async def create_pir(
+async def create_pi_event(
     session: AsyncSession,
     cycle: PiCycle,
     payload: PiEventDataCreate,
     *,
+    event_type: str = EVENT_TYPE_PIR,
     commit: bool = True,
 ):
+    if event_type not in EVENT_TYPES:
+        raise ValueError(f"Неподдерживаемый тип события: {event_type}")
     name = payload.name.strip()
-    _validate_event_date(cycle, payload.date)
+    _validate_event_dates(cycle, payload.date, payload.end_date)
     if await session.scalar(
         select(PiEvent).where(
             PiEvent.cycle_id == cycle.id,
+            PiEvent.event_type == event_type,
             func.lower(PiEvent.name) == name.casefold(),
         )
     ):
-        raise ValueError("Название ПИР должно быть уникальным в пределах PI-цикла")
+        raise ValueError(
+            "Название события должно быть уникальным в пределах PI-цикла для данного типа"
+        )
     session.add(
         PiEvent(
             cycle_id=cycle.id,
             name=name,
             event_date=payload.date,
+            event_end_date=payload.end_date,
+            event_type=event_type,
             sort_order=await _next_order(session, PiEvent, cycle.id),
         )
     )
     return await _finish_data(session, cycle, commit=commit)
 
 
-async def update_pir(
+async def update_pi_event(
     session: AsyncSession,
     cycle: PiCycle,
     event_id: uuid.UUID,
     payload: PiEventDataUpdate,
     *,
+    event_type: str = EVENT_TYPE_PIR,
     commit: bool = True,
 ):
     event = await session.scalar(
         select(PiEvent).where(PiEvent.id == event_id, PiEvent.cycle_id == cycle.id)
     )
-    if event is None:
-        raise ValueError("ПИР не найден в данном PI-цикле")
+    if event is None or event.event_type != event_type:
+        raise ValueError("Событие не найдено в данном PI-цикле")
     name = payload.name.strip()
-    _validate_event_date(cycle, payload.date)
+    _validate_event_dates(cycle, payload.date, payload.end_date)
     duplicate = await session.scalar(
         select(PiEvent).where(
             PiEvent.cycle_id == cycle.id,
+            PiEvent.event_type == event_type,
             PiEvent.id != event.id,
             func.lower(PiEvent.name) == name.casefold(),
         )
     )
     if duplicate:
-        raise ValueError("Название ПИР должно быть уникальным в пределах PI-цикла")
+        raise ValueError(
+            "Название события должно быть уникальным в пределах PI-цикла для данного типа"
+        )
     event.name = name
     event.event_date = payload.date
+    event.event_end_date = payload.end_date
     return await _finish_data(session, cycle, commit=commit)
 
 
-async def delete_pir(
+async def delete_pi_event(
     session: AsyncSession,
     cycle: PiCycle,
     event_id: uuid.UUID,
     *,
+    event_type: str | None = None,
     commit: bool = True,
 ):
     event = await session.scalar(
         select(PiEvent).where(PiEvent.id == event_id, PiEvent.cycle_id == cycle.id)
     )
     if event is None:
-        raise ValueError("ПИР не найден в данном PI-цикле")
+        raise ValueError("Событие не найдено в данном PI-цикле")
+    if event_type is not None and event.event_type != event_type:
+        raise ValueError("Событие не найдено в данном PI-цикле")
     await session.delete(event)
     return await _finish_data(session, cycle, commit=commit)
 
@@ -971,10 +1028,12 @@ async def replace_pi_cycle_data(
     goals_by_id = {row.id: row for row in goals}
     tags_by_id = {row.id: row for row in tags}
     _validate_snapshot_ids(payload.pirs, events, "ПИР")
+    _validate_snapshot_ids(payload.regressions, events, "Регрессия")
     _validate_snapshot_ids(payload.teams, teams, "команда PI-цикла")
     _validate_snapshot_ids(payload.goal_options, goals, "вариант цели")
     _validate_snapshot_ids(payload.tags, tags, "тэг")
     _require_unique([item.name for item in payload.pirs], "Название ПИР")
+    _require_unique([item.name for item in payload.regressions], "Название регрессии")
     _require_unique(
         [f"{item.tribe.strip()}\0{item.name.strip()}" for item in payload.teams],
         "Команда",
@@ -982,7 +1041,9 @@ async def replace_pi_cycle_data(
     _require_unique([item.name for item in payload.goal_options], "Вариант цели")
     _require_unique([item.name for item in payload.tags], "Тэг")
 
-    keep_event_ids = {item.id for item in payload.pirs if item.id is not None}
+    keep_event_ids = {item.id for item in payload.pirs if item.id is not None} | {
+        item.id for item in payload.regressions if item.id is not None
+    }
     keep_team_ids = {item.id for item in payload.teams if item.id is not None}
     keep_goal_ids = {item.id for item in payload.goal_options if item.id is not None}
     keep_tag_ids = {item.id for item in payload.tags if item.id is not None}
@@ -990,7 +1051,7 @@ async def replace_pi_cycle_data(
 
     for row in events:
         if row.id not in keep_event_ids:
-            await delete_pir(session, cycle, row.id, commit=False)
+            await delete_pi_event(session, cycle, row.id, commit=False)
     for row in teams:
         if row.id not in keep_team_ids:
             await delete_cycle_team(
@@ -1016,6 +1077,9 @@ async def replace_pi_cycle_data(
         (await session.scalars(select(Initiative).where(Initiative.cycle_id == cycle.id))).all()
     )
     for item in payload.pirs:
+        if item.id and events_by_id[item.id].name.casefold() != item.name.strip().casefold():
+            events_by_id[item.id].name = f"__pi_bulk_{uuid.uuid4().hex}"
+    for item in payload.regressions:
         if item.id and events_by_id[item.id].name.casefold() != item.name.strip().casefold():
             events_by_id[item.id].name = f"__pi_bulk_{uuid.uuid4().hex}"
     for item in payload.goal_options:
@@ -1068,11 +1132,28 @@ async def replace_pi_cycle_data(
             expected_version=command_version,
             name=item.name,
             date=item.date,
+            end_date=item.end_date,
         )
         if item.id is None:
-            await create_pir(session, cycle, command, commit=False)
+            await create_pi_event(session, cycle, command, commit=False, event_type=EVENT_TYPE_PIR)
         else:
-            await update_pir(session, cycle, item.id, command, commit=False)
+            await update_pi_event(session, cycle, item.id, command, commit=False, event_type=EVENT_TYPE_PIR)
+
+    for item in payload.regressions:
+        command = PiEventDataUpdate(
+            expected_version=command_version,
+            name=item.name,
+            date=item.date,
+            end_date=item.end_date,
+        )
+        if item.id is None:
+            await create_pi_event(
+                session, cycle, command, commit=False, event_type=EVENT_TYPE_REGRESSION
+            )
+        else:
+            await update_pi_event(
+                session, cycle, item.id, command, commit=False, event_type=EVENT_TYPE_REGRESSION
+            )
 
     for item in payload.teams:
         command = PiCycleTeamDataUpdate(
@@ -1118,7 +1199,14 @@ async def replace_pi_cycle_data(
     team_by_id = {row.id: row for row in final_teams}
     goal_by_id = {row.id: row for row in final_goals}
     tag_by_id = {row.id: row for row in final_tags}
-    event_by_name = {row.name.casefold(): row for row in final_events}
+    pir_by_name = {
+        row.name.casefold(): row for row in final_events if row.event_type == EVENT_TYPE_PIR
+    }
+    regression_by_name = {
+        row.name.casefold(): row
+        for row in final_events
+        if row.event_type == EVENT_TYPE_REGRESSION
+    }
     team_by_name = {
         (row.team.tribe.name.casefold(), row.team.name.casefold()): row
         for row in final_teams
@@ -1126,7 +1214,13 @@ async def replace_pi_cycle_data(
     goal_by_name = {row.name.casefold(): row for row in final_goals}
     tag_by_name = {row.name.casefold(): row for row in final_tags}
     for index, item in enumerate(payload.pirs):
-        (event_by_id[item.id] if item.id else event_by_name[item.name.strip().casefold()]).sort_order = index
+        (event_by_id[item.id] if item.id else pir_by_name[item.name.strip().casefold()]).sort_order = index
+    for index, item in enumerate(payload.regressions):
+        (
+            event_by_id[item.id]
+            if item.id
+            else regression_by_name[item.name.strip().casefold()]
+        ).sort_order = index
     for index, item in enumerate(payload.teams):
         (
             team_by_id[item.id]

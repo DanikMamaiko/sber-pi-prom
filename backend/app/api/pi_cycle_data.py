@@ -54,20 +54,21 @@ from app.services.pi_cycle_data import (
     CascadeRequired,
     create_cycle_team,
     create_goal_option,
-    create_pir,
+    create_pi_event,
     create_tag,
     delete_cycle_team,
     delete_goal_option,
-    delete_pir,
+    delete_pi_event,
     delete_tag,
     read_pi_cycle_data,
     replace_pi_cycle_data,
     update_cycle_data,
     update_cycle_team,
     update_goal_option,
-    update_pir,
+    update_pi_event,
     update_tag,
 )
+from app.schemas.pi_cycle_data import EVENT_TYPE_PIR, EVENT_TYPE_REGRESSION
 
 router = APIRouter(
     tags=["PI Cycle"],
@@ -201,7 +202,9 @@ async def post_pi_cycle_pir(
     session: AsyncSession = Depends(get_session),
 ):
     cycle = await lock_cycle(session, cycle_id, payload.expected_version)
-    return await _run_pi_data_command(session, create_pir(session, cycle, payload))
+    return await _run_pi_data_command(
+        session, create_pi_event(session, cycle, payload, event_type=EVENT_TYPE_PIR)
+    )
 
 
 @router.patch("/pi-cycles/{cycle_id}/pirs/{pir_id}", response_model=PiCycleDataRead)
@@ -212,7 +215,10 @@ async def patch_pi_cycle_pir(
     session: AsyncSession = Depends(get_session),
 ):
     cycle = await lock_cycle(session, cycle_id, payload.expected_version)
-    return await _run_pi_data_command(session, update_pir(session, cycle, pir_id, payload))
+    return await _run_pi_data_command(
+        session,
+        update_pi_event(session, cycle, pir_id, payload, event_type=EVENT_TYPE_PIR),
+    )
 
 
 @router.delete("/pi-cycles/{cycle_id}/pirs/{pir_id}", response_model=PiCycleDataRead)
@@ -223,7 +229,55 @@ async def remove_pi_cycle_pir(
     session: AsyncSession = Depends(get_session),
 ):
     cycle = await lock_cycle(session, cycle_id, payload.expected_version)
-    return await _run_pi_data_command(session, delete_pir(session, cycle, pir_id))
+    return await _run_pi_data_command(
+        session, delete_pi_event(session, cycle, pir_id, event_type=EVENT_TYPE_PIR)
+    )
+
+
+@router.post("/pi-cycles/{cycle_id}/regressions", response_model=PiCycleDataRead)
+async def post_pi_cycle_regression(
+    cycle_id: uuid.UUID,
+    payload: PiEventDataCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(
+        session, create_pi_event(session, cycle, payload, event_type=EVENT_TYPE_REGRESSION)
+    )
+
+
+@router.patch(
+    "/pi-cycles/{cycle_id}/regressions/{regression_id}", response_model=PiCycleDataRead
+)
+async def patch_pi_cycle_regression(
+    cycle_id: uuid.UUID,
+    regression_id: uuid.UUID,
+    payload: PiEventDataUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(
+        session,
+        update_pi_event(
+            session, cycle, regression_id, payload, event_type=EVENT_TYPE_REGRESSION
+        ),
+    )
+
+
+@router.delete(
+    "/pi-cycles/{cycle_id}/regressions/{regression_id}", response_model=PiCycleDataRead
+)
+async def remove_pi_cycle_regression(
+    cycle_id: uuid.UUID,
+    regression_id: uuid.UUID,
+    payload: PiCycleDataCommand,
+    session: AsyncSession = Depends(get_session),
+):
+    cycle = await lock_cycle(session, cycle_id, payload.expected_version)
+    return await _run_pi_data_command(
+        session,
+        delete_pi_event(session, cycle, regression_id, event_type=EVENT_TYPE_REGRESSION),
+    )
 
 
 @router.post("/pi-cycles/{cycle_id}/cycle-teams", response_model=PiCycleDataRead)

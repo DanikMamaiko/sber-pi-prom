@@ -357,9 +357,16 @@ async def read_program_board(
                     "start_date": start,
                     "end_date": end,
                     "events": [
-                        {"id": event.id, "name": event.name, "event_date": event.event_date}
+                        {
+                            "id": event.id,
+                            "name": event.name,
+                            "event_date": event.event_date,
+                            "end_date": event.event_end_date,
+                            "event_type": event.event_type,
+                        }
                         for event in sorted_events
-                        if start <= event.event_date <= end
+                        if event.event_date <= end
+                        and (event.event_end_date or event.event_date) >= start
                     ],
                 }
             )

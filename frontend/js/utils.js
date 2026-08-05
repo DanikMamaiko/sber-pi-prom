@@ -144,6 +144,12 @@ function weekdaysBetween(a,b){
   while(d<=b){const w=d.getDay();if(w!==0&&w!==6)c++;d=addDays(d,1);}
   return c;
 }
+function eventOverlaps(ev,periodStart,periodEnd){
+  if(!ev||!ev.date)return false;
+  const s=parseISO(ev.date);
+  const e=ev.end_date?parseISO(ev.end_date):s;
+  return s<=periodEnd && e>=periodStart;
+}
 function computeSprints(){
   const out=[]; const n=Math.max(0,parseInt(state.pi.sprintCount)||0);
   if(!state.pi.startDate) return out;
@@ -151,21 +157,19 @@ function computeSprints(){
   for(let i=0;i<n;i++){
     const s=addDays(start,i*SPRINT_DAYS);
     const e=addDays(s,SPRINT_DAYS-1);
-    const pirs=state.pi.pirs.filter(p=>{
-      if(!p.date)return false;const pd=parseISO(p.date);return pd>=s&&pd<=e;
-    });
-    out.push({index:i,start:s,end:e,workdays:weekdaysBetween(s,e),pirs});
+    const pirs=state.pi.pirs.filter(p=>eventOverlaps(p,s,e));
+    const regressions=(state.pi.regressions||[]).filter(p=>eventOverlaps(p,s,e));
+    out.push({index:i,start:s,end:e,workdays:weekdaysBetween(s,e),pirs,regressions});
   }
   return out;
 }
 function sprintWeekPeriod(s,week){
   const start=week===1 ? addDays(s.start,7) : s.start;
   const end=week===1 ? s.end : addDays(s.start,6);
-  const pirs=s.pirs.filter(p=>{
-    if(!p.date)return false;const pd=parseISO(p.date);return pd>=start&&pd<=end;
-  });
+  const pirs=s.pirs.filter(p=>eventOverlaps(p,start,end));
+  const regressions=(s.regressions||[]).filter(p=>eventOverlaps(p,start,end));
   return {
-    index:s.index, week, start, end, pirs,
+    index:s.index, week, start, end, pirs, regressions,
     workdays:weekdaysBetween(start,end),
     key:`${s.index}:${week}`,
     title:`Спринт ${s.index+1}`,
@@ -199,12 +203,24 @@ function setBoardPeriod(item,sprintVal,weekVal){
   }
 }
 function periodWeekAttr(period){ return period.week===null ? '' : ` data-tb-week="${period.week}"`; }
+function eventRangeText(ev){
+  if(!ev||!ev.date)return '';
+  const start=fmt(parseISO(ev.date));
+  if(ev.end_date && ev.end_date!==ev.date){
+    return `${start}–${fmt(parseISO(ev.end_date))}`;
+  }
+  return start;
+}
+function eventPillHTML(ev,isRegression){
+  return `<div class="pir${isRegression?' reg':''}">${esc(ev.name)} ${eventRangeText(ev)}</div>`;
+}
 function periodHeadHTML(period,opts={}){
   const capHtml=opts.capHtml||'';
   return `<div class="num">${period.title}</div>
     ${period.subtitle?`<div class="week-label">${period.subtitle}</div>`:''}
     <div class="dates">${fmt(period.start)}–${fmt(period.end)}</div>
-    ${period.pirs.map(p=>`<div class="pir">${esc(p.name)} ${fmt(parseISO(p.date))}</div>`).join('')}
+    ${(period.pirs||[]).map(p=>eventPillHTML(p,false)).join('')}
+    ${(period.regressions||[]).map(p=>eventPillHTML(p,true)).join('')}
     ${capHtml}`;
 }
 function weekSelectHTML(id,selected){

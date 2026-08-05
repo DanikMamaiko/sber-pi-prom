@@ -18,6 +18,7 @@ from app.models.pi_cycle import (
     Tribe,
 )
 from app.schemas.pi_cycle import PiCycleSetupRead, PiCycleSetupWrite
+from app.schemas.pi_cycle_data import EVENT_TYPE_PIR, EVENT_TYPE_REGRESSION
 
 
 def _unique_non_empty(values: list[str]) -> list[str]:
@@ -68,7 +69,16 @@ async def read_cycle_setup(session: AsyncSession, cycle: PiCycle) -> PiCycleSetu
         version=cycle.version,
         start_date=cycle.start_date,
         sprint_count=cycle.sprint_count,
-        pirs=[{"name": event.name, "date": event.event_date} for event in events],
+        pirs=[
+            {"name": event.name, "date": event.event_date, "end_date": event.event_end_date}
+            for event in events
+            if event.event_type == EVENT_TYPE_PIR
+        ],
+        regressions=[
+            {"name": event.name, "date": event.event_date, "end_date": event.event_end_date}
+            for event in events
+            if event.event_type == EVENT_TYPE_REGRESSION
+        ],
         teams=[
             {
                 "tribe": item.team.tribe.name,
@@ -107,6 +117,8 @@ async def replace_cycle_setup(
             raise ValueError(f"Код компетенции слишком длинный для команды: {item.name}")
     if any(not event.name.strip() for event in payload.pirs):
         raise ValueError("Название ПИР не может быть пустым")
+    if any(not event.name.strip() for event in payload.regressions):
+        raise ValueError("Название регрессии не может быть пустым")
 
     cycle.start_date = payload.start_date
     cycle.sprint_count = payload.sprint_count
@@ -125,6 +137,19 @@ async def replace_cycle_setup(
                 cycle_id=cycle.id,
                 name=event.name.strip(),
                 event_date=event.date,
+                event_end_date=event.end_date,
+                event_type=EVENT_TYPE_PIR,
+                sort_order=index,
+            )
+        )
+    for index, event in enumerate(payload.regressions):
+        session.add(
+            PiEvent(
+                cycle_id=cycle.id,
+                name=event.name.strip(),
+                event_date=event.date,
+                event_end_date=event.end_date,
+                event_type=EVENT_TYPE_REGRESSION,
                 sort_order=index,
             )
         )

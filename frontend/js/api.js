@@ -35,7 +35,7 @@ function apiPermission(path,method='GET'){
   if(clean.includes('/team-boards')||clean.includes('/capacity'))return read?'team_boards:read':'team_boards:write';
   if(clean.includes('/program-board'))return read?'program_board:read':'program_board:write';
   if(clean.includes('/risks-board')||/\/pi-cycles\/[^/]+\/risks(?:\/|$)/.test(clean))return read?'risks:read':'risks:write';
-  if(clean==='/pi-cycles'||clean==='/pi-cycle-data'||clean.startsWith('/tribes')||clean.startsWith('/teams')||clean.startsWith('/team-members')||clean.includes('/setup')||clean.includes('/data')||clean.includes('/overview')||clean.includes('/pirs')||clean.includes('/cycle-teams')||clean.includes('/goal-options')||clean.includes('/tags'))return read?'pi_data:read':'pi_data:write';
+  if(clean==='/pi-cycles'||clean==='/pi-cycle-data'||clean.startsWith('/tribes')||clean.startsWith('/teams')||clean.startsWith('/team-members')||clean.includes('/setup')||clean.includes('/data')||clean.includes('/overview')||clean.includes('/pirs')||clean.includes('/regressions')||clean.includes('/cycle-teams')||clean.includes('/goal-options')||clean.includes('/tags'))return read?'pi_data:read':'pi_data:write';
   if(clean.startsWith('/pi-cycles/'))return read?'pi_data:read':'pi_data:write';
   return null;
 }
@@ -189,7 +189,8 @@ function applyPiDataView(id,view){
   c.pi={
     startDate:view.cycle.start_date||'',
     sprintCount:view.cycle.sprint_count,
-    pirs:(view.pirs||[]).map(row=>({_backendId:row.id,name:row.name,date:row.date})),
+    pirs:(view.pirs||[]).map(row=>({_backendId:row.id,name:row.name,date:row.date,end_date:row.end_date||''})),
+    regressions:(view.regressions||[]).map(row=>({_backendId:row.id,name:row.name,date:row.date,end_date:row.end_date||''})),
     teams:(view.teams||[]).map(row=>({
       _cycleTeamId:row.id,_teamId:row.team_id,_tribeId:row.tribe_id,
       tribe:row.tribe,name:row.name,type:row.team_type,
@@ -316,6 +317,7 @@ function applyPrePi(c,aggregate,id=currentCycleId()){
     });
     c.pi.goals=(aggregate.goal_options||[]).map(row=>row.name);
     c.pi.pirs=Array.isArray(c.pi.pirs)?c.pi.pirs:[];
+    c.pi.regressions=Array.isArray(c.pi.regressions)?c.pi.regressions:[];
     c.pi.tags=Array.isArray(c.pi.tags)?c.pi.tags:[];
     cycleBackendIds[id]=context.id;
   }

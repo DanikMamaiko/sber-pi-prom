@@ -34,6 +34,7 @@ _RESOURCE_MARKERS = (
     ("/goal-options", "goal_option"),
     ("/team-members", "team_member"),
     ("/pirs", "pi_event"),
+    ("/regressions", "pi_event"),
     ("/tribes", "tribe"),
     ("/teams", "team"),
     ("/tags", "tag"),

@@ -38,14 +38,20 @@ async function executePiDataCommand(path,options={},cascadeBody=null){
   render();
   toast('Изменения сохранены на сервере',{type:'success'});
 }
-function prototypePirRow(row,editable){
+function prototypeEventRow(row,editable,kind){
   const ro=editable?'':'readonly', dis=editable?'':'disabled';
-  return `<div class="row" data-pir-row data-pir-id="${esc(row.id||'')}">
-    <input class="pir-name" value="${esc(row.name||'')}" ${ro} placeholder="ПИР">
-    <input type="date" class="pir-date" value="${esc(row.date||'')}" ${dis}>
-    ${editable?'<button class="icon danger sm" data-delete-pir>✕</button>':''}
+  const cls=kind==='regression'?'reg':'pir';
+  const label=kind==='regression'?'Регрессия':'ПИР';
+  return `<div class="row" data-${kind}-row data-${kind}-id="${esc(row.id||'')}">
+    <input class="${cls}-name" value="${esc(row.name||'')}" ${ro} placeholder="${label}">
+    <input type="date" class="${cls}-date" value="${esc(row.date||'')}" ${dis}>
+    <span class="date-dash">–</span>
+    <input type="date" class="${cls}-date-end" value="${esc(row.end_date||'')}" ${dis} title="Дата конца (необязательно; пусто — один день)">
+    ${editable?`<button class="icon danger sm" data-delete-${kind}>✕</button>`:''}
   </div>`;
 }
+function prototypePirRow(row,editable){return prototypeEventRow(row,editable,'pir');}
+function prototypeRegressionRow(row,editable){return prototypeEventRow(row,editable,'regression');}
 function prototypeTeamRow(row,editable,refs){
   const ro=editable?'':'readonly', dis=editable?'':'disabled';
   const competencies=row.competencies||[];
@@ -73,6 +79,7 @@ function viewData(){
   const dis=editable?'':'disabled';
   const refs=view.reference_data||{team_types:['Agile','ИТ-проект'],competencies:['SA','DEV','QA','FE','BE','DES'],sprint_count_min:1,sprint_count_max:20};
   const pirs=(view.pirs||[]).map(row=>prototypePirRow(row,editable)).join('');
+  const regressions=(view.regressions||[]).map(row=>prototypeRegressionRow(row,editable)).join('');
   const teamRows=(view.teams||[]).map(row=>prototypeTeamRow(row,editable,refs)).join('');
   const goals=(view.goal_options||[]).map(row=>prototypeNamedRow('goal',row,editable)).join('');
   const tags=(view.tags||[]).map(row=>prototypeNamedRow('tag',row,editable)).join('');
@@ -81,6 +88,8 @@ function viewData(){
     <label class="fld"><span class="lab">Дата старта PI-цикла</span><input type="date" id="startDate" value="${esc(view.cycle.start_date||'')}" ${dis}></label>
     <label class="fld"><span class="lab">Количество спринтов</span><input type="number" min="${esc(refs.sprint_count_min)}" max="${esc(refs.sprint_count_max)}" id="sprintCount" value="${esc(view.cycle.sprint_count)}" ${dis} style="width:90px"></label>
     <h3>Данные ПИРов ${editable?'<button class="plus" id="addPir">+</button>':''}</h3><div id="pirRows">${pirs||'<div class="muted" data-empty>Нет данных</div>'}</div>
+    <h3>Данные регрессионного тестирования ${editable?'<button class="plus" id="addRegression">+</button>':''}</h3><div id="regressionRows">${regressions||'<div class="muted" data-empty>Нет данных</div>'}</div>
+    <div class="hint" style="margin-top:4px">ПИР и регрессия задаются диапазоном дат: «конец» необязателен (пусто — однодневное событие). Метки ПИР и регрессии отображаются в шапках спринтов на «Командных досках» и «Program Board».</div>
     <h3>Данные по командам ${editable?'<button class="plus" id="addTeam">+</button>':''}</h3>
     <table class="data-teams"><thead><tr><th>Трайб</th><th>Команда</th><th>Тип</th><th>Наличие цели</th><th>Компетенции</th><th></th></tr></thead><tbody id="teamRows">${teamRows||'<tr data-empty><td colspan="6" class="muted">Нет данных</td></tr>'}</tbody></table>
     <h3>Цели PI ${editable?'<button class="plus" id="addGoal">+</button>':''}</h3><div id="goalRows">${goals||'<div class="muted" data-empty>Целей пока нет</div>'}</div>
@@ -94,7 +103,8 @@ function piDataFormPayload(){
   return {
     start_date:$('#startDate').value||null,
     sprint_count:+$('#sprintCount').value,
-    pirs:[...document.querySelectorAll('[data-pir-row]')].map(row=>({id:row.dataset.pirId||null,name:row.querySelector('.pir-name').value.trim(),date:row.querySelector('.pir-date').value})).filter(row=>row.name&&row.date),
+    pirs:[...document.querySelectorAll('[data-pir-row]')].map(row=>({id:row.dataset.pirId||null,name:row.querySelector('.pir-name').value.trim(),date:row.querySelector('.pir-date').value,end_date:row.querySelector('.pir-date-end').value||null})).filter(row=>row.name&&row.date),
+    regressions:[...document.querySelectorAll('[data-regression-row]')].map(row=>({id:row.dataset.regressionId||null,name:row.querySelector('.reg-name').value.trim(),date:row.querySelector('.reg-date').value,end_date:row.querySelector('.reg-date-end').value||null})).filter(row=>row.name&&row.date),
     teams:[...document.querySelectorAll('[data-team-row]')].map(row=>({id:row.dataset.teamId||null,tribe:row.querySelector('.t-tribe').value.trim(),name:row.querySelector('.t-name').value.trim(),team_type:row.querySelector('.t-type').value,excluded_from_goals:!row.querySelector('.t-plan').checked,competencies:[...row.querySelectorAll('.t-comp:checked')].map(el=>el.dataset.c)})).filter(row=>row.tribe&&row.name),
     goal_options:[...document.querySelectorAll('[data-goal-row]')].map(row=>({id:row.dataset.goalId||null,name:row.querySelector('.g-name').value.trim()})).filter(row=>row.name),
     tags:[...document.querySelectorAll('[data-tag-row]')].map(row=>({id:row.dataset.tagId||null,name:row.querySelector('.tag-name').value.trim()})).filter(row=>row.name),
@@ -108,10 +118,12 @@ function bindData(){
     const button=event.target.closest('button'); if(!button)return;
     if(button.id==='editData'){state.ui.dataEdit=true;save(false);render();return;}
     if(button.id==='addPir'){const box=$('#pirRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypePirRow({},true));return;}
+    if(button.id==='addRegression'){const box=$('#regressionRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeRegressionRow({},true));return;}
     if(button.id==='addTeam'){const box=$('#teamRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeTeamRow({team_type:'Agile',competencies:BASE_TEAM_COMPS.slice()},true,refs));return;}
     if(button.id==='addGoal'){const box=$('#goalRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeNamedRow('goal',{},true));return;}
     if(button.id==='addTag'){const box=$('#tagRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeNamedRow('tag',{},true));return;}
     if(button.hasAttribute('data-delete-pir')){button.closest('[data-pir-row]').remove();return;}
+    if(button.hasAttribute('data-delete-regression')){button.closest('[data-regression-row]').remove();return;}
     if(button.hasAttribute('data-delete-team')){button.closest('[data-team-row]').remove();return;}
     if(button.hasAttribute('data-delete-goal')){button.closest('[data-goal-row]').remove();return;}
     if(button.hasAttribute('data-delete-tag')){button.closest('[data-tag-row]').remove();return;}

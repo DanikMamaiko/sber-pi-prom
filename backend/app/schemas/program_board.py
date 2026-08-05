@@ -51,6 +51,8 @@ class ProgramBoardEvent(BaseModel):
     id: uuid.UUID
     name: str
     event_date: date
+    end_date: date | None
+    event_type: str
 
 
 class ProgramBoardSprint(BaseModel):

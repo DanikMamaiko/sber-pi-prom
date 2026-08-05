@@ -64,6 +64,10 @@ class PiEvent(Base):
     cycle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pi_cycles.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     event_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Конец диапазона (включительно); NULL — однодневное событие (конец == event_date).
+    event_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Тип события таймлайна: 'pir' (ПИР) или 'regression' (регрессионное тестирование).
+    event_type: Mapped[str] = mapped_column(String(20), default="pir", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     cycle: Mapped[PiCycle] = relationship(back_populates="events")

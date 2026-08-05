@@ -12,6 +12,8 @@
     --accent-d:#2f9468;
     --accent-bg:#23463a;
     --accent-soft:rgba(66,185,133,.14);
+    --reg:#e8a13a;
+    --reg-soft:rgba(232,161,58,.16);
     --blue:#2a4d77;
     --blue-2:#234063;
     --blue-b:#6298d0;
@@ -185,6 +187,8 @@
   .sp-head .num{font-weight:700;color:var(--text);font-size:13px;text-transform:none;letter-spacing:0}
   .sp-head .dates{font-size:11.5px;color:var(--muted);font-weight:400;margin-top:3px;text-transform:none;letter-spacing:0}
   .sp-head .pir,.sprint-head .pir,.lane-sp-head .pir{font-size:11px;color:var(--accent);font-weight:600;margin-top:4px;text-transform:none;letter-spacing:0;display:inline-block;background:var(--accent-soft);padding:1px 7px;border-radius:20px;max-width:100%;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sp-head .pir.reg,.sprint-head .pir.reg,.lane-sp-head .pir.reg{color:var(--reg);background:var(--reg-soft)}
+  .date-dash{color:var(--muted);align-self:center;padding:0 2px;flex:0 0 auto}
   td.tribe-cell{background:var(--panel2);font-weight:600;min-width:160px;position:sticky;left:0;z-index:2}
   td.team-cell{background:var(--bg2);min-width:150px}
   td.pb-cell{min-width:170px;height:90px;background:var(--bg);transition:background var(--ease)}
