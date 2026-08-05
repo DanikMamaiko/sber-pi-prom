@@ -8,6 +8,10 @@ def source(name: str) -> str:
     return (ROOT / "frontend" / "js" / name).read_text(encoding="utf-8")
 
 
+def css_source(name: str) -> str:
+    return (ROOT / "frontend" / "css" / name).read_text(encoding="utf-8")
+
+
 def test_team_boards_use_versioned_backend_commands_and_server_capacity():
     api = source("api.js")
     boards = source("team-boards.js")
@@ -57,6 +61,65 @@ def test_team_board_forms_close_only_after_successful_commands():
     assert "if(!created)return;" in create_handler
     assert "if(await runBoardCommand" in save_handler
     assert save_handler.index("if(await runBoardCommand") < save_handler.index("root.innerHTML='';")
+
+
+def test_team_board_story_hierarchy_creates_program_board_connections():
+    api = source("api.js")
+    boards = source("team-boards.js")
+
+    assert "if(endpoint.kind==='g')return {kind:'g',uid:endpoint.ref};" in api
+    assert "if(ep.kind==='g'){" in api
+    assert "return {kind:'story',id:story._backendId};" in api
+    assert "source:{kind:'initiative',id:iss._backendId}" in boards
+    assert "target:{kind:'story',id:createdStory._backendId}" in boards
+    assert "source:{kind:'story',id:parentStory._backendId}" in boards
+    assert "target:{kind:'work_item',id:item._backendId}" in boards
+    assert 'data-link-kind="c" data-link-key="${esc(iss.id)}"' in source("program-board.js")
+    assert 'data-link-kind="g" data-link-key="${esc(sy.uid)}"' in source("program-board.js")
+    assert ".sticker .c-link{display:block;width:max-content;max-width:100%}" in css_source("styles.css")
+    assert "kind==='g' ? {kind:'g',uid:key}" in boards
+    assert "scope.querySelector(`.story[data-story-uid=" in boards
+    assert "e.target.closest('.x,.c-link')" in boards
+    assert "e.target.closest('.x,.s-link')" in boards
+    assert "el.closest('.sticker,.story,.white')" in boards
+
+
+def test_team_board_subtask_modal_does_not_send_role_as_assignee_name():
+    boards = source("team-boards.js")
+
+    assert "function boardAssigneeDatalist(roster)" in boards
+    assert ".filter(p=>p.fio)" in boards
+    assert "label=\"${esc(p.role)}\"" in boards
+    assert "function boardAssigneePayload(roster,name,role,validRoles)" in boards
+    assert "roleTokens.has(assigneeName.toUpperCase())?'':assigneeName" in boards
+    assert "assignee_member_id:assignee.assignee_member_id,assignee_name:assignee.assignee_name" in boards
+
+
+def test_team_board_sync_error_toast_includes_backend_reason():
+    api = source("api.js")
+
+    start = api.index("function reportTeamBoardsSyncError(error)")
+    handler = api[start : api.index("async function persistTeamBoardsCycle", start)]
+
+    assert "replace(/^Задача\\s+\\S+:\\s*/,'')" in handler
+    assert "`${base} ${reason.charAt(0).toUpperCase()+reason.slice(1)}`" in handler
+    assert "на сервере" not in handler
+    assert "Причина:" not in handler
+    assert "timeout:8000" in handler
+
+
+def test_team_board_prevents_decomposition_after_parent_issue():
+    boards = source("team-boards.js")
+
+    assert "function boardPeriodAfter(sprint,week,parentSprint,parentWeek)" in boards
+    assert "function decompositionAfterIssue(iss,sprint,week)" in boards
+    assert "не может быть запланирована позже главной задачи" in boards
+    assert "warnDecompositionAfterIssue('История')" in boards
+    assert "warnDecompositionAfterIssue('Подзадача')" in boards
+    assert "Главная задача не может быть запланирована раньше своих историй или подзадач" in boards
+    assert "if(decompositionAfterIssue(iss,+target,targetWeek))" in boards
+    assert "if(decompositionAfterIssue(iss,white.sprint,white.week))" in boards
+    assert "if(decompositionAfterIssue(iss,f.sprint,f.week))" in boards
 
 
 def test_capacity_member_is_created_from_validated_modal():

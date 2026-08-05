@@ -17,6 +17,7 @@ from app.schemas.pi_cycle import (
     PiCycleUpdate,
     PrePiWrite,
     PrePiSubmitWrite,
+    ProgramBoardConnectionCreate,
     ProgramBoardWrite,
     RisksWrite,
     TeamBoardsWrite,
@@ -31,6 +32,7 @@ from app.services.pre_pi import (
     validate_status_transition,
 )
 from app.services.goals import _sync_goal_to_initiatives
+from app.services.team_boards import _period_after_parent
 
 
 def test_compute_sprints_uses_two_week_periods():
@@ -236,6 +238,13 @@ def test_team_boards_accept_stories_and_work_items():
     assert board.work_items[0].story_client_uid == "story-1"
 
 
+def test_team_board_decomposition_period_cannot_be_after_parent():
+    assert _period_after_parent(3, None, 2, None) is True
+    assert _period_after_parent(2, 1, 2, 0) is True
+    assert _period_after_parent(2, 0, 2, 1) is False
+    assert _period_after_parent(1, None, 2, None) is False
+
+
 def test_capacity_accepts_cycle_members_and_date_ranges():
     payload = CapacityWrite(
         expected_version=0,
@@ -420,6 +429,32 @@ def test_program_board_accepts_endpoints_and_relative_bend():
     assert connection.bend.dx == 42.5
 
 
+def test_program_board_accepts_story_endpoints():
+    payload = ProgramBoardWrite(
+        expected_version=0,
+        connections=[
+            {
+                "client_uid": "connection-1",
+                "source": {"kind": "c", "ref": "SBOL-3001"},
+                "target": {"kind": "g", "ref": "story-1"},
+            },
+            {
+                "client_uid": "connection-2",
+                "source": {"kind": "g", "ref": "story-1"},
+                "target": {"kind": "w", "ref": "work-1"},
+            },
+        ],
+    )
+    command = ProgramBoardConnectionCreate(
+        expected_version=0,
+        source={"kind": "story", "id": "11111111-1111-1111-1111-111111111111"},
+        target={"kind": "work_item", "id": "22222222-2222-2222-2222-222222222222"},
+    )
+
+    assert payload.connections[0].target.kind == "g"
+    assert command.source.kind == "story"
+
+
 def test_program_board_rejects_unknown_endpoint_kind():
     with pytest.raises(ValidationError):
         ProgramBoardWrite(
@@ -427,7 +462,7 @@ def test_program_board_rejects_unknown_endpoint_kind():
             connections=[
                 {
                     "client_uid": "connection-1",
-                    "source": {"kind": "story", "ref": "story-1"},
+                    "source": {"kind": "x", "ref": "story-1"},
                     "target": {"kind": "c", "ref": "SBOL-3001"},
                 }
             ]

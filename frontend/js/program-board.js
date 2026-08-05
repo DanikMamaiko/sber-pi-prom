@@ -303,6 +303,7 @@ function stickerHTML(iss,withDel,showDecomp,showTeams,extraClass){
     <div class="eff">${issueEffortLabel(iss)}</div>
     ${decomp}
     ${iss.agreed?`<span class="st-badge ok">${esc(approvalLabel(iss))}</span>`:''}
+    <span class="c-link" data-link-kind="c" data-link-key="${esc(iss.id)}" draggable="false" title="Добавить связь: зажмите и потяните на нужный стикер">+ связь</span>
   </div>`;
 }
 // Серый информационный стикер на доске команды-владельца.
@@ -350,6 +351,7 @@ function storyHTML(iss,sy){
     ${sy.name?`<div class="sname">${esc(sy.name)}</div>`:''}
     <div class="eff">${comps.map(k=>`${k} ${+sc[k]||0}`).join(' · ')}</div>
     ${decomp}
+    <span class="s-link" data-link-kind="g" data-link-key="${esc(sy.uid)}" draggable="false" title="Добавить связь: зажмите и потяните на нужный стикер">+ связь</span>
   </div>`;
 }
 function bindPB(){

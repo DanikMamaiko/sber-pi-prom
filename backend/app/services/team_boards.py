@@ -234,6 +234,12 @@ async def replace_team_boards(
                 source_story.week_index,
                 f"История {uid}",
             )
+            _validate_decomposition_period(
+                "История",
+                source_story.sprint_index,
+                source_story.week_index,
+                initiative,
+            )
             story.effort_by_competency = normalized_effort(
                 source_story.effort_by_competency,
                 allowed_competencies,
@@ -284,6 +290,12 @@ async def replace_team_boards(
                 source_item.sprint_index,
                 source_item.week_index,
                 f"Задача {uid}",
+            )
+            _validate_decomposition_period(
+                "Подзадача",
+                source_item.sprint_index,
+                source_item.week_index,
+                initiative,
             )
             competency = source_item.competency.strip().upper()
             if competency not in allowed_competencies:
@@ -416,6 +428,49 @@ async def _assert_client_uid_available(
         raise ValueError(f"Клиентский UID должен быть уникален в пределах PI-цикла: {client_uid}")
 
 
+def _period_after_parent(
+    sprint_index: int | None,
+    week_index: int | None,
+    parent_sprint_index: int | None,
+    parent_week_index: int | None,
+) -> bool:
+    if sprint_index is None or parent_sprint_index is None:
+        return False
+    if sprint_index != parent_sprint_index:
+        return sprint_index > parent_sprint_index
+    if week_index is None or parent_week_index is None:
+        return False
+    return week_index > parent_week_index
+
+
+def _validate_decomposition_period(
+    label: str,
+    sprint_index: int | None,
+    week_index: int | None,
+    initiative: Initiative,
+) -> None:
+    if _period_after_parent(
+        sprint_index,
+        week_index,
+        initiative.sprint_index,
+        initiative.week_index,
+    ):
+        raise ValueError(f"{label} не может быть запланирована позже главной задачи")
+
+
+def _validate_initiative_children_period(
+    initiative: Initiative,
+    sprint_index: int | None,
+    week_index: int | None,
+) -> None:
+    for story in initiative.stories:
+        if _period_after_parent(story.sprint_index, story.week_index, sprint_index, week_index):
+            raise ValueError("Главная задача не может быть запланирована раньше своих историй")
+    for item in initiative.work_items:
+        if _period_after_parent(item.sprint_index, item.week_index, sprint_index, week_index):
+            raise ValueError("Главная задача не может быть запланирована раньше своих подзадач")
+
+
 def _validate_assignee(
     uid: str,
     assignee_name: str,
@@ -519,6 +574,7 @@ async def update_board_initiative(
         sprint_index = payload.sprint_index if "sprint_index" in fields else initiative.sprint_index
         week_index = payload.week_index if "week_index" in fields else initiative.week_index
         validate_sprint_position(cycle, sprint_index, week_index, f"Инициатива {initiative.issue_key}")
+        _validate_initiative_children_period(initiative, sprint_index, week_index)
         initiative.sprint_index = sprint_index
         initiative.week_index = week_index
     if "board_sort_order" in fields:
@@ -539,6 +595,7 @@ async def create_board_story(
     uid = payload.client_uid.strip()
     await _assert_client_uid_available(session, cycle, Story, uid)
     validate_sprint_position(cycle, payload.sprint_index, payload.week_index, f"История {uid}")
+    _validate_decomposition_period("История", payload.sprint_index, payload.week_index, initiative)
     story = Story(
         id=uuid.uuid4(),
         initiative_id=initiative.id,
@@ -584,6 +641,7 @@ async def update_board_story(
         sprint_index = payload.sprint_index if "sprint_index" in fields else story.sprint_index
         week_index = payload.week_index if "week_index" in fields else story.week_index
         validate_sprint_position(cycle, sprint_index, week_index, f"История {story.client_uid}")
+        _validate_decomposition_period("История", sprint_index, week_index, initiative)
         story.sprint_index = sprint_index
         story.week_index = week_index
     if "sort_order" in fields:
@@ -606,9 +664,26 @@ async def delete_board_story(
     if story is None:
         raise ValueError("История не найдена для этой инициативы")
     children = [row for row in initiative.work_items if row.story_id == story.id]
+    related_ids = [story.id, *(row.id for row in children)]
+    connections = list(
+        (
+            await session.scalars(
+                select(BoardConnection).where(
+                    BoardConnection.cycle_id == cycle.id,
+                    or_(
+                        BoardConnection.source_id.in_(related_ids),
+                        BoardConnection.target_id.in_(related_ids),
+                    ),
+                )
+            )
+        ).all()
+    )
     affected = [
         {"kind": "work_item", "id": str(row.id), "label": row.client_uid}
         for row in children
+    ] + [
+        {"kind": "connection", "id": str(row.id), "label": row.client_uid}
+        for row in connections
     ]
     if affected and not payload.confirm_cascade:
         raise TeamBoardCascadeRequired(
@@ -659,6 +734,7 @@ async def create_board_work_item(
     )
     story = await _story_by_client_uid(initiative, payload.story_client_uid)
     validate_sprint_position(cycle, payload.sprint_index, payload.week_index, f"Задача {uid}")
+    _validate_decomposition_period("Подзадача", payload.sprint_index, payload.week_index, initiative)
     session.add(
         WorkItem(
             id=uuid.uuid4(),
@@ -727,6 +803,7 @@ async def update_board_work_item(
         sprint_index = payload.sprint_index if "sprint_index" in fields else item.sprint_index
         week_index = payload.week_index if "week_index" in fields else item.week_index
         validate_sprint_position(cycle, sprint_index, week_index, f"Задача {item.client_uid}")
+        _validate_decomposition_period("Подзадача", sprint_index, week_index, initiative)
         item.sprint_index = sprint_index
         item.week_index = week_index
     if "sort_order" in fields:

@@ -577,6 +577,22 @@ function reorderBoardItem(teamName,sprintVal,weekVal,dragKey,beforeKey){
   if(bi>=0) items.splice(bi,0,d); else items.push(d);
   items.forEach((o,idx)=>o.set(idx));
 }
+function boardPeriodAfter(sprint,week,parentSprint,parentWeek){
+  if(sprint===null||sprint===undefined||parentSprint===null||parentSprint===undefined)return false;
+  if(+sprint!==+parentSprint)return +sprint>+parentSprint;
+  if(week===null||week===undefined||parentWeek===null||parentWeek===undefined)return false;
+  return +week>+parentWeek;
+}
+function decompositionAfterIssue(iss,sprint,week){
+  return boardPeriodAfter(sprint,week,iss&&iss.sprint,itemWeek(iss||{}));
+}
+function warnDecompositionAfterIssue(kind){
+  toast(`${kind} не может быть запланирована позже главной задачи`,{type:'warn'});
+}
+function issueHasChildrenAfter(iss,sprint,week){
+  const after=item=>boardPeriodAfter(item.sprint,itemWeek(item),sprint,week);
+  return (iss.stories||[]).some(after)||(iss.subtasks||[]).some(after);
+}
 function bindTeams(){
   // разворачивание трайба (аккордеон)
   document.querySelectorAll('[data-tribe]').forEach(el=>el.onclick=()=>{
@@ -675,13 +691,13 @@ function bindTeams(){
   });
   // клик по стикеру -> карточка (поля + Согласовать для фиолетовых + декомпозиция)
   document.querySelectorAll('#boardScroll .sticker').forEach(el=>el.onclick=(e)=>{
-    if(e.target.classList.contains('x'))return;
+    if(e.target.closest('.x,.c-link'))return;
     if(el.classList.contains('info'))return;
     openStickerModal(el.dataset.id);
   });
   // клик по зелёному стикеру Истории -> карточка Истории (поля + декомпозиция на белые)
   document.querySelectorAll('#boardScroll .story').forEach(el=>el.onclick=(e)=>{
-    if(e.target.classList.contains('x'))return;
+    if(e.target.closest('.x,.s-link'))return;
     openStoryModal(el.dataset.storyIssue, el.dataset.storyUid);
   });
   // клик по белой подзадаче -> карточка редактирования (ФИО/роль/ёмкость/спринт)
@@ -719,6 +735,10 @@ function bindTeams(){
       const iss=state.issues.find(i=>i.id===payload.id);
       if(iss){
         const ns=target==='backlog'?null:+target;
+        if(issueHasChildrenAfter(iss,ns,targetWeek)){
+          toast('Главная задача не может быть запланирована раньше своих историй или подзадач',{type:'warn'});
+          return;
+        }
         const resetAgreement=iss.agreed&&ns!==iss.sprint;
         setBoardPeriod(iss,ns,targetWeek);
         // «Колонки»: свободное размещение среди всех стикеров колонки (цветных и белых)
@@ -740,6 +760,7 @@ function bindTeams(){
       const iss=state.issues.find(i=>i.id===payload.id);
       const sy=iss?storyById(iss,payload.story):null;
       if(sy){
+        if(decompositionAfterIssue(iss,+target,targetWeek)){ warnDecompositionAfterIssue('История'); return; }
         setBoardPeriod(sy,+target,targetWeek);
         if(isColumns && ev){
           const beforeKey=stickerBeforeKey(zone,ev.clientY);
@@ -758,6 +779,7 @@ function bindTeams(){
       const iss=state.issues.find(i=>i.id===payload.id);
       if(iss&&iss.subtasks[payload.sub]){
         const st=iss.subtasks[payload.sub];
+        if(decompositionAfterIssue(iss,+target,targetWeek)){ warnDecompositionAfterIssue('Подзадача'); return; }
         // в режиме «Гант» белый остаётся в строке своего сотрудника
         if(cellFio!==undefined){
           const stFio=(st.fio||'').trim()||'— без ФИО —';
@@ -799,10 +821,12 @@ function bindTeams(){
     scroll.querySelectorAll('[data-link-key]').forEach(b=>b.addEventListener('mousedown',(e)=>{
       e.preventDefault(); e.stopPropagation();
       const kind=b.dataset.linkKind, key=b.dataset.linkKey;
-      const from = kind==='c' ? {kind:'c',id:key} : {kind:'w',uid:key};
+      const from = kind==='c' ? {kind:'c',id:key} : (kind==='g' ? {kind:'g',uid:key} : {kind:'w',uid:key});
       const srcEl = kind==='c'
         ? scroll.querySelector(`.sticker[data-sticker="${CSS.escape(key)}"]`)
-        : scroll.querySelector(`.white[data-wuid="${CSS.escape(key)}"]`);
+        : (kind==='g'
+          ? scroll.querySelector(`.story[data-story-uid="${CSS.escape(key)}"]`)
+          : scroll.querySelector(`.white[data-wuid="${CSS.escape(key)}"]`));
       arrowDrag={create:true, from, anchor: srcEl?elCenterInScroll(scroll,srcEl):{x:0,y:0}};
       document.addEventListener('mousemove',onArrowMove);
       document.addEventListener('mouseup',onArrowUp);
@@ -886,8 +910,34 @@ function openStickerModal(issueId){
   $('#sm_story').onclick=async()=>{ const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))openStoryModal(iss.id, null); };
 }
 
+function boardAssigneeDatalist(roster){
+  const seen=new Set();
+  return (roster||[]).map(p=>({fio:String(p.fio||'').trim(),role:String(p.role||'').trim()}))
+    .filter(p=>p.fio)
+    .filter(p=>{
+      const key=(p.fio+'|'+p.role).toLowerCase();
+      if(seen.has(key))return false;
+      seen.add(key);return true;
+    })
+    .map(p=>`<option value="${esc(p.fio)}" label="${esc(p.role)}"></option>`)
+    .join('');
+}
+function boardAssigneePayload(roster,name,role,validRoles){
+  const assigneeName=String(name||'').trim();
+  const competency=String(role||'').trim().toUpperCase();
+  const member=(roster||[]).find(p=>
+    String(p.fio||'').trim().toLowerCase()===assigneeName.toLowerCase() &&
+    String(p.role||'').trim().toUpperCase()===competency);
+  if(member)return {assignee_member_id:member._backendId||null,assignee_name:String(member.fio||'').trim()};
+  const roleTokens=new Set([...(validRoles||[]),...(roster||[]).map(p=>p.role)].map(r=>String(r||'').trim().toUpperCase()).filter(Boolean));
+  return {
+    assignee_member_id:null,
+    assignee_name:roleTokens.has(assigneeName.toUpperCase())?'':assigneeName,
+  };
+}
+
 /* ---- Модальное окно подзадачи ---- */
-// storyUid задан → белый привязывается к Истории (её ID на плашке) и стрелка НЕ создаётся;
+// storyUid задан → белый привязывается к Истории (её ID на плашке) + дефолтная стрелка от Истории;
 // иначе → белый напрямую под задачей + дефолтная стрелка на цветной родитель.
 function openSubtaskModal(issueId,storyUid){
   const iss=state.issues.find(i=>i.id===issueId);if(!iss)return;
@@ -897,13 +947,14 @@ function openSubtaskModal(issueId,storyUid){
   const defWeek = sy ? itemWeek(sy) : itemWeek(iss);
   const primaryTeam=teamObjByName(issuePrimaryTeam(iss));
   const roster=primaryTeam?(state.capacity[teamKey(primaryTeam.tribe,primaryTeam.name)]||[]):[];
+  const comps=teamComps(issuePrimaryTeam(iss));
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>Декомпозиция · ${esc(sy?(sy.id||'История'):iss.id)}</h3>
     ${sy?`<div class="muted" style="margin-bottom:10px">Подзадача Истории <b>${esc(sy.id||'')}</b> (задача ${esc(iss.id)})</div>`:''}
     <label><span>ФИО</span><input id="m_fio" list="m_people" placeholder="Фамилия"></label>
-    <datalist id="m_people">${roster.map(p=>`<option value="${esc(p.fio)}">${esc(p.role)}</option>`).join('')}</datalist>
-    <label><span>Компетенция</span><select id="m_role">${teamComps(issuePrimaryTeam(iss)).map(r=>`<option>${r}</option>`).join('')}</select></label>
+    <datalist id="m_people">${boardAssigneeDatalist(roster)}</datalist>
+    <label><span>Компетенция</span><select id="m_role">${comps.map(r=>`<option>${r}</option>`).join('')}</select></label>
     <label><span>Ёмкость (дн.)</span><input id="m_cap" type="number" min="0" value="1"></label>
     <label><span>Спринт</span><select id="m_sprint">${sprints.map(s=>`<option value="${s.index}" ${s.index===defSprint?'selected':''}>Спринт ${s.index+1}</option>`).join('')}</select></label>
     ${weekSelectHTML('m_week',defWeek)}
@@ -916,23 +967,37 @@ function openSubtaskModal(issueId,storyUid){
   $('#m_save').onclick=async()=>{
     const u=uid();
     const white={uid:u,fio:$('#m_fio').value.trim(),role:$('#m_role').value,cap:+$('#m_cap').value||0,sprint:+$('#m_sprint').value,week:+$('#m_week').value};
+    if(decompositionAfterIssue(iss,white.sprint,white.week)){ warnDecompositionAfterIssue('Подзадача'); return; }
     if(storyUid) white.storyUid=storyUid; // принадлежит Истории
+    const assignee=boardAssigneePayload(roster,white.fio,white.role,comps);
     const created=await runBoardCommand(`/initiatives/${iss._backendId}/work-items`,'POST',{
-      client_uid:white.uid,story_client_uid:white.storyUid||null,assignee_name:white.fio,
+      client_uid:white.uid,story_client_uid:white.storyUid||null,
+      assignee_member_id:assignee.assignee_member_id,assignee_name:assignee.assignee_name,
       competency:white.role,effort:white.cap,sprint_index:white.sprint,week_index:white.week,
       sort_order:(iss.subtasks||[]).length,board_sort_order:(iss.subtasks||[]).length,
     });
     if(!created)return;
     root.innerHTML='';
-    // дефолтная стрелка декомпозиции только для белых напрямую под задачей
+    // дефолтная стрелка декомпозиции: напрямую к задаче или внутри ветки истории
+    const refreshed=(state.issues||[]).find(row=>row._backendId===iss._backendId);
+    const item=refreshed&&(refreshed.subtasks||[]).find(row=>row.uid===u);
     if(!storyUid){
-      const refreshed=(state.issues||[]).find(row=>row._backendId===iss._backendId);
-      const item=refreshed&&(refreshed.subtasks||[]).find(row=>row.uid===u);
       if(item&&item._backendId){
         try{
           await programBoardCommand('/connections','POST',{
             source:{kind:'work_item',id:item._backendId},
             target:{kind:'initiative',id:iss._backendId},
+            relation_type:'decomposes',
+          });
+        }catch(error){reportProgramBoardSyncError(error);}
+      }
+    }else{
+      const parentStory=refreshed&&storyById(refreshed,storyUid);
+      if(parentStory&&parentStory._backendId&&item&&item._backendId){
+        try{
+          await programBoardCommand('/connections','POST',{
+            source:{kind:'story',id:parentStory._backendId},
+            target:{kind:'work_item',id:item._backendId},
             relation_type:'decomposes',
           });
         }catch(error){reportProgramBoardSyncError(error);}
@@ -982,12 +1047,28 @@ function openStoryModal(issueId,storyUid){
   $('#sy_save').onclick=async()=>{
     const f=readForm();
     if(!f.id){ toast('Укажите ID истории',{type:'warn'}); return; }
+    if(decompositionAfterIssue(iss,f.sprint,f.week)){ warnDecompositionAfterIssue('История'); return; }
     if(isNew){
+      const storyUid=uid();
       if(await runBoardCommand(`/initiatives/${iss._backendId}/stories`,'POST',{
-        client_uid:uid(),external_key:f.id,title:f.name,effort_by_competency:f.comps,
+        client_uid:storyUid,external_key:f.id,title:f.name,effort_by_competency:f.comps,
         sprint_index:f.sprint,week_index:f.week,sort_order:(iss.stories||[]).length,
         board_sort_order:(iss.stories||[]).length,
-      }))root.innerHTML='';
+      })){
+        const refreshed=(state.issues||[]).find(row=>row._backendId===iss._backendId);
+        const createdStory=refreshed&&storyById(refreshed,storyUid);
+        if(createdStory&&createdStory._backendId&&iss._backendId){
+          try{
+            await programBoardCommand('/connections','POST',{
+              source:{kind:'initiative',id:iss._backendId},
+              target:{kind:'story',id:createdStory._backendId},
+              relation_type:'decomposes',
+            });
+          }catch(error){reportProgramBoardSyncError(error);}
+        }
+        root.innerHTML='';
+        save(false);render();
+      }
     }else{
       if(await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'PATCH',{
         external_key:f.id,title:f.name,effort_by_competency:f.comps,
@@ -1023,12 +1104,13 @@ function openWhiteModal(issueId,si){
   const sprints=computeSprints();
   const primaryTeam=teamObjByName(issuePrimaryTeam(iss));
   const roster=primaryTeam?(state.capacity[teamKey(primaryTeam.tribe,primaryTeam.name)]||[]):[];
+  const comps=teamComps(issuePrimaryTeam(iss));
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>Подзадача · ${esc(iss.id)}</h3>
     <label><span>ФИО</span><input id="w_fio" list="w_people" value="${esc(st.fio||'')}" placeholder="Фамилия"></label>
-    <datalist id="w_people">${roster.map(p=>`<option value="${esc(p.fio)}">${esc(p.role)}</option>`).join('')}</datalist>
-    <label><span>Компетенция</span><select id="w_role">${teamComps(issuePrimaryTeam(iss)).map(r=>`<option ${r===st.role?'selected':''}>${r}</option>`).join('')}</select></label>
+    <datalist id="w_people">${boardAssigneeDatalist(roster)}</datalist>
+    <label><span>Компетенция</span><select id="w_role">${comps.map(r=>`<option ${r===st.role?'selected':''}>${r}</option>`).join('')}</select></label>
     <label><span>Ёмкость (дн.)</span><input id="w_cap" type="number" min="0" value="${+st.cap||0}"></label>
     <label><span>Спринт</span><select id="w_sprint">${sprints.map(s=>`<option value="${s.index}" ${s.index===st.sprint?'selected':''}>Спринт ${s.index+1}</option>`).join('')}</select></label>
     ${weekSelectHTML('w_week',st.week)}
@@ -1053,10 +1135,13 @@ function openWhiteModal(issueId,si){
     }
   };
   $('#w_save').onclick=async()=>{
+    const assignee=boardAssigneePayload(roster,$('#w_fio').value,$('#w_role').value,comps);
+    const sprint=+$('#w_sprint').value, week=+$('#w_week').value;
+    if(decompositionAfterIssue(iss,sprint,week)){ warnDecompositionAfterIssue('Подзадача'); return; }
     const body={
-      assignee_name:$('#w_fio').value.trim(),competency:$('#w_role').value,
-      effort:+$('#w_cap').value||0,sprint_index:+$('#w_sprint').value,
-      week_index:+$('#w_week').value,board_sort_order:st.ord||0,
+      assignee_member_id:assignee.assignee_member_id,assignee_name:assignee.assignee_name,competency:$('#w_role').value,
+      effort:+$('#w_cap').value||0,sprint_index:sprint,
+      week_index:week,board_sort_order:st.ord||0,
     };
     if(await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'PATCH',body))root.innerHTML='';
   };
@@ -1076,9 +1161,9 @@ function edgePointN(box, aim){
 }
 function epElement(scope,ep){
   if(!ep)return null;
-  return ep.kind==='c'
-    ? scope.querySelector(`.sticker[data-sticker="${CSS.escape(ep.id)}"]`)
-    : scope.querySelector(`.white[data-wuid="${CSS.escape(ep.uid)}"]`);
+  if(ep.kind==='c')return scope.querySelector(`.sticker[data-sticker="${CSS.escape(ep.id)}"]`);
+  if(ep.kind==='g')return scope.querySelector(`.story[data-story-uid="${CSS.escape(ep.uid)}"]`);
+  return scope.querySelector(`.white[data-wuid="${CSS.escape(ep.uid)}"]`);
 }
 
 /* ---- Стрелки декомпозиции (по одной на белую подзадачу), редактируемые ---- */
@@ -1089,6 +1174,9 @@ function sameEp(a,b){ return !!a&&!!b&&a.kind===b.kind&&(a.kind==='c'?a.id===b.i
 function epIssue(ep){
   if(!ep) return null;
   if(ep.kind==='c') return state.issues.find(i=>i.id===ep.id)||null;
+  if(ep.kind==='g'){
+    return state.issues.find(i=>(i.stories||[]).some(sy=>sy.uid===ep.uid))||null;
+  }
   for(const i of state.issues){ for(const st of (i.subtasks||[])){ if(st.uid===ep.uid) return i; } }
   return null;
 }
@@ -1160,11 +1248,13 @@ async function onArrowUp(e){
   if(svg) svg.style.display='none';
   const el=document.elementFromPoint(e.clientX,e.clientY);
   if(svg) svg.style.display=disp;
-  const target=el&&el.closest('.sticker,.white');
+  const target=el&&el.closest('.sticker,.story,.white');
   if(target){
     const ep = target.classList.contains('sticker')
       ? {kind:'c',id:target.dataset.id}
-      : {kind:'w',uid:target.dataset.wuid};
+      : (target.classList.contains('story')
+        ? {kind:'g',uid:target.dataset.storyUid}
+        : {kind:'w',uid:target.dataset.wuid});
     if(drag.create){
       // создание новой связи: from — исходный стикер, to — цель
       const dup=(state.connections||[]).some(c=>sameEp(c.from,drag.from)&&sameEp(c.to,ep));

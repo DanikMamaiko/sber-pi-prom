@@ -12,6 +12,7 @@ from app.models.pi_cycle import (
     PiEvent,
     PiCycle,
     PiCycleTeam,
+    Story,
     Team,
     WorkItem,
 )
@@ -32,6 +33,8 @@ async def _endpoint_maps(
 ) -> tuple[
     dict[str, Initiative],
     dict[uuid.UUID, Initiative],
+    dict[str, Story],
+    dict[uuid.UUID, Story],
     dict[str, WorkItem],
     dict[uuid.UUID, WorkItem],
 ]:
@@ -51,9 +54,20 @@ async def _endpoint_maps(
             )
         ).all()
     )
+    stories = list(
+        (
+            await session.scalars(
+                select(Story)
+                .join(Initiative, Initiative.id == Story.initiative_id)
+                .where(Initiative.cycle_id == cycle_id)
+            )
+        ).all()
+    )
     return (
         {row.issue_key.casefold(): row for row in initiatives},
         {row.id: row for row in initiatives},
+        {row.client_uid.casefold(): row for row in stories},
+        {row.id: row for row in stories},
         {row.client_uid.casefold(): row for row in work_items},
         {row.id: row for row in work_items},
     )
@@ -63,11 +77,15 @@ def _endpoint_ref(
     kind: str,
     endpoint_id: uuid.UUID,
     initiatives: dict[uuid.UUID, Initiative],
+    stories: dict[uuid.UUID, Story],
     work_items: dict[uuid.UUID, WorkItem],
 ) -> dict[str, str] | None:
     if kind in {"initiative", "c"}:
         initiative = initiatives.get(endpoint_id)
         return {"kind": "c", "ref": initiative.issue_key} if initiative else None
+    if kind in {"story", "g"}:
+        story = stories.get(endpoint_id)
+        return {"kind": "g", "ref": story.client_uid} if story else None
     if kind in {"work_item", "w"}:
         item = work_items.get(endpoint_id)
         return {"kind": "w", "ref": item.client_uid} if item else None
@@ -106,6 +124,16 @@ async def read_program_board(
         ).all()
     )
     initiatives = {row.id: row for row in initiatives_rows}
+    stories_rows = list(
+        (
+            await session.scalars(
+                select(Story)
+                .join(Initiative, Initiative.id == Story.initiative_id)
+                .where(Initiative.cycle_id == cycle.id)
+            )
+        ).all()
+    )
+    stories = {row.id: row for row in stories_rows}
     work_items_rows = list(
         (
             await session.scalars(
@@ -137,12 +165,14 @@ async def read_program_board(
             connection.source_kind,
             connection.source_id,
             initiatives,
+            stories,
             work_items,
         )
         target = _endpoint_ref(
             connection.target_kind,
             connection.target_id,
             initiatives,
+            stories,
             work_items,
         )
         if source is None or target is None:
@@ -168,6 +198,8 @@ async def read_program_board(
         def endpoint_sprint(kind: str, endpoint_id: uuid.UUID) -> int | None:
             if kind in {"initiative", "c"}:
                 entity = initiatives.get(endpoint_id)
+            elif kind in {"story", "g"}:
+                entity = stories.get(endpoint_id)
             else:
                 entity = work_items.get(endpoint_id)
             return entity.sprint_index if entity else None
@@ -354,7 +386,7 @@ async def replace_program_board(
     if len(client_uids) != len(set(client_uids)):
         raise ValueError("UID связи должен быть уникален в пределах PI-цикла")
 
-    initiatives_by_ref, _, work_items_by_ref, _ = await _endpoint_maps(session, cycle.id)
+    initiatives_by_ref, _, stories_by_ref, _, work_items_by_ref, _ = await _endpoint_maps(session, cycle.id)
 
     def resolve(kind: str, ref: str) -> tuple[str, uuid.UUID]:
         normalized_ref = ref.strip().casefold()
@@ -363,6 +395,11 @@ async def replace_program_board(
             if initiative is None:
                 raise ValueError(f"Инициатива как точка связи не найдена в данном PI-цикле: {ref}")
             return "initiative", initiative.id
+        if kind == "g":
+            story = stories_by_ref.get(normalized_ref)
+            if story is None:
+                raise ValueError(f"Story endpoint was not found in this PI cycle: {ref}")
+            return "story", story.id
         item = work_items_by_ref.get(normalized_ref)
         if item is None:
             raise ValueError(f"Задача как точка связи не найдена в данном PI-цикле: {ref}")
@@ -439,8 +476,9 @@ async def delete_dangling_connections(
     cycle_id: uuid.UUID,
 ) -> None:
     await session.flush()
-    _, initiatives, _, work_items = await _endpoint_maps(session, cycle_id)
+    _, initiatives, _, stories, _, work_items = await _endpoint_maps(session, cycle_id)
     valid_initiatives = set(initiatives)
+    valid_stories = set(stories)
     valid_work_items = set(work_items)
     connections = (
         await session.scalars(
@@ -451,12 +489,20 @@ async def delete_dangling_connections(
         source_valid = (
             connection.source_id in valid_initiatives
             if connection.source_kind in {"initiative", "c"}
-            else connection.source_id in valid_work_items
+            else (
+                connection.source_id in valid_stories
+                if connection.source_kind in {"story", "g"}
+                else connection.source_id in valid_work_items
+            )
         )
         target_valid = (
             connection.target_id in valid_initiatives
             if connection.target_kind in {"initiative", "c"}
-            else connection.target_id in valid_work_items
+            else (
+                connection.target_id in valid_stories
+                if connection.target_kind in {"story", "g"}
+                else connection.target_id in valid_work_items
+            )
         )
         if not source_valid or not target_valid:
             await session.delete(connection)
@@ -468,7 +514,11 @@ async def _initiative_with_executors(
     initiative = await session.scalar(
         select(Initiative)
         .execution_options(populate_existing=True)
-        .options(selectinload(Initiative.executors))
+        .options(
+            selectinload(Initiative.executors),
+            selectinload(Initiative.stories),
+            selectinload(Initiative.work_items),
+        )
         .where(Initiative.cycle_id == cycle.id, Initiative.id == initiative_id)
     )
     if initiative is None:
@@ -487,6 +537,34 @@ def _primary_team_id(initiative: Initiative) -> uuid.UUID | None:
     return primary.team_id if primary else None
 
 
+def _period_after_parent(
+    sprint_index: int | None,
+    week_index: int | None,
+    parent_sprint_index: int | None,
+    parent_week_index: int | None,
+) -> bool:
+    if sprint_index is None or parent_sprint_index is None:
+        return False
+    if sprint_index != parent_sprint_index:
+        return sprint_index > parent_sprint_index
+    if week_index is None or parent_week_index is None:
+        return False
+    return week_index > parent_week_index
+
+
+def _validate_initiative_children_period(
+    initiative: Initiative,
+    sprint_index: int | None,
+    week_index: int | None,
+) -> None:
+    for story in initiative.stories:
+        if _period_after_parent(story.sprint_index, story.week_index, sprint_index, week_index):
+            raise ValueError("Главная задача не может быть запланирована раньше своих историй")
+    for item in initiative.work_items:
+        if _period_after_parent(item.sprint_index, item.week_index, sprint_index, week_index):
+            raise ValueError("Главная задача не может быть запланирована раньше своих подзадач")
+
+
 async def move_program_board_initiative(
     session: AsyncSession,
     cycle: PiCycle,
@@ -495,6 +573,7 @@ async def move_program_board_initiative(
 ) -> ProgramBoardRead:
     initiative = await _initiative_with_executors(session, cycle, initiative_id)
     validate_sprint_position(cycle, payload.sprint_index, None, f"Инициатива {initiative.issue_key}")
+    _validate_initiative_children_period(initiative, payload.sprint_index, None)
     primary_team_id = _primary_team_id(initiative)
     if primary_team_id is None:
         raise ValueError("У инициативы нет команды-исполнителя")
@@ -553,6 +632,19 @@ async def _resolve_endpoint_id(
         if initiative is None:
             raise ValueError("Инициатива как точка связи отсутствует на активных досках PI")
         return "initiative", initiative.id
+    if endpoint.kind == "story":
+        story = await session.scalar(
+            select(Story)
+            .join(Initiative, Initiative.id == Story.initiative_id)
+            .where(
+                Story.id == endpoint.id,
+                Initiative.cycle_id == cycle.id,
+                Initiative.on_board.is_(True),
+            )
+        )
+        if story is None:
+            raise ValueError("Story endpoint is absent from active PI team boards")
+        return "story", story.id
     item = await session.scalar(
         select(WorkItem)
         .join(Initiative, Initiative.id == WorkItem.initiative_id)

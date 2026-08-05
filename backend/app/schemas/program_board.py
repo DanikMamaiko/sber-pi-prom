@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProgramBoardEndpoint(BaseModel):
-    kind: str = Field(pattern="^(c|w)$")
+    kind: str = Field(pattern="^(c|g|w)$")
     ref: str = Field(min_length=1, max_length=80)
 
 
@@ -123,7 +123,7 @@ class ProgramBoardMoveCommand(ProgramBoardCommand):
 
 
 class ProgramBoardEndpointId(BaseModel):
-    kind: Literal["initiative", "work_item"]
+    kind: Literal["initiative", "story", "work_item"]
     id: uuid.UUID
 
 

@@ -317,6 +317,7 @@ async def test_full_pi_cycle_flow_persists_and_deletes_dependencies(api_client):
     )
     assert team_boards["initiatives"][0]["stories"][0]["client_uid"] == "story-e2e-1"
     assert team_boards["initiatives"][0]["work_items"][0]["client_uid"] == "work-e2e-1"
+    story = team_boards["initiatives"][0]["stories"][0]
     work_item = team_boards["initiatives"][0]["work_items"][0]
 
     program_board = assert_ok(
@@ -392,6 +393,32 @@ async def test_full_pi_cycle_flow_persists_and_deletes_dependencies(api_client):
         201,
     )
     assert program_board["connections"][0]["client_uid"] == program_board["connections"][0]["id"]
+    program_board = assert_ok(
+        await api_client.raw.post(
+            f"/pi-cycles/{cycle_id}/program-board/connections",
+            json={
+                "expected_version": program_board["version"],
+                "source": {"kind": "initiative", "id": initiative["id"]},
+                "target": {"kind": "story", "id": story["id"]},
+            },
+        ),
+        201,
+    )
+    program_board = assert_ok(
+        await api_client.raw.post(
+            f"/pi-cycles/{cycle_id}/program-board/connections",
+            json={
+                "expected_version": program_board["version"],
+                "source": {"kind": "story", "id": story["id"]},
+                "target": {"kind": "work_item", "id": work_item["id"]},
+            },
+        ),
+        201,
+    )
+    assert [(row["source"]["kind"], row["target"]["kind"]) for row in program_board["connections"]][-2:] == [
+        ("c", "g"),
+        ("g", "w"),
+    ]
 
     risks = assert_ok(
         await api_client.put(

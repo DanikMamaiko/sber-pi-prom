@@ -593,7 +593,9 @@ function reportTeamBoardsSyncError(error){
   const now=Date.now();
   if(now-lastTeamBoardsSyncErrorAt>5000&&typeof toast==='function'){
     lastTeamBoardsSyncErrorAt=now;
-    toast('Не удалось сохранить командные доски на сервере.',{type:'warn',timeout:5000});
+    const base='Не удалось сохранить командные доски.';
+    const reason=error&&error.message?String(error.message).trim().replace(/^Задача\s+\S+:\s*/,''):'';
+    toast(reason?`${base} ${reason.charAt(0).toUpperCase()+reason.slice(1)}`:base,{type:'warn',timeout:8000});
   }
 }
 async function persistTeamBoardsCycle(id,force=false){
@@ -821,7 +823,9 @@ async function capacityMemberCommand(path,method='PATCH',body={}){
   return aggregate;
 }
 function connectionEndpointFromApi(endpoint){
-  return endpoint.kind==='c'?{kind:'c',id:endpoint.ref}:{kind:'w',uid:endpoint.ref};
+  if(endpoint.kind==='c')return {kind:'c',id:endpoint.ref};
+  if(endpoint.kind==='g')return {kind:'g',uid:endpoint.ref};
+  return {kind:'w',uid:endpoint.ref};
 }
 function applyProgramBoard(c,aggregate,id=currentCycleId()){
   if(id)programBoardViews[id]=aggregate;
@@ -888,6 +892,13 @@ function programBoardEndpointPayload(ep){
   if(ep.kind==='c'){
     const issue=(state.issues||[]).find(row=>row.id===ep.id);
     return issue&&issue._backendId?{kind:'initiative',id:issue._backendId}:null;
+  }
+  if(ep.kind==='g'){
+    for(const issue of (state.issues||[])){
+      const story=(issue.stories||[]).find(row=>row.uid===ep.uid);
+      if(story&&story._backendId)return {kind:'story',id:story._backendId};
+    }
+    return null;
   }
   for(const issue of (state.issues||[])){
     const item=(issue.subtasks||[]).find(row=>row.uid===ep.uid);
