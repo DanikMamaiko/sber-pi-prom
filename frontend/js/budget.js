@@ -626,7 +626,7 @@ function budgetModalHTML(rec){
       <label><span>№ Инициативы</span><input id="bm_id" value="${esc(it.id)}"></label>
       <label><span>Название</span><input id="bm_name" value="${esc(it.name)}"></label>
       <label><span>Команда-владелец</span><select id="bm_owner">${budgetModalTeamOptions(it.owner)}</select></label>
-      <label><span>Тип инициативы</span><input id="bm_type" value="${esc(it.type)}"></label>
+      <label><span>Тип инициативы</span>${initiativeTypeFieldHTML(it.type,'')}</label>
       <label><span>Продукт</span><input id="bm_product" value="${esc(it.product)}"></label>
       <label><span>Статус оценки</span><select id="bm_status">${BUDGET_STATUSES.map(x=>`<option ${a.status===x?'selected':''}>${esc(x)}</option>`).join('')}</select></label>
     </div>
@@ -646,9 +646,10 @@ function budgetModalHTML(rec){
 }
 function saveBudgetInitiativeModal(rec){
   const it=rec.it,a=rec.a;
-  ['id','name','description','product','owner','type'].forEach(k=>{
+  ['id','name','description','product','owner'].forEach(k=>{
     const el=$('#bm_'+k); if(el) it[k]=el.value;
   });
+  it.type=initiativeTypeValue();
   if($('#bm_status')) a.status=$('#bm_status').value;
   if($('#bm_finCategory')) a.finCategory=$('#bm_finCategory').value;
   if($('#bm_finEffect')) a.finEffect=num($('#bm_finEffect').value);
@@ -701,6 +702,7 @@ function openBudgetInitiativeModal(key,kind){
 }
 function bindBudgetInitiativeModal(rec,key,rerender){
   const root=$('#modalRoot');
+  wireInitiativeTypeField(root);
   $('#bm_cancel').onclick=()=>root.innerHTML='';
   $('#bm_save').onclick=()=>{ saveBudgetInitiativeModal(rec); save(); root.innerHTML=''; render(); };
   $('#bm_delete').onclick=()=>{ deleteBudgetRecord(rec); save(); root.innerHTML=''; render(); };

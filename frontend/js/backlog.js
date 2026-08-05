@@ -206,7 +206,7 @@ function backlogRowHTML(it,tribe,teams,readonly=false){
     <td rowspan="${span}">${backlogQuarterCell(it,readonly)}</td>
     <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="product" value="${esc(it.product)}" ${ro}></td>
     <td rowspan="${span}"><select data-bk="${it._uid}" data-bp="owner" ${dis}><option value=""></option>${teams.map(t=>`<option ${t.name===it.owner?'selected':''}>${esc(t.name)}</option>`).join('')}</select></td>
-    <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="type" value="${esc(it.type)}" ${ro}></td>
+    <td rowspan="${span}">${initiativeTypeFieldHTML(it.type, `data-bk="${it._uid}" data-bp="type"${readonly?' disabled':''}`)}</td>
     <td rowspan="${span}">${backlogAcCell(it,readonly)}</td>
     <td rowspan="${span}">${backlogStatusCell(it,readonly)}</td>
     <td rowspan="${span}" style="text-align:center;font-weight:700">${round1(it.totalEffort)}</td>`;
@@ -336,6 +336,10 @@ function bindBacklog(){
   document.querySelectorAll('[data-bk][data-bp]').forEach(el=>el.onchange=async()=>{
     const row=findBacklogRow(el.dataset.bk); if(!row) return;
     const bp=el.dataset.bp;
+    if(bp==='type'&&el.classList.contains('type-pick')){
+      if(el.value===INITIATIVE_TYPE_OTHER){ typePickToggle(el); return; }
+      typePickToggle(el);
+    }
     const payload=backlogCommandPayload(row);
     const fieldMap={id:'issue_key',name:'title',custPrio:'customer_priority',teamPrio:'team_priority',
       quarter:'target_quarter',year:'target_year',product:'product',owner:'owner_team',type:'initiative_type',status:'status'};

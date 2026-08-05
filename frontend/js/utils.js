@@ -19,6 +19,42 @@ function cleanIssueTags(){
 const $ = (sel,root=document)=>root.querySelector(sel);
 const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const teamKey = (tribe,name)=>tribe+'||'+name;
+/* ----- Поле «Тип инициативы»: select канонических значений + «Другое…» -----
+   Канонические типы хранит INITIATIVE_TYPES (state.js). Бэкенд сверяет тип по точному
+   совпадению строки, поэтому выбор из списка гарантирует синтаксис; опция «Другое…»
+   раскрывает свободный ввод для нестандартных типов. attrs применяются и к select, и к
+   input — чтобы на таблицах (data-bk/data-bp, data-pi/data-pk) оба элемента сохранялись
+   существующим общим обработчиком. В модалках attrs пуст, значение читает initiativeTypeValue. */
+function initiativeTypeFieldHTML(value, attrs){
+  const v=String(value??''), canonical=INITIATIVE_TYPES.includes(v), customActive=!!(v&&!canonical);
+  const head=`<option value=""${v===''?' selected':''}></option>`;
+  const options=head+INITIATIVE_TYPES.map(t=>`<option${t===v?' selected':''}>${esc(t)}</option>`).join('');
+  const customOpt=customActive?`<option selected>${esc(v)}</option>`:'';
+  return `<span class="type-field">`+
+    `<select ${attrs} class="type-pick">${options}${customOpt}<option value="${INITIATIVE_TYPE_OTHER}">Другое…</option></select>`+
+    `<input ${attrs} class="type-other" value="${esc(v)}" placeholder="Введите тип инициативы" style="display:none">`+
+    `</span>`;
+}
+// Переключатель видимости свободного ввода для опции «Другое…»: select всегда виден,
+// input показывается только при выборе «Другое…». Работает и на таблицах (вызывается из
+// общих обработчиков), и в модалках (через wireInitiativeTypeField).
+function typePickToggle(sel){
+  const wrap=sel.closest('.type-field')||sel.parentElement;
+  const other=wrap&&wrap.querySelector('.type-other'); if(!other)return;
+  if(sel.value===INITIATIVE_TYPE_OTHER){ other.style.display=''; other.focus(); other.select(); }
+  else other.style.display='none';
+}
+// Привязка переключателя к полям типа в пределах scope (модалки).
+function wireInitiativeTypeField(scope){
+  (scope||document).querySelectorAll('.type-pick').forEach(sel=>{ sel.onchange=()=>typePickToggle(sel); });
+}
+// Эффективное значение поля типа: для «Другое…» — текст свободного ввода, иначе выбранный пункт.
+function initiativeTypeValue(scope){
+  const sel=(scope||document).querySelector('.type-pick');
+  const other=(scope||document).querySelector('.type-other');
+  if(sel&&sel.value===INITIATIVE_TYPE_OTHER&&other!=null) return other.value;
+  return sel?sel.value:(other?other.value:'');
+}
 // Красивое всплывающее уведомление вместо alert()
 function toast(msg,opts={}){
   const type=opts.type||'success';
@@ -42,6 +78,20 @@ function fmt(d){return pad(d.getDate())+'.'+pad(d.getMonth()+1)+'.'+d.getFullYea
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
 function parseISO(s){const[y,m,dd]=s.split('-').map(Number);return new Date(y,m-1,dd);}
 const pad2=n=>String(n).padStart(2,'0');
+function approvalDateTime(value){
+  if(!value)return '';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return '';
+  return `${pad2(d.getDate())}.${pad2(d.getMonth()+1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+function approvalLabel(iss){
+  if(!iss||!iss.agreed)return '';
+  const by=String(iss.approvedBy||'').trim();
+  const at=approvalDateTime(iss.approvedAt);
+  if(by&&at)return `Согласовано: ${by}, ${at}`;
+  if(by)return `Согласовано: ${by}`;
+  return 'Согласовано';
+}
 // год PI для выбора дат отпуска (отпуск хранится без года — «дд.мм-дд.мм»)
 function piYear(){ return state.pi.startDate ? parseISO(state.pi.startDate).getFullYear() : new Date().getFullYear(); }
 // «20.07-01.08» → {start:'2026-07-20', end:'2026-08-01'} (для <input type="date">)

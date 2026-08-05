@@ -1,9 +1,10 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
     Date,
+    DateTime,
     Float,
     ForeignKey,
     Integer,
@@ -48,6 +49,8 @@ class Initiative(Base, TimestampMixin):
     pre_planned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     on_board: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agreed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     sprint_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     week_index: Mapped[int | None] = mapped_column(Integer, nullable=True)

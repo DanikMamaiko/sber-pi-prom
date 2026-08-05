@@ -91,7 +91,7 @@ async def put_team_boards(
     ensure_permission(user, Permission.TASKS_APPROVE)
     cycle = await lock_cycle(session, cycle_id, payload.expected_version)
     try:
-        return await replace_team_boards(session, cycle, payload)
+        return await replace_team_boards(session, cycle, payload, approved_by=user.username)
     except ValueError as error:
         await session.rollback()
         raise HTTPException(status_code=422, detail=str(error))
@@ -112,7 +112,14 @@ async def patch_team_board_initiative(
         ensure_permission(user, Permission.TASKS_APPROVE)
     cycle = await lock_cycle(session, cycle_id, payload.expected_version)
     return await _run_board_command(
-        session, update_board_initiative(session, cycle, initiative_id, payload)
+        session,
+        update_board_initiative(
+            session,
+            cycle,
+            initiative_id,
+            payload,
+            approved_by=user.username if payload.agreed is not None else None,
+        ),
     )
 
 

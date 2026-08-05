@@ -719,14 +719,11 @@ async def dispatch_backlog_items(
             f"Нет инициатив для трайба {payload.tribe} с периодом реализации {target_key}"
         )
 
-    already_sent = [
-        item.issue_key for item in candidates if target_key in (item.sent_to or [])
+    candidates = [
+        item for item in candidates if target_key not in (item.sent_to or [])
     ]
-    if already_sent:
-        raise ValueError(
-            f"Инициативы уже отправлены на {target_key}: "
-            f"{', '.join(already_sent)}"
-        )
+    if not candidates:
+        return
 
     _, _, competencies_by_team = await cycle_team_context(session, target.id)
     for source in candidates:

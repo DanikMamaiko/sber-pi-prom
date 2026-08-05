@@ -133,6 +133,7 @@ class PrePiRead(BaseModel):
     backlog: list[PrePiInitiativeRead] = Field(default_factory=list)
     capacity: dict[str, Any] = Field(default_factory=dict)
     tech_agenda: dict[str, Any] = Field(default_factory=dict)
+    reg_agenda: dict[str, Any] = Field(default_factory=dict)
     allowed_values: dict[str, Any] = Field(default_factory=dict)
 
 

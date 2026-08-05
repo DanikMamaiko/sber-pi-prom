@@ -534,6 +534,8 @@ function applyTeamBoards(c,aggregate){
     issue.prePlanned=!!row.pre_planned;
     issue.onBoard=!!row.on_board;
     issue.agreed=!!row.agreed;
+    issue.approvedBy=row.approved_by||'';
+    issue.approvedAt=row.approved_at||'';
     issue.sprint=row.sprint_index===null||row.sprint_index===undefined?null:+row.sprint_index;
     if(row.week_index===null||row.week_index===undefined)delete issue.week; else issue.week=+row.week_index;
     issue.ord=+row.board_sort_order||0;

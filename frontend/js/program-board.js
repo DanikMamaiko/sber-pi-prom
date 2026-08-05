@@ -302,6 +302,7 @@ function stickerHTML(iss,withDel,showDecomp,showTeams,extraClass){
     ${showTeams?issueTeamsHTML(iss):''}
     <div class="eff">${issueEffortLabel(iss)}</div>
     ${decomp}
+    ${iss.agreed?`<span class="st-badge ok">${esc(approvalLabel(iss))}</span>`:''}
   </div>`;
 }
 // Серый информационный стикер на доске команды-владельца.
@@ -312,7 +313,7 @@ function infoStickerHTML(iss){
     ${issueTeamsHTML(iss)}
     <div class="eff">${esc(iss.name)||'Информационный стикер'}</div>
     <span class="st-badge">Информационный</span>
-    ${iss.agreed?`<span class="st-badge ok">Согласовано</span>`:''}
+    ${iss.agreed?`<span class="st-badge ok">${esc(approvalLabel(iss))}</span>`:''}
   </div>`;
 }
 // Найти Историю задачи по uid

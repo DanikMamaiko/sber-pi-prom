@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,6 +66,8 @@ async def read_team_boards(session: AsyncSession, cycle: PiCycle) -> TeamBoardsR
                 pre_planned=initiative.pre_planned,
                 on_board=initiative.on_board,
                 agreed=initiative.agreed,
+                approved_by=initiative.approved_by,
+                approved_at=initiative.approved_at,
                 sprint_index=initiative.sprint_index,
                 week_index=initiative.week_index,
                 board_sort_order=initiative.board_sort_order,
@@ -111,6 +114,7 @@ async def replace_team_boards(
     session: AsyncSession,
     cycle: PiCycle,
     payload: TeamBoardsWrite,
+    approved_by: str | None = None,
 ) -> TeamBoardsRead:
     issue_keys = [row.issue_key.strip().casefold() for row in payload.initiatives]
     if len(issue_keys) != len(set(issue_keys)):
@@ -181,7 +185,16 @@ async def replace_team_boards(
 
         initiative.pre_planned = source.pre_planned
         initiative.on_board = source.on_board
-        initiative.agreed = source.agreed
+        source_agreed = bool(source.agreed)
+        if source_agreed:
+            if not initiative.agreed or not initiative.approved_by or not initiative.approved_at:
+                if approved_by:
+                    initiative.approved_by = approved_by
+                initiative.approved_at = datetime.now(timezone.utc)
+        else:
+            initiative.approved_by = None
+            initiative.approved_at = None
+        initiative.agreed = source_agreed
         initiative.sprint_index = source.sprint_index
         initiative.week_index = source.week_index
         initiative.board_sort_order = source.board_sort_order
@@ -452,6 +465,7 @@ async def update_board_initiative(
     cycle: PiCycle,
     initiative_id: uuid.UUID,
     payload: TeamBoardInitiativeCommand,
+    approved_by: str | None = None,
 ) -> TeamBoardsRead:
     initiative = await _initiative_for_command(session, cycle, initiative_id)
     fields = payload.model_fields_set
@@ -494,6 +508,13 @@ async def update_board_initiative(
         )
     if "agreed" in fields:
         initiative.agreed = bool(payload.agreed)
+        if initiative.agreed:
+            if approved_by:
+                initiative.approved_by = approved_by
+            initiative.approved_at = datetime.now(timezone.utc)
+        else:
+            initiative.approved_by = None
+            initiative.approved_at = None
     if "sprint_index" in fields or "week_index" in fields:
         sprint_index = payload.sprint_index if "sprint_index" in fields else initiative.sprint_index
         week_index = payload.week_index if "week_index" in fields else initiative.week_index

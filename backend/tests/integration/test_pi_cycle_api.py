@@ -1042,12 +1042,15 @@ async def test_backlog_bulk_swap_reorder_dispatch_and_confirmed_unlink_are_atomi
     assert len(assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"]) == 2
 
     repeat_version = dispatched["version"]
-    repeated = await api_client.post(
-        "/backlog-board/dispatch",
-        json={"tribe": "Регрессия", "target_year": 2033, "target_quarter": "Q3"},
+    repeated = assert_ok(
+        await api_client.post(
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2033, "target_quarter": "Q3"},
+        )
     )
-    assert repeated.status_code == 422
-    assert assert_ok(await api_client.get("/backlog-board"))["version"] == repeat_version
+    assert repeated["version"] == repeat_version + 1
+    assert assert_ok(await api_client.get("/backlog-board"))["version"] == repeated["version"]
+    assert len(assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"]) == 2
 
     cascade = await api_client.delete(f"/backlog-board/items/{a['id']}")
     assert cascade.status_code == 409
@@ -1066,6 +1069,90 @@ async def test_backlog_bulk_swap_reorder_dispatch_and_confirmed_unlink_are_atomi
     )
     assert cycle_unlinked["version"] == cycle_after["version"] + 1
 
+
+@pytest.mark.asyncio
+async def test_backlog_dispatch_skips_already_sent_and_sends_new_items(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2034, quarter="Q1")
+    cycle_id = cycle["id"]
+    board = assert_ok(
+        await api_client.put(
+            "/backlog-board",
+            json={
+                "items": [
+                    {
+                        "tribe": "Регрессия",
+                        "issue_key": "MIXED-OLD",
+                        "title": "Already sent",
+                        "owner_team": "Команда Альфа",
+                        "target_year": 2034,
+                        "target_quarter": "Q1",
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "effort_by_competency": {"SA": 1},
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    dispatched = assert_ok(
+        await api_client.post(
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2034, "target_quarter": "Q1"},
+        )
+    )
+    assert dispatched["items"][0]["issue_key"] == "MIXED-OLD"
+    assert dispatched["items"][0]["sent_to"] == ["2034-Q1"]
+
+    created = assert_ok(
+        await api_client.post(
+            "/backlog-board/items",
+            json={
+                "tribe": "Регрессия",
+                "issue_key": "MIXED-NEW",
+                "title": "Send later",
+                "owner_team": "Команда Альфа",
+                "target_year": 2034,
+                "target_quarter": "Q1",
+                "executors": [
+                    {
+                        "team": "Команда Альфа",
+                        "effort_by_competency": {"SA": 2},
+                    }
+                ],
+            },
+        ),
+        201,
+    )
+    assert len(created["items"]) == 2
+
+    second_dispatch = assert_ok(
+        await api_client.post(
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2034, "target_quarter": "Q1"},
+        )
+    )
+    by_key = {row["issue_key"]: row for row in second_dispatch["items"]}
+    assert by_key["MIXED-OLD"]["sent_to"] == ["2034-Q1"]
+    assert by_key["MIXED-NEW"]["sent_to"] == ["2034-Q1"]
+
+    initiatives = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))[
+        "initiatives"
+    ]
+    assert sorted(row["issue_key"] for row in initiatives) == ["MIXED-NEW", "MIXED-OLD"]
+    assert {row["issue_key"] for row in initiatives} == {"MIXED-OLD", "MIXED-NEW"}
+
+    repeat_version = second_dispatch["version"]
+    repeated = assert_ok(
+        await api_client.post(
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2034, "target_quarter": "Q1"},
+        )
+    )
+    assert repeated["version"] == repeat_version + 1
+    assert len(assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"]) == 2
 
 @pytest.mark.asyncio
 async def test_pi_cycle_data_bulk_commands_keep_ids_and_rollback(api_client):
@@ -1837,6 +1924,10 @@ async def test_team_board_focused_commands_capacity_assignments_and_cascades(api
             },
         )
     )
+    approved = board["initiatives"][0]
+    assert approved["agreed"] is True
+    assert approved["approved_by"] == "admin"
+    assert approved["approved_at"]
     shared = assert_ok(await api_client.get(f"{path}/pre-pi"))["initiatives"][0]
     assert shared["title"] == "Edited on team board"
     assert shared["executors"][0]["effort_by_competency"] == {"SA": 5.0}
@@ -2007,3 +2098,107 @@ async def test_team_board_focused_commands_capacity_assignments_and_cascades(api
         )
     )
     assert risks["risks"][0]["status"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_pre_pi_regulatory_agenda_buckets_legal_owner_as_common(api_client):
+    cycle = assert_ok(
+        await api_client.post(
+            "/pi-cycles",
+            json={"year": 2033, "quarter": "Q2", "sprint_count": 3},
+        ),
+        201,
+    )
+    path = f"/pi-cycles/{cycle['id']}"
+    assert_ok(
+        await api_client.put(
+            f"{path}/setup",
+            json={
+                "start_date": "2033-04-05",
+                "sprint_count": 3,
+                "pirs": [{"name": "ПИР", "date": "2033-04-19"}],
+                "teams": [
+                    {"tribe": "Регрессия", "name": "Legal", "team_type": "Agile", "competencies": ["SA", "DEV"]},
+                    {"tribe": "Регрессия", "name": "Команда Альфа", "team_type": "Agile", "competencies": ["SA", "DEV", "QA"]},
+                ],
+                "goals": ["Цель"],
+                "tags": ["REG"],
+            },
+        )
+    )
+    # Ёмкость команды-исполнителя — чтобы знаменатель процентов был ненулевым.
+    assert_ok(
+        await api_client.put(
+            f"{path}/capacity",
+            json={
+                "teams": [
+                    {
+                        "tribe": "Регрессия",
+                        "team": "Команда Альфа",
+                        "members": [
+                            {"client_uid": "reg-member", "full_name": "Регулятор", "competency": "DEV", "rate": 1}
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    # Две регуляторные инициативы типа «Требования законодательства»:
+    #   владелец Legal  → бакет «общая» (100),
+    #   владелец Альфа  → бакет «командная» (30).
+    # По принятому решению усилие относится на исполнителя — Команду Альфа.
+    assert_ok(
+        await api_client.put(
+            f"{path}/pre-pi",
+            json={
+                "initiatives": [
+                    {
+                        "issue_key": "REG-LEGAL",
+                        "title": "Регула (Legal)",
+                        "owner_team": "Legal",
+                        "owner_tribe": "Регрессия",
+                        "initiative_type": "Требования законодательства",
+                        "status": "planned",
+                        "pre_planned": True,
+                        "executors": [
+                            {"team": "Команда Альфа", "tribe": "Регрессия", "effort_by_competency": {"DEV": 100}}
+                        ],
+                    },
+                    {
+                        "issue_key": "REG-TEAM",
+                        "title": "Регула (Альфа)",
+                        "owner_team": "Команда Альфа",
+                        "owner_tribe": "Регрессия",
+                        "initiative_type": "Требования законодательства",
+                        "status": "planned",
+                        "pre_planned": True,
+                        "executors": [
+                            {"team": "Команда Альфа", "tribe": "Регрессия", "effort_by_competency": {"DEV": 30}}
+                        ],
+                    },
+                ]
+            },
+        )
+    )
+
+    pre_pi = assert_ok(await api_client.get(f"{path}/pre-pi"))
+    alpha_id = next(team["id"] for team in pre_pi["teams"] if team["name"] == "Команда Альфа")
+    legal_id = next(team["id"] for team in pre_pi["teams"] if team["name"] == "Legal")
+
+    alpha_metrics = pre_pi["capacity"]["teams"][alpha_id]
+    reg = alpha_metrics["reg_agenda"]
+    assert reg["common_effort"] == 100.0  # владелец Legal → «общая»
+    assert reg["team_effort"] == 30.0  # владелец Альфа → «командная»
+    assert reg["total_effort"] == 130.0  # Всего = Общая + Командная
+    available = alpha_metrics["available_capacity"]
+    assert available > 0
+    assert reg["total_percent"] == round(130.0 / available * 100, 1)
+
+    # Legal только владеет, но не исполняет — на его строке регуляторки нет.
+    assert pre_pi["capacity"]["teams"][legal_id]["reg_agenda"]["total_effort"] == 0.0
+
+    # Верхнеуровневый (overall) блок и независимость от техповестки.
+    assert pre_pi["reg_agenda"]["common_effort"] == 100.0
+    assert pre_pi["reg_agenda"]["team_effort"] == 30.0
+    assert pre_pi["reg_agenda"]["total_effort"] == 130.0
+    assert pre_pi["tech_agenda"]["total_effort"] == 0.0

@@ -262,7 +262,7 @@ function viewBoardLanes(t){
     html+=`<tr><td class="lane-id" style="--lane:${hue};border-left:3px solid #aeb5c0">
       <div class="lane-id-top"><span class="lane-dot" style="--lane:${hue}"></span><b>${esc(i.id)}</b></div>
       ${i.name?`<div class="lane-id-name">${esc(i.name)}</div>`:''}
-      <div class="lane-id-status">Информационный${i.agreed?' · Согласовано':''}</div></td>`;
+      <div class="lane-id-status">Информационный${i.agreed?` · ${esc(approvalLabel(i))}`:''}</div></td>`;
     html+=`<td class="lane-cell" data-tb-sprint="backlog" data-tb-issue="${esc(i.id)}">`+
       (i.sprint===null?infoStickerHTML(i):'')+`</td>`;
     periods.forEach(p=>{
@@ -830,6 +830,7 @@ function openStickerModal(issueId){
   const tags=piTags();
   const selectedTags=issueTags(iss);
   const root=$('#modalRoot');
+  const attractionApprovalText=approvalLabel(iss).replace(/^Согласовано/,'согласовано');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>${esc(iss.id)} <span class="muted" style="font-size:12px;font-weight:400">(${COLOR_RU[issueColor(iss)]})</span></h3>
     <label><span>Название инициативы</span><input id="sm_name" value="${esc(iss.name)}"></label>
@@ -843,10 +844,10 @@ function openStickerModal(issueId){
     <div class="row" style="gap:8px">
       ${comps.map(r=>`<label style="display:flex;flex-direction:column;gap:3px"><span class="muted" style="font-size:11px">${r}</span><input type="number" min="0" style="width:70px" id="sm_${r.toLowerCase()}" value="${esc(+ec[r]||0)}"></label>`).join('')}
     </div>
-    <label style="margin-top:12px"><span>Тип инициативы</span><input id="sm_type" value="${esc(iss.type)}"></label>
+    <label style="margin-top:12px"><span>Тип инициативы</span>${initiativeTypeFieldHTML(iss.type,'')}</label>
     <label><span>Комментарий</span><input id="sm_comment" value="${esc(iss.comment)}"></label>
     ${isAttr ? (iss.agreed
-        ? `<div class="note" style="margin:6px 0;border-left-color:var(--red-b)">✓ Привлечение <b>согласовано</b>. Перенос стикера в другой спринт сбросит согласование.</div>`
+        ? `<div class="note" style="margin:6px 0;border-left-color:var(--red-b)">✓ Привлечение <b>${esc(attractionApprovalText)}</b>. Перенос стикера в другой спринт сбросит согласование.</div>`
         : `<div class="note" style="margin:6px 0;border-left-color:var(--purple-b)">Привлечение <b>не согласовано</b> (фиолетовый). Нажмите «Согласовать».</div>`)
       : ''}
     <div class="note" style="margin:6px 0">Задачу можно декомпозировать <b>двумя способами</b>: сразу на белые подзадачи или на <b>Истории</b> (зелёные), а каждую Историю — уже на белые. Истории и белые на Program Board не выносятся.</div>
@@ -860,7 +861,7 @@ function openStickerModal(issueId){
     </div>
   </div></div>`;
   const sync=()=>{
-    iss.name=$('#sm_name').value; iss.type=$('#sm_type').value; iss.comment=$('#sm_comment').value;
+    iss.name=$('#sm_name').value; iss.type=initiativeTypeValue(root); iss.comment=$('#sm_comment').value;
     iss.tags=[...root.querySelectorAll('[data-sm-tag]:checked')].map(el=>el.value);
     let entry=execEntry(iss,tn);
     if(!entry){ entry={team:tn,comps:{}}; iss.executors=iss.executors||[]; iss.executors.push(entry); }
@@ -875,6 +876,7 @@ function openStickerModal(issueId){
   });
   const tagPick=root.querySelector('.tag-picker');
   if(tagPick) tagPick.onclick=e=>e.stopPropagation();
+  wireInitiativeTypeField(root);
   $('#sm_close').onclick=async()=>{
     if(!canWriteTab('teams')){root.innerHTML='';return;}
     const body=sync();if(await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',body))root.innerHTML='';

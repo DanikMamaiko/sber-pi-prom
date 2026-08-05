@@ -52,7 +52,7 @@ function prePiServerMetrics(teams,scope){
 }
 function prePiServerPercent(value){return value===null||value===undefined?'—':round1(value)+'%';}
 function prePiCapacityPanelHTML(teams,scope){
-  const d=prePiServerMetrics(teams,scope),competencies=d.competencies||{},tech=d.tech_agenda||{};
+  const d=prePiServerMetrics(teams,scope),competencies=d.competencies||{},tech=d.tech_agenda||{},reg=d.reg_agenda||{};
   const isTeam=scope==='team';
   return `<div class="cap-panel">
     <div class="cap-group">
@@ -79,6 +79,14 @@ function prePiCapacityPanelHTML(teams,scope){
         <div class="cap-box"><div class="cap-lab">Всего</div><div class="cap-val">${prePiServerPercent(tech.total_percent)}</div></div>
         <div class="cap-box"><div class="cap-lab">Общая</div><div class="cap-val">${prePiServerPercent(tech.common_percent)}</div></div>
         <div class="cap-box"><div class="cap-lab">Командная</div><div class="cap-val">${prePiServerPercent(tech.team_percent)}</div></div>
+      </div>
+    </div>
+    <div class="cap-group">
+      <div class="cap-group-head"><span class="cap-group-title">Регуляторка</span></div>
+      <div class="cap-row">
+        <div class="cap-box"><div class="cap-lab">Всего</div><div class="cap-val">${prePiServerPercent(reg.total_percent)}</div></div>
+        <div class="cap-box"><div class="cap-lab">Общая</div><div class="cap-val">${prePiServerPercent(reg.common_percent)}</div></div>
+        <div class="cap-box"><div class="cap-lab">Командная</div><div class="cap-val">${prePiServerPercent(reg.team_percent)}</div></div>
       </div>
     </div>
   </div>`;
@@ -213,6 +221,8 @@ function prepTable(rows,isUpper){
           ? `<td rowspan="${span}">${esc(i[c.k])||'<span class=auto>—</span>'}</td>`
           : c.sel
           ? `<td rowspan="${span}">${goalInputHTML(i)}</td>`
+          : c.k==='type'
+          ? `<td rowspan="${span}">${initiativeTypeFieldHTML(i[c.k], `data-pi="${esc(i.id)}" data-pk="type"`)}</td>`
           : `<td rowspan="${span}"><input data-pi="${esc(i.id)}" data-pk="${c.k}" value="${esc(i[c.k])}" class="${c.k==='custPrio'||c.k==='teamPrio'?'w-narrow':''}"></td>`
         ).join('')+
         `<td rowspan="${span}" style="text-align:center;font-weight:700">${round1(i.totalEstimate||0)}</td>`;
@@ -317,6 +327,10 @@ function bindPrep(){
   document.querySelectorAll('[data-pi]').forEach(el=>{
     let committedValue=el.value;
     const commit=()=>{
+      if(el.dataset.pk==='type'&&el.classList.contains('type-pick')){
+        if(el.value===INITIATIVE_TYPE_OTHER){ typePickToggle(el); return; }
+        typePickToggle(el);
+      }
       if(el.value===committedValue)return;
       committedValue=el.value;
       const iss=findIssue(el.dataset.pi); if(!iss)return;

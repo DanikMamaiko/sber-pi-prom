@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -53,6 +53,8 @@ class TeamBoardInitiativeWrite(BaseModel):
 
 class TeamBoardInitiativeRead(TeamBoardInitiativeWrite):
     id: uuid.UUID
+    approved_by: str | None = None
+    approved_at: datetime | None = None
     stories: list[TeamBoardStoryRead] = Field(default_factory=list)
     work_items: list[TeamBoardWorkItemRead] = Field(default_factory=list)
 

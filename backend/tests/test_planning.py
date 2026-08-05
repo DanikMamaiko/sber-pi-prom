@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -22,7 +23,13 @@ from app.schemas.pi_cycle import (
 )
 from app.services.planning import compute_sprints
 from app.services.capacity import calculate_member_capacity
-from app.services.pre_pi import _scope_metrics, validate_status_transition
+from app.services.pre_pi import (
+    LEGAL_OWNER_TEAM,
+    REG_TYPE,
+    _regulatory_by_team,
+    _scope_metrics,
+    validate_status_transition,
+)
 from app.services.goals import _sync_goal_to_initiatives
 
 
@@ -337,6 +344,61 @@ def test_pre_pi_server_metrics_handle_zero_denominator_and_over_capacity():
     assert metrics["over_capacity"] is True
     assert metrics["competencies"]["SA"]["over_capacity"] is True
     assert metrics["tech_agenda"]["total_percent"] is None
+
+
+def test_regulatory_by_team_buckets_by_owner_and_attributes_by_executor():
+    def exe(team, comps):
+        return SimpleNamespace(team=SimpleNamespace(name=team), effort_by_competency=comps)
+
+    def init(owner, executors, *, pre_planned=True, itype=REG_TYPE):
+        return SimpleNamespace(
+            pre_planned=pre_planned,
+            initiative_type=itype,
+            owner_team=SimpleNamespace(name=owner),
+            executors=executors,
+        )
+
+    initiatives = [
+        # Владелец Legal → бакет «общая»; исполняют X (100) и Y (50).
+        init(LEGAL_OWNER_TEAM, [exe("Команда X", {"DEV": 100}), exe("Команда Y", {"DEV": 50})]),
+        # Иной владелец → бакет «командная»; исполняет X (30).
+        init("Розница", [exe("Команда X", {"DEV": 30})]),
+        # Не запланирована — пропускается.
+        init(LEGAL_OWNER_TEAM, [exe("Команда X", {"DEV": 10})], pre_planned=False),
+        # Не регуляторный тип — пропускается.
+        init(LEGAL_OWNER_TEAM, [exe("Команда X", {"DEV": 20})], itype="Развитие функционала"),
+    ]
+    reg = _regulatory_by_team(initiatives)
+    assert reg["Команда X"] == {"common": 100.0, "team": 30.0}
+    assert reg["Команда Y"] == {"common": 50.0, "team": 0.0}
+    # Legal как владелец ничего не исполняет — на его строку усилие не ложится.
+    assert LEGAL_OWNER_TEAM not in reg
+    assert sum(v["common"] for v in reg.values()) == 150.0
+    assert sum(v["team"] for v in reg.values()) == 30.0
+
+
+def test_scope_metrics_reg_agenda_percent_and_zero_denominator():
+    base_row = {
+        "team": "Команда X",
+        "calendar_capacity": 100,
+        "available_capacity": 200,
+        "planned_effort": 0,
+        "available_by_competency": {"DEV": 200},
+        "planned_by_competency": {"DEV": 0},
+    }
+    reg_by_team = {"Команда X": {"common": 50.0, "team": 30.0}}
+    metrics = _scope_metrics([base_row], {}, reg_by_team)
+    agenda = metrics["reg_agenda"]
+    assert agenda["common_effort"] == 50.0
+    assert agenda["team_effort"] == 30.0
+    assert agenda["total_effort"] == 80.0
+    assert agenda["common_percent"] == 25.0  # 50 / 200
+    assert agenda["team_percent"] == 15.0  # 30 / 200
+    assert agenda["total_percent"] == 40.0  # 80 / 200
+    # Нулевой знаменатель → проценты None, абсолютные значения остаются.
+    zero = _scope_metrics([{**base_row, "available_capacity": 0}], {}, reg_by_team)
+    assert zero["reg_agenda"]["total_percent"] is None
+    assert zero["reg_agenda"]["common_effort"] == 50.0
 
 
 def test_program_board_accepts_endpoints_and_relative_bend():

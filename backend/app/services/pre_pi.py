@@ -37,6 +37,10 @@ from app.services.validation import (
 DEV_FUNCTIONALITY_TYPE = "Развитие функционала"
 TECH_COMMON_TYPE = "Общая тех. повестка"
 TECH_TEAM_TYPE = "Командная тех. повестка"
+REG_TYPE = "Требования законодательства"
+# Команда-владелец, для которой регуляторка считается как «общая»; для остальных
+# владельцев — как «командная». Сравнение по точному совпадению имени команды.
+LEGAL_OWNER_TEAM = "Legal"
 AGILE_REQUIRED_FIELDS = ["goal_text", "metric", "current_value", "target_value"]
 IT_REQUIRED_FIELDS = ["goal_text"]
 STATUS_TRANSITIONS = {
@@ -65,6 +69,26 @@ def _clean_unique(values: Iterable[str]) -> list[str]:
 
 def _effort_total(executor: InitiativeExecutor) -> float:
     return sum(float(value or 0) for value in (executor.effort_by_competency or {}).values())
+
+
+def _regulatory_by_team(initiatives: Iterable[Initiative]) -> dict[str, dict[str, float]]:
+    """Трудозатраты «Регуляторки» по командам-исполнителям с разбивкой на бакеты.
+
+    Учитываются только запланированные (pre_planned) инициативы типа REG_TYPE. Бакет
+    определяется командой-владельцем: Legal → «общая» (common), иная команда →
+    «командная» (team). Усилие относится на исполнителей (как у техповестки — кто
+    тратит capacity, на того и ложится), а не на владельца.
+    """
+    reg_by_team: dict[str, dict[str, float]] = {}
+    for item in initiatives:
+        if not item.pre_planned or item.initiative_type != REG_TYPE:
+            continue
+        owner_name = item.owner_team.name if item.owner_team else ""
+        bucket = "common" if owner_name == LEGAL_OWNER_TEAM else "team"
+        for executor in item.executors:
+            target = reg_by_team.setdefault(executor.team.name, {"common": 0.0, "team": 0.0})
+            target[bucket] += _effort_total(executor)
+    return reg_by_team
 
 
 def _is_it_project(team_type: str) -> bool:
@@ -195,7 +219,11 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
     )
 
 
-def _scope_metrics(team_rows: list[dict], tech_by_team: dict[str, dict[str, float]]) -> dict:
+def _scope_metrics(
+    team_rows: list[dict],
+    tech_by_team: dict[str, dict[str, float]],
+    reg_by_team: dict[str, dict[str, float]] | None = None,
+) -> dict:
     available_by: dict[str, float] = {}
     planned_by: dict[str, float] = {}
     for row in team_rows:
@@ -217,6 +245,9 @@ def _scope_metrics(team_rows: list[dict], tech_by_team: dict[str, dict[str, floa
     tech_common = sum(tech_by_team.get(row["team"], {}).get("common", 0.0) for row in team_rows)
     tech_team = sum(tech_by_team.get(row["team"], {}).get("team", 0.0) for row in team_rows)
     tech_total = tech_common + tech_team
+    reg_common = sum(reg_by_team.get(row["team"], {}).get("common", 0.0) for row in team_rows) if reg_by_team else 0.0
+    reg_team = sum(reg_by_team.get(row["team"], {}).get("team", 0.0) for row in team_rows) if reg_by_team else 0.0
+    reg_total = reg_common + reg_team
     return {
         "calendar_capacity": calendar,
         "available_capacity": available,
@@ -231,6 +262,14 @@ def _scope_metrics(team_rows: list[dict], tech_by_team: dict[str, dict[str, floa
             "total_percent": round(tech_total / available * 100, 1) if available else None,
             "common_percent": round(tech_common / available * 100, 1) if available else None,
             "team_percent": round(tech_team / available * 100, 1) if available else None,
+        },
+        "reg_agenda": {
+            "total_effort": reg_total,
+            "common_effort": reg_common,
+            "team_effort": reg_team,
+            "total_percent": round(reg_total / available * 100, 1) if available else None,
+            "common_percent": round(reg_common / available * 100, 1) if available else None,
+            "team_percent": round(reg_team / available * 100, 1) if available else None,
         },
     }
 
@@ -278,6 +317,7 @@ async def read_pre_pi(session: AsyncSession, cycle: PiCycle) -> PrePiRead:
         for executor in item.executors:
             target = tech_by_team.setdefault(executor.team.name, {"common": 0.0, "team": 0.0})
             target[bucket] += _effort_total(executor)
+    reg_by_team = _regulatory_by_team(initiatives)
     team_metrics = {}
     for row in capacity_teams:
         team_ref = next(
@@ -285,14 +325,14 @@ async def read_pre_pi(session: AsyncSession, cycle: PiCycle) -> PrePiRead:
             None,
         )
         if team_ref:
-            team_metrics[str(team_ref["id"])] = _scope_metrics([row], tech_by_team)
+            team_metrics[str(team_ref["id"])] = _scope_metrics([row], tech_by_team, reg_by_team)
     tribe_metrics = {
         str(tribe["id"]): _scope_metrics(
-            [row for row in capacity_teams if row["tribe"] == tribe["name"]], tech_by_team
+            [row for row in capacity_teams if row["tribe"] == tribe["name"]], tech_by_team, reg_by_team
         )
         for tribe in tribes_by_id.values()
     }
-    overall = _scope_metrics(capacity_teams, tech_by_team)
+    overall = _scope_metrics(capacity_teams, tech_by_team, reg_by_team)
     return PrePiRead(
         initialized=cycle.initiatives_initialized,
         version=cycle.version,
@@ -311,6 +351,7 @@ async def read_pre_pi(session: AsyncSession, cycle: PiCycle) -> PrePiRead:
         backlog=[row for row in rows if not row.pre_planned],
         capacity={"teams": team_metrics, "tribes": tribe_metrics, "overall": overall},
         tech_agenda=overall["tech_agenda"],
+        reg_agenda=overall["reg_agenda"],
         allowed_values={
             "statuses": ["backlog", "planned", "on_board", "done"],
             "blocks": ["planned", "backlog"],

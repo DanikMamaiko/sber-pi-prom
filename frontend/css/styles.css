@@ -828,6 +828,9 @@
   table.prep td input.goal-sel{min-width:150px}
   .bk-table td select.exec-team, table.prep td select.exec-team{min-width:150px}
   .bk-table td .comp-cell input, table.prep td .comp-cell input{width:52px;min-width:52px;text-align:center;padding:3px 5px}
+  /* ячейка «Тип инициативы»: select канонических типов + раскрывающийся ввод «Другое…» */
+  .type-field{display:flex;flex-direction:column;gap:3px}
+  .type-field select, .type-field .type-other{min-width:150px}
   /* ячейка «Команда-исполнитель и компетенции»: 2 уровня — команда / компетенции в один ряд */
   .exec-cell, .attr-cell{vertical-align:top}
   .exec-block{display:flex;flex-direction:column;gap:6px}
