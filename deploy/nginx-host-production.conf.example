@@ -1,0 +1,31 @@
+# Install as a separate file in /etc/nginx/sites-available and enable it with a symlink.
+# TLS is terminated by the host nginx; application containers do not publish ports publicly.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name safe.pip.sigma-belpsb.by;
+
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name safe.pip.sigma-belpsb.by;
+
+    ssl_certificate /PATH/TO/fullchain.pem;
+    ssl_certificate_key /PATH/TO/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:18080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_buffering off;
+    }
+}

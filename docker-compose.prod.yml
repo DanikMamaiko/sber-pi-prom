@@ -1,0 +1,61 @@
+x-api: &api
+  image: sberpi-api:${SBERPI_VERSION:-local}
+  build:
+    context: .
+    dockerfile: backend/Dockerfile.production
+  env_file:
+    - .env.production
+  extra_hosts:
+    # Allows containers to reach PostgreSQL installed directly on the Docker host.
+    # Corporate deployment may instead point DATABASE_URL at the DBA-provided hostname.
+    - "host.docker.internal:host-gateway"
+  networks:
+    - application
+
+services:
+  migrate:
+    <<: *api
+    profiles: ["tools"]
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - >-
+        if [ "$${AUDIT_ENABLED:-true}" = "true" ]; then
+          alembic -c audit_alembic.ini upgrade head;
+        fi && alembic upgrade head
+
+  api:
+    <<: *api
+    restart: unless-stopped
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  frontend:
+    image: sberpi-frontend:${SBERPI_VERSION:-local}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      # The host nginx owns public ports 80/443. This port is reachable only locally.
+      - "127.0.0.1:${SBERPI_FRONTEND_PORT:-18080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - application
+
+networks:
+  application:
+    driver: bridge

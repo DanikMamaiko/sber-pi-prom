@@ -11,7 +11,7 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name)
 app.state.audit_sink = (
     DatabaseAuditSink(
-        settings.audit_database_url,
+        settings.effective_audit_database_url,
         connect_timeout_seconds=settings.audit_connect_timeout_seconds,
         retry_seconds=settings.audit_retry_seconds,
     )

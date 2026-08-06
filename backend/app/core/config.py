@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
 
     audit_enabled: bool = True
-    audit_database_url: str = Field(
-        default="postgresql+asyncpg://sberpi_audit:sberpi_audit@localhost:5434/sberpi_audit"
-    )
+    # Empty means that audit events are stored in the main PostgreSQL database.
+    # A separate URL remains supported for local development and legacy deployments.
+    audit_database_url: str = ""
     audit_source_service: str = "sberpi-api"
     audit_host_ip: str = ""
     audit_trusted_proxy_networks: str = ""
@@ -59,6 +59,10 @@ class Settings(BaseSettings):
             for item in self.audit_trusted_proxy_networks.split(",")
             if item.strip()
         ]
+
+    @property
+    def effective_audit_database_url(self) -> str:
+        return self.audit_database_url.strip() or self.database_url
 
 
 @lru_cache

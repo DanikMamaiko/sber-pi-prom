@@ -83,7 +83,7 @@ let state;
 const STORAGE_VERSION = 4;
 const API_BASE = (window.SBERPI_API_BASE ||
   (location.protocol==='http:' || location.protocol==='https:'
-    ? (location.port==='8000' ? location.origin+'/api' : location.protocol+'//'+location.hostname+':8000/api')
+    ? location.origin+'/api'
     : 'http://localhost:8000/api')).replace(/\/$/,'');
 let cyclesApiReady=false;
 let cyclesApiUnavailable=false;

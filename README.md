@@ -21,7 +21,7 @@
 - Перенос инициатив в PI-цикл.
 - Pre PI, цели, командные доски и Program Board как рабочие доменные сущности.
 - Риски: общие и командные.
-- Аудит всех пользовательских API-действий в отдельной PostgreSQL-базе.
+- Аудит всех пользовательских API-действий в той же PostgreSQL-базе с отдельной цепочкой миграций.
 
 ## Быстрый старт
 
@@ -36,7 +36,7 @@ docker compose up --build
 - UI: http://localhost:8080
 - API: http://localhost:8000
 - OpenAPI: http://localhost:8000/docs
-- audit PostgreSQL: localhost:5434, база `sberpi_audit`;
+- аудит безопасности хранится в той же PostgreSQL-базе и использует таблицу версий `audit_alembic_version`;
 
 Тестовые пользователи по умолчанию:
 
