@@ -8,6 +8,8 @@ const ROLES = COMPS;
 const BASE_TEAM_COMPS = ['SA','DEV','QA'];
 // Возможные статусы инициативы в бэклоге трайба.
 const BACKLOG_STATUSES = ['Нет оценки','Оценка проведена','Отправлена в Pre PI Planning'];
+// «Размер майки» (T-shirt sizing). Пустая строка — значение не выбрано.
+const TSHIRT_SIZES = ['','XS','S','M','L','XL','Megalodon'];
 const BUDGET_STATUSES = ['Одобрена','На рассмотрении','Отклонена'];
 const FIN_CATEGORIES = ['Увеличение доходов','Сокращение расходов','Нет фин. эффекта'];
 const BUDGET_MONTHS = [

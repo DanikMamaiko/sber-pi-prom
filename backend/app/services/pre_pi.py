@@ -179,6 +179,7 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
         owner_team=item.owner_team.name if item.owner_team else "",
         owner_tribe=(item.owner_team.tribe.name if item.owner_team and item.owner_team.tribe else ""),
         initiative_type=item.initiative_type or "",
+        tshirt_size=item.tshirt_size or "",
         status=item.status or "backlog",
         goal_text=item.goal_text or "",
         metric=item.metric or "",
@@ -634,7 +635,7 @@ async def replace_pre_pi(session: AsyncSession, cycle: PiCycle, payload: PrePiWr
             owner = resolve_cycle_team(teams_by_key, teams_by_name, source.owner_tribe, source.owner_team)
         item.issue_key = source.issue_key.strip()
         for field in (
-            "title", "description", "product", "initiative_type", "status", "goal_text",
+            "title", "description", "product", "initiative_type", "tshirt_size", "status", "goal_text",
             "metric", "current_value", "target_value", "hypothesis", "redesign",
             "customer_priority", "team_priority", "estimate", "comment", "pre_planned",
             "on_board", "agreed", "sprint_index", "week_index",

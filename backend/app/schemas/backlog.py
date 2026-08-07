@@ -1,6 +1,11 @@
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# «Размер майки» (T-shirt sizing). Пустая строка = значение не выбрано.
+TShirtSize = Literal["", "XS", "S", "M", "L", "XL", "Megalodon"]
+TSHIRT_SIZES: tuple[str, ...] = ("", "XS", "S", "M", "L", "XL", "Megalodon")
 
 
 class BacklogExecutorPayload(BaseModel):
@@ -37,6 +42,7 @@ class BacklogItemFields(BaseModel):
     customer_priority: str = Field(default="", max_length=40)
     team_priority: str = Field(default="", max_length=40)
     status: str = Field(default="Нет оценки", max_length=80)
+    tshirt_size: TShirtSize = ""
     tags: list[str] = Field(default_factory=list)
     systems: list[str] = Field(default_factory=list)
     executors: list[BacklogBoardExecutor] = Field(default_factory=list)

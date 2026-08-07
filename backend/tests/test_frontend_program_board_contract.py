@@ -34,3 +34,13 @@ def test_program_board_renders_unscheduled_initiatives():
     assert "pb-unscheduled-head\">Не назначено" in board
     assert "card.sprint_index===null||card.sprint_index===undefined" in board
     assert 'class="pb-cell pb-unscheduled"' in board
+
+
+def test_program_board_moves_refresh_team_board_and_capacity():
+    api = source("api.js")
+    handler_start = api.index("async function programBoardMoveInitiative")
+    handler = api[handler_start : api.index("function programBoardEndpointPayload", handler_start)]
+    refresh = "await refreshCycleProjections(id,{teamBoards:true,capacity:true})"
+
+    assert refresh in handler
+    assert handler.index(refresh) < handler.index("return aggregate;")

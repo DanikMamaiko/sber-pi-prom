@@ -35,6 +35,16 @@ def test_team_boards_use_versioned_backend_commands_and_server_capacity():
     assert "personVacation" not in utils
 
 
+def test_team_board_commands_refresh_dependent_projections():
+    api = source("api.js")
+    handler_start = api.index("async function teamBoardCommand(path")
+    handler = api[handler_start : api.index("function capacityCycleYear", handler_start)]
+    refresh = "await refreshCycleProjections(id,{capacity:true,programBoard:true,risks:true})"
+
+    assert refresh in handler
+    assert handler.index(refresh) < handler.index("return aggregate;")
+
+
 def test_team_boards_do_not_persist_business_data_in_browser_or_use_demo_rosters():
     state = source("state.js")
     boards = source("team-boards.js")

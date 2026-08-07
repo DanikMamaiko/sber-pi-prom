@@ -43,7 +43,9 @@ def test_pre_pi_uses_only_backend_entities_for_executors_and_attractions():
     assert "team_id" in section
     assert "target_initiative_id" in section
     assert "target_team_id" in section
-    assert "— выберите инициативу —" in section
+    # Номер привлекаемой инициативы вводится вручную (стикером), а не из списка.
+    assert "ID Issue из JSW" in section
+    assert "— выберите инициативу —" not in section
 
 
 def test_pre_pi_executor_editor_uses_active_cycle_competencies():
@@ -51,3 +53,24 @@ def test_pre_pi_executor_editor_uses_active_cycle_competencies():
 
     assert "kind==='bk' ? backlogTeamCompetencies(ex.team) : teamComps(ex.team)" in source
     assert "kind==='bk' ? backlogTeamCompetencies(ex.team) : teamCompsFor(ex.team)" not in source
+
+
+def test_pre_pi_submit_refreshes_dependent_tabs_before_render():
+    section = pre_pi_source()
+    handler_start = section.index("async function prepSubmitToBoards(targets)")
+    handler = section[handler_start : section.index("function openAttractionModal", handler_start)]
+
+    refresh = "await refreshCycleProjections(id,{teamBoards:true,capacity:true,programBoard:true,risks:true})"
+    assert refresh in handler
+    assert handler.index(refresh) < handler.index("save();render();")
+
+
+def test_pre_pi_commands_refresh_dependent_cycle_projections():
+    source = frontend_source()
+    handler_start = source.index("async function prePiCommand(path")
+    handler = source[handler_start : source.index("async function loadPrePiCycles", handler_start)]
+    refresh = "await refreshCycleProjections(id,{goals:true,teamBoards:true,capacity:true,programBoard:true,risks:true})"
+
+    assert "function refreshCycleProjections" in source
+    assert refresh in handler
+    assert handler.index(refresh) < handler.index("render();")

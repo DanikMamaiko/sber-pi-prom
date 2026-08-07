@@ -35,6 +35,7 @@ class Initiative(Base, TimestampMixin):
     product: Mapped[str] = mapped_column(String(180), default="")
     owner_team_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
     initiative_type: Mapped[str] = mapped_column(String(120), default="")
+    tshirt_size: Mapped[str] = mapped_column(String(40), default="", nullable=False)
     status: Mapped[str] = mapped_column(String(40), default=InitiativeStatus.backlog.value)
     goal_text: Mapped[str] = mapped_column(String(260), default="")
     metric: Mapped[str] = mapped_column(String(260), default="")

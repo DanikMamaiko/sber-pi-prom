@@ -245,6 +245,7 @@ async def read_backlog_board(
                 customer_priority=item.customer_priority or "",
                 team_priority=item.team_priority or "",
                 status=item.status or "Нет оценки",
+                tshirt_size=item.tshirt_size or "",
                 systems=list(item.systems or []),
                 tags=list(item.tags or []),
                 sent_to=list(item.sent_to or []),
@@ -379,6 +380,7 @@ async def _apply_item_fields(
     item.customer_priority = source.customer_priority.strip()
     item.team_priority = source.team_priority.strip()
     item.status = status
+    item.tshirt_size = source.tshirt_size
     item.tags = _clean_unique(source.tags)
     item.systems = _clean_unique(source.systems)
 
@@ -788,6 +790,7 @@ async def dispatch_backlog_items(
         initiative.product = source.product
         initiative.owner_team_id = source.owner_team_id
         initiative.initiative_type = source.initiative_type
+        initiative.tshirt_size = source.tshirt_size
         initiative.customer_priority = source.customer_priority
         initiative.team_priority = source.team_priority
         initiative.tags = list(source.tags or [])

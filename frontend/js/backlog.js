@@ -25,7 +25,7 @@ function backlogViewItem(row){
     description:row.description||'',product:row.product||'',owner:row.owner_team||'',
     type:row.initiative_type||'',quarter:row.target_quarter||'',
     year:row.target_year?String(row.target_year):'',custPrio:row.customer_priority||'',
-    teamPrio:row.team_priority||'',status:row.status||'Нет оценки',
+    teamPrio:row.team_priority||'',status:row.status||'Нет оценки',tshirt:row.tshirt_size||'',
     ac:Array.isArray(row.systems)?row.systems:[],tags:Array.isArray(row.tags)?row.tags:[],
     sentTo:Array.isArray(row.sent_to)?row.sent_to:[],totalEffort:+row.total_effort||0,
     executors,
@@ -39,7 +39,7 @@ function backlogCommandPayload(row){
     description:row.description||'',product:row.product||'',owner_team:row.owner_team||'',
     initiative_type:row.initiative_type||'',target_year:row.target_year,
     target_quarter:row.target_quarter,customer_priority:row.customer_priority||'',
-    team_priority:row.team_priority||'',status:row.status||'Нет оценки',
+    team_priority:row.team_priority||'',status:row.status||'Нет оценки',tshirt_size:row.tshirt_size||'',
     tags:Array.isArray(row.tags)?row.tags:[],systems:Array.isArray(row.systems)?row.systems:[],
     executors:(row.executors||[]).map(ex=>({
       id:ex.id||null,team:ex.team,effort_by_competency:{...(ex.effort_by_competency||{})},
@@ -94,15 +94,113 @@ function viewBacklogSelect(){
 const BK_FILTER_COLS=[
   {k:'custPrio',label:'Приоритет заказчика'},
   {k:'teamPrio',label:'Приоритет трайба/команды'},
-  {k:'quarter', label:'Квартал реализации', val:it=>[it.quarter,it.year].filter(Boolean).join(' ')},
+  {k:'quarter', label:'Квартал реализации'},
   {k:'product', label:'Продукт'},
   {k:'owner',   label:'Команда-владелец'},
   {k:'type',    label:'Тип инициативы'},
   {k:'ac',      label:'АС', val:it=>(Array.isArray(it.ac)?it.ac:[])},
   {k:'status',  label:'Статус'},
+  {k:'tshirt',  label:'Размер майки'},
   {k:'effort',  label:'Общая оценка (чел/дн)', val:it=>it.totalEffort},
 ];
+// «Квартал реализации» — составной столбец из двух измерений, год и квартал.
+// Год участвует в фильтрах как виртуальная колонка, но не рисуется
+// отдельной ячейкой в шапке/теле: попап у единственной воронки один на оба
+// измерения, значение строки подходит, если её год И квартал входят в выбор.
+const BK_YEAR_COL={k:'year',label:'Год', val:it=>(it.year?String(it.year):'')};
+const BK_FILTER_AND_SORT_COLS=[...BK_FILTER_COLS,BK_YEAR_COL];
 
+// Шапка составного столбца «Квартал реализации»: одна воронка, подсвечивается,
+// когда выбран хотя бы один год или квартал.
+function bkQuarterThHTML(){
+  const scope='bk', cf=colFilters(scope);
+  const on = (Array.isArray(cf.quarter)&&cf.quarter.length) || (Array.isArray(cf.year)&&cf.year.length);
+  return `<th><div class="th-f"><span>Квартал реализации</span>`+
+    `<button class="col-f${on?' on':''}" data-fcol="quarter" data-fscope="bk" data-bk-yq="1" title="Фильтр по столбцу «Квартал реализации»">▼</button></div></th>`;
+}
+// Попап составного столбца «Квартал реализации»: две независимые группы чекбоксов
+// (Год и Квартал) с логикой И. Без сортировки и поиска: только выбор года и квартала.
+function openBkYqFilterPop(btn,scope='bk'){
+  closeColFilterPop();
+  const ctx=colFilterCtx[scope];
+  if(!ctx) return;
+  const filters=colFilters(scope);
+  const selQ=Array.isArray(filters.quarter)?filters.quarter.slice():[];
+  const selY=Array.isArray(filters.year)?filters.year.slice():[];
+  // Значения, доступные с учётом фильтров по ДРУГИМ столбцам (год/квартал исключены).
+  const fNoYq={...filters}; delete fNoYq.quarter; delete fNoYq.year;
+  const base=ctx.rows.filter(r=>rowMatchesColFilters(r,ctx.cols,fNoYq));
+  const qCol=ctx.cols.find(c=>c.k==='quarter');
+  const yCol=ctx.cols.find(c=>c.k==='year');
+  if(!qCol||!yCol) return;
+  let qVals=colUniqueValues(base,qCol), yVals=colUniqueValues(base,yCol);
+  selQ.forEach(v=>{ if(!qVals.includes(v)) qVals.push(v); });
+  selY.forEach(v=>{ if(!yVals.includes(v)) yVals.push(v); });
+
+  const itemHTML=(vals,sel)=>vals.map(v=>
+    `<label class="colf-item" data-v="${esc(v)}"><input type="checkbox" class="colf-box" ${sel.includes(v)?'checked':''}>
+      <span class="${v===''?'muted':''}">${v===''?FILTER_EMPTY_LABEL:esc(v)}</span></label>`
+  ).join('')||`<div class="muted" style="padding:6px 4px">Нет значений</div>`;
+
+  const pop=document.createElement('div');
+  pop.className='colf-pop colf-pop-yq';
+  pop.innerHTML=`<div class="colf-head">Квартал реализации</div>
+    <div class="colf-yq-group">
+      <div class="colf-yq-title">Год</div>
+      <label class="colf-item colf-all"><input type="checkbox" class="colf-allbox" data-grp="year"><span>Выделить всё</span></label>
+      <div class="colf-list" data-list="year">${itemHTML(yVals,selY)}</div>
+    </div>
+    <div class="colf-yq-group">
+      <div class="colf-yq-title">Квартал</div>
+      <label class="colf-item colf-all"><input type="checkbox" class="colf-allbox" data-grp="quarter"><span>Выделить всё</span></label>
+      <div class="colf-list" data-list="quarter">${itemHTML(qVals,selQ)}</div>
+    </div>
+    <div class="colf-btns">
+      <button class="ghost" data-colf-reset>Сбросить</button>
+      <button class="primary" data-colf-apply>Применить</button>
+    </div>`;
+  document.body.appendChild(pop);
+  colfPop=pop;
+
+  // позиционирование: под кнопкой, с удержанием в пределах окна
+  const r=btn.getBoundingClientRect();
+  const w=pop.offsetWidth, h=pop.offsetHeight;
+  let left=Math.min(r.left, window.innerWidth-w-8);
+  let top=r.bottom+4;
+  if(top+h>window.innerHeight-8) top=Math.max(8, r.top-h-4);
+  pop.style.left=Math.max(8,left)+'px';
+  pop.style.top=top+'px';
+
+  const syncGroup=grp=>{
+    const list=pop.querySelector(`[data-list="${grp}"]`);
+    const allBox=pop.querySelector(`.colf-allbox[data-grp="${grp}"]`);
+    const boxes=[...list.querySelectorAll('.colf-item:not([hidden]) .colf-box')];
+    const onC=boxes.filter(x=>x.checked).length;
+    allBox.checked=boxes.length>0&&onC===boxes.length;
+    allBox.indeterminate=onC>0&&onC<boxes.length;
+  };
+  ['year','quarter'].forEach(grp=>{
+    syncGroup(grp);
+    const allBox=pop.querySelector(`.colf-allbox[data-grp="${grp}"]`);
+    const list=pop.querySelector(`[data-list="${grp}"]`);
+    allBox.onchange=()=>{ list.querySelectorAll('.colf-item:not([hidden]) .colf-box').forEach(x=>{x.checked=allBox.checked;}); syncGroup(grp); };
+    list.querySelectorAll('.colf-box').forEach(x=>x.onchange=()=>syncGroup(grp));
+  });
+  pop.querySelector('[data-colf-reset]').onclick=()=>{
+    delete colFilters(scope).quarter; delete colFilters(scope).year;
+    closeColFilterPop(); save(); render();
+  };
+  pop.querySelector('[data-colf-apply]').onclick=()=>{
+    const pick=grp=>{const out=[];pop.querySelector(`[data-list="${grp}"]`).querySelectorAll('.colf-item')
+      .forEach(it=>{const b=it.querySelector('.colf-box');if(b&&b.checked)out.push(it.dataset.v||'');});return out;};
+    const yP=pick('year'), qP=pick('quarter');
+    // выбрано всё (или ничего) — измерение снимается
+    if(!yP.length||yP.length===yVals.length) delete colFilters(scope).year; else colFilters(scope).year=yP;
+    if(!qP.length||qP.length===qVals.length) delete colFilters(scope).quarter; else colFilters(scope).quarter=qP;
+    closeColFilterPop(); save(); render();
+  };
+  setTimeout(()=>{ pop.querySelector('.colf-box')?.focus(); document.addEventListener('mousedown',colfOutside,true); },0);
+}
 // 7.1 — весь бэклог трайба
 function viewBacklogBoard(tribe){
   const isBudget=state.ui.mode==='budget';
@@ -111,10 +209,10 @@ function viewBacklogBoard(tribe){
   let list=backlogRows().filter(row=>row.tribe===tribe).map(backlogViewItem);
   if(filter) list=list.filter(it=> it.owner===filter || issueExecTeams(it).includes(filter));
   // фильтры по столбцам применяются поверх фильтра по команде
-  colFilterCtx['bk']={rows:list, cols:BK_FILTER_COLS};
+  colFilterCtx['bk']={rows:list, cols:BK_FILTER_AND_SORT_COLS};
   const listAll=list;
-  list=applyColFilters(list,BK_FILTER_COLS,'bk');
-  list=applyColSort(list,BK_FILTER_COLS,'bk');
+  list=applyColFilters(list,BK_FILTER_AND_SORT_COLS,'bk');
+  list=applyColSort(list,BK_FILTER_AND_SORT_COLS,'bk');
   const q=state.ui.backlogQuarter, y=state.ui.backlogYear || (isBudget ? state.ui.budgetYear : null);
   const canSend=isBudget ? !!y : !!(q&&y);
 
@@ -150,7 +248,7 @@ function viewBacklogBoard(tribe){
     <tr>
       <th class="stik1">№ Инициативы</th>
       <th>Название инициативы</th>`+
-      BK_FILTER_COLS.map(c=>filterThHTML(c,'bk')).join('')+
+      BK_FILTER_COLS.map(c=>c.k==='quarter'?bkQuarterThHTML():filterThHTML(c,'bk')).join('')+
       `<th>Команда-исполнитель и компетенции</th>
       <th class="del-col"></th>
     </tr>
@@ -159,7 +257,7 @@ function viewBacklogBoard(tribe){
   let body='';
   if(!list.length){
     const msg = listAll.length ? 'Ничего не найдено — измените фильтры по столбцам.' : 'Бэклог пуст — добавьте инициативу по № Issue.';
-    body=`<tr><td class="stik1 muted">—</td><td class="muted" colspan="12">${msg}</td></tr>`;
+    body=`<tr><td class="stik1 muted">—</td><td class="muted" colspan="13">${msg}</td></tr>`;
   }else{
     list.forEach(it=>{ body+=backlogRowHTML(it,tribe,teams,isBudget); });
   }
@@ -188,6 +286,10 @@ function backlogStatusCell(it,readonly=false){
   const disabled=readonly||it.status==='Отправлена в Pre PI Planning';
   return `<select data-bk="${it._uid}" data-bp="status" ${disabled?'disabled':''}>${statuses.map(s=>`<option ${it.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>`;
 }
+function backlogTshirtCell(it,readonly=false){
+  const disabled=readonly||it.status==='Отправлена в Pre PI Planning';
+  return `<select data-bk="${it._uid}" data-bp="tshirt" ${disabled?'disabled':''}>${TSHIRT_SIZES.map(s=>`<option value="${s}" ${it.tshirt===s?'selected':''}>${s||'—'}</option>`).join('')}</select>`;
+}
 function backlogExecutorTeamOptions(){
   return backlogTeamRefs();
 }
@@ -209,6 +311,7 @@ function backlogRowHTML(it,tribe,teams,readonly=false){
     <td rowspan="${span}">${initiativeTypeFieldHTML(it.type, `data-bk="${it._uid}" data-bp="type"${readonly?' disabled':''}`)}</td>
     <td rowspan="${span}">${backlogAcCell(it,readonly)}</td>
     <td rowspan="${span}">${backlogStatusCell(it,readonly)}</td>
+    <td rowspan="${span}">${backlogTshirtCell(it,readonly)}</td>
     <td rowspan="${span}" style="text-align:center;font-weight:700">${round1(it.totalEffort)}</td>`;
   const delCell=readonly?`<td class="row-del-cell" rowspan="${span}"></td>`:`<td class="row-del-cell" rowspan="${span}"><button class="row-del" data-bk-delrow="${esc(it._uid)}" title="Удалить инициативу">✕</button></td>`;
   let rows='';
@@ -224,18 +327,36 @@ async function sendBacklogToPrePI(tribe){
   const q=state.ui.backlogQuarter, y=state.ui.backlogYear;
   if(!q||!y){ toast('Сначала выберите Квартал и Год',{type:'warn'}); return; }
   const target=cycleId(y,q);
+  const before=new Set(backlogRows().filter(row=>(row.sent_to||[]).includes(target)).map(row=>row.id));
   try{
-    const before=new Set(backlogRows().filter(row=>(row.sent_to||[]).includes(target)).map(row=>row.id));
     await executeBacklogCommand('/backlog-board/dispatch','POST',{
       tribe,target_year:+y,target_quarter:q,
     });
-    const sent=backlogRows().filter(row=>!before.has(row.id)&&(row.sent_to||[]).includes(target)).length;
-    await loadPrePiCycles();
-    render();
-    toast(`Отправлено на Pre PI (${target}): ${sent} ${sent===1?'инициатива':'инициатив'}`,{type:'success',title:'Отправлено на Pre PI Planning'});
   }catch(error){
-    if(error&&error.status===409)return;
+    // Реальные ошибки (нет PI-цикла, нет подходящих инициатив, команда не входит
+    // в цикл, конфликт версий бэклога) уже показаны внутри executeBacklogCommand.
+    return;
   }
+  // Dispatch прошёл — read model бэклога уже обновлён. Считаем, что отправилось.
+  const sent=backlogRows().filter(row=>!before.has(row.id)&&(row.sent_to||[]).includes(target)).length;
+  if(sent){
+    toast(`Отправлено на Pre PI (${target}): ${sent} ${sent===1?'инициатива':'инициатив'}`,{type:'success',title:'Отправлено на Pre PI Planning'});
+  }else{
+    toast(`Нет новых инициатив для ${target} — все подходящие уже отправлены.`,{type:'info',title:'Отправка на Pre PI Planning'});
+  }
+  // Обновляем Pre PI. Dispatch инкрементирует version целевого цикла, поэтому
+  // сбрасываем локальную версию: иначе последующий read решит, что данные
+  // изменились в другом окне (409), и молча погасит уведомление об отправке.
+  const prevVersion=cycleVersions[target];
+  delete cycleVersions[target];
+  try{
+    await loadPrePiCycles();
+  }catch(_){
+    // При сбое перезагрузки вернём прежнюю версию, чтобы будущие мутации целевого
+    // цикла не падали с «Версия PI-цикла не загружена». Обратная связь уже показана.
+    if(!Number.isInteger(cycleVersions[target])) cycleVersions[target]=prevVersion;
+  }
+  render();
 }
 function budgetIssueKey(it){ return it && (it._uid || it.id); }
 function backlogInitiativeYear(it){ return String(it && it.year || '').trim(); }
@@ -280,6 +401,9 @@ function bindBacklog(){
   const tribe=state.ui.backlogTribe;
   if(!tribe) return;
   bindColFilters();
+  // составной столбец «Квартал реализации»: своя воронка с двумя группами (Год/Квартал)
+  const yqBtn=document.querySelector('[data-bk-yq]');
+  if(yqBtn) yqBtn.onclick=(e)=>{ e.stopPropagation(); openBkYqFilterPop(yqBtn); };
   const back=$('#bkBack'); if(back) back.onclick=()=>{ state.ui.backlogTribe=null; clearColState('bk'); save(); render(); };
   document.querySelectorAll('[data-bk-filter]').forEach(el=>el.onclick=()=>{
     state.ui.backlogTeamFilter=el.dataset.bkFilter||null; save(); render();
@@ -300,7 +424,7 @@ function bindBacklog(){
       await executeBacklogCommand('/backlog-board/items','POST',{
         tribe,issue_key:id,title:'',description:'',product:'',owner_team:owner,
         initiative_type:'',target_year:null,target_quarter:null,
-        customer_priority:'',team_priority:'',status:'Нет оценки',tags:[],systems:[],
+        customer_priority:'',team_priority:'',status:'Нет оценки',tshirt_size:'',tags:[],systems:[],
         executors:executor?[executor]:[],
       });
       issInput.value='';
@@ -342,7 +466,8 @@ function bindBacklog(){
     }
     const payload=backlogCommandPayload(row);
     const fieldMap={id:'issue_key',name:'title',custPrio:'customer_priority',teamPrio:'team_priority',
-      quarter:'target_quarter',year:'target_year',product:'product',owner:'owner_team',type:'initiative_type',status:'status'};
+      quarter:'target_quarter',year:'target_year',product:'product',owner:'owner_team',
+      type:'initiative_type',status:'status',tshirt:'tshirt_size'};
     if(bp==='ac') payload.systems=el.value.split(',').map(s=>s.trim()).filter(Boolean);
     else if(bp==='year') payload.target_year=el.value?+el.value:null;
     else if(bp==='quarter') payload.target_quarter=el.value||null;

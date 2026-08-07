@@ -4,7 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas._base import ORMModel
-from app.schemas.backlog import BacklogExecutorPayload
+from app.schemas.backlog import BacklogExecutorPayload, TShirtSize
 from app.schemas.goals import GoalsRead
 
 
@@ -15,6 +15,7 @@ class InitiativeCreate(BaseModel):
     product: str = ""
     owner_team_id: uuid.UUID | None = None
     initiative_type: str = ""
+    tshirt_size: TShirtSize = ""
     status: str = Field(default="backlog", pattern="^(backlog|planned|on_board|done)$")
     goal_text: str = ""
     metric: str = ""
@@ -36,6 +37,7 @@ class InitiativeRead(ORMModel):
     product: str
     owner_team_id: uuid.UUID | None
     initiative_type: str
+    tshirt_size: str
     status: str
     goal_text: str
     metric: str
@@ -87,6 +89,7 @@ class PrePiInitiativeWrite(BaseModel):
     owner_team: str = Field(default="", max_length=180)
     owner_tribe: str = Field(default="", max_length=180)
     initiative_type: str = Field(default="", max_length=120)
+    tshirt_size: TShirtSize = ""
     status: str = Field(default="backlog", pattern="^(backlog|planned|on_board|done)$")
     goal_text: str = Field(default="", max_length=260)
     metric: str = Field(default="", max_length=260)
@@ -148,6 +151,7 @@ class PrePiInitiativeCommand(BaseModel):
     owner_team_id: uuid.UUID | None = None
     initiative_type: str | None = Field(default=None, max_length=120)
     status: Literal["backlog", "planned", "on_board", "done"] | None = None
+    tshirt_size: TShirtSize | None = None
     goal_text: str | None = Field(default=None, max_length=260)
     metric: str | None = Field(default=None, max_length=260)
     current_value: str | None = Field(default=None, max_length=260)

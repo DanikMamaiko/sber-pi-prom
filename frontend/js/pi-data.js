@@ -363,6 +363,10 @@ function openColFilterPop(btn,scope,colKey){
 function bindColFilters(){
   document.querySelectorAll('[data-fcol]').forEach(el=>el.onclick=(e)=>{
     e.stopPropagation();
+    if(el.dataset.bkYq && typeof openBkYqFilterPop==='function'){
+      openBkYqFilterPop(el, el.dataset.fscope || 'bk');
+      return;
+    }
     openColFilterPop(el, el.dataset.fscope, el.dataset.fcol);
   });
   document.querySelectorAll('[data-fclear]').forEach(el=>el.onclick=()=>{

@@ -32,6 +32,7 @@ class BacklogItem(Base, TimestampMixin):
     product: Mapped[str] = mapped_column(String(180), default="")
     owner_team_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
     initiative_type: Mapped[str] = mapped_column(String(120), default="")
+    tshirt_size: Mapped[str] = mapped_column(String(40), default="", nullable=False)
     target_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_quarter: Mapped[str | None] = mapped_column(String(2), nullable=True)
     customer_priority: Mapped[str] = mapped_column(String(40), default="")

@@ -279,6 +279,7 @@ function prePiIssueFromApi(row,prior){
     executors,
     type:row.initiative_type||'',
     status:row.status||'backlog',
+    tshirt:row.tshirt_size||'',
     cel:row.goal_text||'',
     metric:row.metric||'',
     fact:row.current_value||'',
@@ -364,6 +365,38 @@ async function loadAuthorizedCycle(id){
   }else risksApiReady=false;
   activateCycle(id);
 }
+async function refreshCycleProjections(id=currentCycleId(),options={}){
+  const backendId=id&&cycleBackendIds[id],c=id&&state.cycles[id];
+  if(!id||!backendId||!c)return;
+  const reads=[];
+  const add=(enabled,run,report)=>{
+    if(enabled)reads.push(run().catch(error=>{if(report)report(error);else console.error('Projection refresh failed',error);}));
+  };
+  add(options.prePi&&prePiApiReady&&hasPermission('pre_pi:read'),async()=>{
+    applyPrePi(c,await cycleRead(id,`/pi-cycles/${backendId}/pre-pi`),id);
+  },reportPrePiSyncError);
+  add(options.goals&&goalsApiReady&&hasPermission('goals:read'),async()=>{
+    applyGoals(c,await cycleRead(id,`/pi-cycles/${backendId}/goals-board`),id);
+  },reportGoalsSyncError);
+  add(options.teamBoards&&teamBoardsApiReady&&hasPermission('team_boards:read'),async()=>{
+    const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/team-boards`);
+    applyTeamBoards(c,aggregate);
+    persistedTeamBoardHashes[id]=teamBoardsPayloadHash(id,c);
+  },reportTeamBoardsSyncError);
+  add(options.capacity&&capacityApiReady&&hasPermission('team_boards:read'),async()=>{
+    const aggregate=await cycleRead(id,`/pi-cycles/${backendId}/capacity`);
+    applyCapacity(c,aggregate,id);
+    persistedCapacityHashes[id]=capacityPayloadHash(id,c);
+  },reportCapacitySyncError);
+  add(options.programBoard&&programBoardApiReady&&hasPermission('program_board:read'),async()=>{
+    applyProgramBoard(c,await cycleRead(id,`/pi-cycles/${backendId}/program-board`),id);
+  },reportProgramBoardSyncError);
+  add(options.risks&&risksApiReady&&hasPermission('risks:read'),async()=>{
+    applyRisks(c,await cycleRead(id,`/pi-cycles/${backendId}/risks-board`),id);
+  },reportRisksSyncError);
+  await Promise.all(reads);
+  activateCycle(id);
+}
 function reportPrePiSyncError(error){
   console.error('Pre PI API command failed',error);
   if(reportOptimisticConflict(error))return;
@@ -378,6 +411,7 @@ async function prePiCommand(path,method='POST',body={}){
   if(!id||!backendId||!prePiViews[id])throw new Error('Pre PI ещё не загружен');
   const result=await cycleMutation(id,`/pi-cycles/${backendId}/pre-pi${path}`,{method,body});
   applyPrePi(state.cycles[id],result,id);
+  await refreshCycleProjections(id,{goals:true,teamBoards:true,capacity:true,programBoard:true,risks:true});
   activateCycle(id);
   render();
   return result;
@@ -648,11 +682,7 @@ async function teamBoardCommand(path,method='PATCH',body={}){
   const aggregate=await cycleMutation(id,`/pi-cycles/${backendId}/team-boards${path}`,{method,body});
   applyTeamBoards(state.cycles[id],aggregate);
   persistedTeamBoardHashes[id]=teamBoardsPayloadHash(id,state.cycles[id]);
-  const capacity=await cycleRead(id,`/pi-cycles/${backendId}/capacity`);
-  applyCapacity(state.cycles[id],capacity,id);
-  persistedCapacityHashes[id]=capacityPayloadHash(id,state.cycles[id]);
-  const programBoard=await cycleRead(id,`/pi-cycles/${backendId}/program-board`);
-  applyProgramBoard(state.cycles[id],programBoard,id);
+  await refreshCycleProjections(id,{capacity:true,programBoard:true,risks:true});
   activateCycle(id);
   return aggregate;
 }
@@ -883,9 +913,8 @@ async function programBoardMoveInitiative(initiativeId,sprintIndex,sortOrder=0){
   const aggregate=await programBoardCommand(`/initiatives/${initiativeId}/position`,'PATCH',{
     sprint_index:sprintIndex,sort_order:sortOrder,
   });
-  const id=currentCycleId(),backendId=id&&cycleBackendIds[id];
-  const boards=await cycleRead(id,`/pi-cycles/${backendId}/team-boards`);
-  applyTeamBoards(state.cycles[id],boards);
+  const id=currentCycleId();
+  await refreshCycleProjections(id,{teamBoards:true,capacity:true});
   activateCycle(id);
   return aggregate;
 }

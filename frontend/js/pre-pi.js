@@ -18,6 +18,7 @@ const PREP_COLS=[
   {k:'plan',label:'TO BE (прогноз)',lowerHide:true},
   {k:'hypo',label:'Гипотезы',lowerHide:true},
   {k:'redesign',label:'Редизайн',lowerHide:true},
+  {k:'tshirt',label:'Размер майки'},
 ];
 // Набор столбцов блока (верхний/нижний). От типа команды не зависит.
 function prepColsFor(isUpper){
@@ -171,6 +172,10 @@ function goalInputHTML(i){
     title="Выберите цель из справочника PI или впишите свою (для ИТ-проектов — веху)"
     data-pi="${esc(i.id)}" data-pk="cel" value="${esc(i.cel)}">`;
 }
+// «Размер майки» — фиксированный список (T-shirt sizing). Пустое значение = «—».
+function prepTshirtCellHTML(i){
+  return `<select data-pi="${esc(i.id)}" data-pk="tshirt">${TSHIRT_SIZES.map(s=>`<option value="${s}" ${i.tshirt===s?'selected':''}>${s||'—'}</option>`).join('')}</select>`;
+}
 // Фильтруемые столбцы Pre PI: все столбцы блока (кроме №/названия инициативы и
 // «Команды-исполнителя и компетенций») + расчётная «Общая оценка».
 function prepFilterCols(cols,withEffort){
@@ -223,6 +228,8 @@ function prepTable(rows,isUpper){
           ? `<td rowspan="${span}">${goalInputHTML(i)}</td>`
           : c.k==='type'
           ? `<td rowspan="${span}">${initiativeTypeFieldHTML(i[c.k], `data-pi="${esc(i.id)}" data-pk="type"`)}</td>`
+          : c.k==='tshirt'
+          ? `<td rowspan="${span}">${prepTshirtCellHTML(i)}</td>`
           : `<td rowspan="${span}"><input data-pi="${esc(i.id)}" data-pk="${c.k}" value="${esc(i[c.k])}" class="${c.k==='custPrio'||c.k==='teamPrio'?'w-narrow':''}"></td>`
         ).join('')+
         `<td rowspan="${span}" style="text-align:center;font-weight:700">${round1(i.totalEstimate||0)}</td>`;
@@ -336,7 +343,8 @@ function bindPrep(){
       const iss=findIssue(el.dataset.pi); if(!iss)return;
       const field={name:'title',description:'description',product:'product',type:'initiative_type',
         cel:'goal_text',metric:'metric',fact:'current_value',plan:'target_value',hypo:'hypothesis',
-        redesign:'redesign',custPrio:'customer_priority',teamPrio:'team_priority',comment:'comment'}[el.dataset.pk];
+        redesign:'redesign',custPrio:'customer_priority',teamPrio:'team_priority',comment:'comment',
+        tshirt:'tshirt_size'}[el.dataset.pk];
       if(!field||!iss._backendId)return;
       runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{[field]:el.value});
     };
@@ -494,6 +502,7 @@ async function prepSubmitToBoards(targets){
     const c=state.cycles[id];
     applyPrePi(c,result.pre_pi,id);
     applyGoals(c,result.goals,id);
+    await refreshCycleProjections(id,{teamBoards:true,capacity:true,programBoard:true,risks:true});
     activateCycle(id);
     save();render();
     const parts=[];
@@ -522,11 +531,10 @@ function openAttractionModal(rowId, ei){
   ei=+ei||0;
   const host=row.executors && row.executors[ei]; if(!host) return;
   const sprintCount=+((prePiViews[currentCycleId()]||{}).cycle||{}).sprint_count||0;
-  const targets=state.issues.filter(issue=>issue._backendId&&issue._backendId!==row._backendId);
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>Привлечение ресурса · ${esc(row.id)} <span class="muted" style="font-size:12px;font-weight:400">(исполнитель: ${esc(host.team)})</span></h3>
-    <label><span>№ Issue (привлекаемая задача)</span><select id="am_id"><option value="">— выберите инициативу —</option>${targets.map(issue=>`<option value="${esc(issue._backendId)}">${esc(issue.id)} · ${esc(issue.name)}</option>`).join('')}</select></label>
+    <label><span>№ Issue (привлекаемая инициатива)</span><input id="am_id" placeholder="ID Issue из JSW (например, CORP-123)" autocomplete="off"></label>
     <label><span>Команда-исполнитель (подтягивается из JSW)</span><select id="am_team">${allTeamNames().map(n=>`<option>${esc(n)}</option>`).join('')}</select></label>
     <label><span>Спринт (кол-во из данных PI-цикла)</span><select id="am_sprint">
       <option value="">— не выбран —</option>
@@ -538,19 +546,26 @@ function openAttractionModal(rowId, ei){
     </div>
   </div></div>`;
   $('#am_cancel').onclick=()=>root.innerHTML='';
-  $('#am_save').onclick=()=>{
-    const targetId=$('#am_id').value;if(!targetId)return;
-    const ref=state.issues.find(issue=>issue._backendId===targetId);if(!ref)return;
+  // Номер привлекаемой инициативы вводится вручную (стикером), а не выбирается из списка.
+  // Backend сам разрешает цель привлечения по issue_key (см. services/pre_pi._sync_executors),
+  // поэтому target_initiative_id необязателен — подстраховочно подставляем, если ключ нашёлся.
+  const amId=$('#am_id');
+  const saveAm=()=>{
+    const key=(amId.value||'').trim();
+    if(!key){toast('Введите номер привлекаемой инициативы',{type:'warn'});return;}
+    const ref=state.issues.find(issue=>String(issue.id).toLowerCase()===key.toLowerCase());
     const team=$('#am_team').value,teamRow=state.pi.teams.find(value=>value.name===team);if(!teamRow)return;
     const sprVal=$('#am_sprint').value;
     const sprint = sprVal===''? null : (+sprVal);
     if(sprint===null){toast('Выберите спринт',{type:'warn'});return;}
     const executors=prePiExecutorPayload(row,rows=>rows[ei].attractions.push({
-      target_initiative_id:ref._backendId,issue_key:ref.id,target_team_id:teamRow._teamId,
+      target_initiative_id:ref?ref._backendId:null,issue_key:key,target_team_id:teamRow._teamId,
       team:teamRow.name,sprint_index:sprint,approval_status:'pending',sort_order:rows[ei].attractions.length,
     }));
     root.innerHTML='';
     runPrePiUiCommand(`/initiatives/${row._backendId}`,'PATCH',{executors},'Запрос на привлечение добавлен');
   };
+  $('#am_save').onclick=saveAm;
+  amId.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();saveAm();}};
 }
 
