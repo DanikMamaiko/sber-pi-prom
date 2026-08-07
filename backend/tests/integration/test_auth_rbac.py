@@ -60,8 +60,8 @@ async def test_navigation_requires_auth_and_exposes_only_minimal_cycles(raw_api_
         (
             "pm",
             "pm123",
-            ["prep", "goals", "teams", "pb", "risks"],
-            set(),
+            ["backlog", "prep", "goals", "teams", "pb", "risks"],
+            {"prep"},
         ),
         (
             "user",
@@ -133,14 +133,30 @@ async def test_select_cycle_requires_authentication(raw_api_client):
     assert response.status_code == 401
 
 
-async def test_backend_returns_403_for_role_without_permission(raw_api_client):
+async def test_pm_can_read_backlog_and_edit_pre_pi_but_not_pi_data(raw_api_client):
     await _login(raw_api_client, "pm", "pm123")
 
-    assert (await raw_api_client.get("/backlog-board")).status_code == 403
+    # PM получил доступ на просмотр «Бэклога команд».
+    assert (await raw_api_client.get("/backlog-board")).status_code == 200
+    # Данные PI-цикла по-прежнему недоступны PM (нет pi_data:read) — заодно
+    # подтверждаем, что 403-механизм для запрещённых ресурсов продолжает работать.
     assert (await raw_api_client.get("/pi-cycles")).status_code == 403
-    assert (await raw_api_client.get("/pi-cycles/00000000-0000-0000-0000-000000000000/pre-pi")).status_code == 404
-    write = await raw_api_client.put(
-        "/pi-cycles/00000000-0000-0000-0000-000000000000/pre-pi",
-        json={"initiatives": []},
+
+    # PRE PI теперь редактируем: создаём цикл, читаем актуальную версию и
+    # заменяем pre-pi (раньше этот PUT возвращал 403).
+    cycle = await raw_api_client.post(
+        "/app/pi-cycles",
+        json={"year": 2051, "quarter": "Q4"},
     )
-    assert write.status_code == 403
+    assert cycle.status_code == 200, cycle.text
+    cycle_id = cycle.json()["id"]
+
+    current = await raw_api_client.get(f"/pi-cycles/{cycle_id}/pre-pi")
+    assert current.status_code == 200, current.text
+    expected_version = current.json()["version"]
+
+    write = await raw_api_client.put(
+        f"/pi-cycles/{cycle_id}/pre-pi",
+        json={"initiatives": [], "expected_version": expected_version},
+    )
+    assert write.status_code == 200, write.text

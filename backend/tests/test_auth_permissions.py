@@ -25,7 +25,9 @@ EXPECTED = {
     "business_viewer": {
         Permission.APP_NAVIGATE,
         Permission.PI_CYCLE_SELECT,
+        Permission.BACKLOG_READ,
         Permission.PRE_PI_READ,
+        Permission.PRE_PI_WRITE,
         Permission.GOALS_READ,
         Permission.TEAM_BOARDS_READ,
         Permission.PROGRAM_BOARD_READ,
