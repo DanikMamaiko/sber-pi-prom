@@ -156,9 +156,10 @@ CREATE TABLE public.board_connections (
 CREATE TABLE public.initiative_attractions (
     id uuid NOT NULL,
     executor_id uuid NOT NULL,
-    target_initiative_id uuid NOT NULL,
+    issue_key character varying(80) NOT NULL,
+    target_initiative_id uuid,
     target_team_id uuid NOT NULL,
-    sprint_index integer NOT NULL,
+    sprint_index integer,
     approval_status character varying(32) NOT NULL,
     sort_order integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -777,7 +778,7 @@ ALTER TABLE ONLY public.risks
 --
 
 ALTER TABLE ONLY public.initiative_attractions
-    ADD CONSTRAINT uq_initiative_attraction_target UNIQUE (executor_id, target_initiative_id, target_team_id, sprint_index);
+    ADD CONSTRAINT uq_initiative_attraction_target UNIQUE (executor_id, issue_key, target_team_id, sprint_index);
 
 
 --
@@ -1092,7 +1093,7 @@ ALTER TABLE ONLY public.initiative_attractions
 --
 
 ALTER TABLE ONLY public.initiative_attractions
-    ADD CONSTRAINT initiative_attractions_target_initiative_id_fkey FOREIGN KEY (target_initiative_id) REFERENCES public.initiatives(id) ON DELETE CASCADE;
+    ADD CONSTRAINT initiative_attractions_target_initiative_id_fkey FOREIGN KEY (target_initiative_id) REFERENCES public.initiatives(id) ON DELETE SET NULL;
 
 
 --
@@ -1348,7 +1349,7 @@ ALTER TABLE ONLY public.work_items
 --
 
 -- Alembic heads verified by the application release.
-INSERT INTO public.alembic_version (version_num) VALUES ('20260805_0017');
+INSERT INTO public.alembic_version (version_num) VALUES ('20260807_0024');
 INSERT INTO public.audit_alembic_version (version_num) VALUES ('20260804_0001');
 
 COMMIT;

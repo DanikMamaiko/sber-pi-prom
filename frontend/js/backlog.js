@@ -17,13 +17,12 @@ function backlogTeamCompetencies(name){
 // бизнес-данные остаются неизменённым read model backend в backlogBoard.
 function backlogViewItem(row){
   const owner=row.owner_team||'';
-  const ownerExecutor=(row.executors||[]).find(ex=>ex.team===owner);
-  const executors=(ownerExecutor?[ownerExecutor]:[]).map(ex=>({
+  const executors=(row.executors||[]).slice(0,1).map(ex=>({
     id:ex.id,team:ex.team,comps:{...(ex.effort_by_competency||{})},attractions:[],
   }));
   if(!executors.length) executors.push({id:null,team:owner,comps:{},attractions:[]});
   return {
-    _uid:row.id,_backendId:row.id,id:row.issue_key,name:row.title||'',
+    _uid:row.id,_backendId:row.id,id:row.issue_key,name:row.title||'',tribe:row.tribe||'',
     description:row.description||'',product:row.product||'',owner:row.owner_team||'',
     type:row.initiative_type||'',quarter:row.target_quarter||'',
     year:row.target_year?String(row.target_year):'',custPrio:row.customer_priority||'',
@@ -36,8 +35,9 @@ function backlogViewItem(row){
 // Используется только старым, не развиваемым бюджетным экраном над transient-адаптером.
 function ensureBacklogShape(it){ return it; }
 function backlogCommandPayload(row){
-  const owner=row.owner_team||'';
-  const current=(row.executors||[]).find(ex=>ex.team===owner);
+  const boardTeam=(row.executors&&row.executors[0]&&row.executors[0].team)||
+    state.ui.backlogTeamFilter||row.owner_team||'';
+  const current=(row.executors||[])[0];
   return {
     tribe:row.tribe,issue_key:row.issue_key,title:row.title||'',
     description:row.description||'',product:row.product||'',owner_team:row.owner_team||'',
@@ -45,9 +45,9 @@ function backlogCommandPayload(row){
     target_quarter:row.target_quarter,customer_priority:row.customer_priority||'',
     team_priority:row.team_priority||'',status:row.status||'Нет оценки',tshirt_size:row.tshirt_size||'',
     tags:Array.isArray(row.tags)?row.tags:[],systems:Array.isArray(row.systems)?row.systems:[],
-    executors:owner?[{
+    executors:boardTeam?[{
       id:current&&current.id||null,
-      team:owner,
+      team:boardTeam,
       effort_by_competency:{...((current&&current.effort_by_competency)||{})},
     }]:[],
   };
@@ -212,8 +212,9 @@ function viewBacklogBoard(tribe){
   const isBudget=state.ui.mode==='budget';
   const teams=backlogTeamRefs(tribe);
   const filter=state.ui.backlogTeamFilter;
+  const boardTeam=it=>issueExecTeams(it)[0]||it.owner||'';
   let list=backlogRows().filter(row=>row.tribe===tribe).map(backlogViewItem);
-  if(filter) list=list.filter(it=> it.owner===filter || issueExecTeams(it).includes(filter));
+  if(filter) list=list.filter(it=>boardTeam(it)===filter);
   // фильтры по столбцам применяются поверх фильтра по команде
   colFilterCtx['bk']={rows:list, cols:BK_FILTER_AND_SORT_COLS};
   const listAll=list;
@@ -467,16 +468,6 @@ function bindBacklog(){
     else if(bp==='year') payload.target_year=el.value?+el.value:null;
     else if(bp==='quarter') payload.target_quarter=el.value||null;
     else payload[fieldMap[bp]]=el.value;
-    if(bp==='owner'){
-      const current=(row.executors||[]).find(ex=>ex.team===el.value);
-      payload.executors=el.value?[{
-        id:current&&current.id||null,
-        team:el.value,
-        effort_by_competency:Object.fromEntries(backlogTeamCompetencies(el.value).map(code=>[
-          code,+((current&&current.effort_by_competency||{})[code])||0,
-        ])),
-      }]:[];
-    }
     try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
     catch(_){ }
   });

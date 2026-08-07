@@ -114,7 +114,7 @@ class InitiativeAttraction(Base, TimestampMixin):
     target_team_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("teams.id"), nullable=False
     )
-    sprint_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    sprint_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approval_status: Mapped[str] = mapped_column(
         String(32), default="pending", nullable=False
     )

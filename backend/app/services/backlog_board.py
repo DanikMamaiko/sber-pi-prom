@@ -79,16 +79,17 @@ def _clean_unique(values: list[str]) -> list[str]:
     return result
 
 
-def _owner_executors(item: BacklogItem) -> list[BacklogExecutor]:
-    """Return only the owner's resource row, ignoring legacy external executors."""
-    if item.owner_team_id is None:
-        return []
-    return [executor for executor in item.executors if executor.team_id == item.owner_team_id][:1]
+def _board_executors(item: BacklogItem) -> list[BacklogExecutor]:
+    """Return the resource row of the board that contains the backlog item."""
+    return sorted(
+        item.executors,
+        key=lambda executor: (int(executor.sort_order or 0), str(executor.id)),
+    )[:1]
 
 
 def _item_effort(item: BacklogItem) -> float:
     total = 0.0
-    for executor in _owner_executors(item):
+    for executor in _board_executors(item):
         for value in (executor.effort_by_competency or {}).values():
             try:
                 total += float(value)
@@ -264,7 +265,7 @@ async def read_backlog_board(
                         "team": executor.team.name,
                         "effort_by_competency": dict(executor.effort_by_competency or {}),
                     }
-                    for executor in _owner_executors(item)
+                    for executor in _board_executors(item)
                 ],
             )
         )
@@ -396,7 +397,7 @@ async def _apply_item_fields(
     executors: list[BacklogExecutor] = []
     executor_team_ids: set[uuid.UUID] = set()
     if len(source.executors) > 1:
-        raise ValueError("В компетенциях команды владельца может быть только одна команда")
+        raise ValueError("В компетенциях владельца доски может быть только одна команда")
     for executor_order, executor in enumerate(source.executors):
         if cycle_context is None:
             team = await _resolve_team(
@@ -408,8 +409,6 @@ async def _apply_item_fields(
             )
         if team is None:
             continue
-        if owner is None or team.id != owner.id:
-            raise ValueError("В компетенциях можно указывать только ресурсы команды-владельца")
         if team.id in executor_team_ids:
             raise ValueError(
                 f"Команда-исполнитель включена более одного раза для {issue_key}: {team.name}"
@@ -744,8 +743,8 @@ async def dispatch_backlog_items(
             raise ValueError(
                 f"Команда-владелец не входит в {target_key} для {source.issue_key}"
             )
-        owner_executors = _owner_executors(source)
-        for executor in owner_executors:
+        board_executors = _board_executors(source)
+        for executor in board_executors:
             if executor.team_id not in competencies_by_team:
                 raise ValueError(
                     f"Команда-исполнитель не входит в {target_key} для {source.issue_key}"
@@ -812,10 +811,9 @@ async def dispatch_backlog_items(
             executor.team_id: executor for executor in initiative.executors
         }
         initiative_executors: list[InitiativeExecutor] = []
-        # The owner row is kept even with an empty effort map: attraction requests
-        # in Pre PI are attached to this technical host, while the competency cell
-        # remains visually empty.
-        source_executors = _owner_executors(source)
+        # Keep one resource row for the board that owns this planning view. For
+        # legacy items without such a row, the task owner's team is the safe default.
+        source_executors = _board_executors(source)
         if source.owner_team_id is not None and not source_executors:
             source_executors = [BacklogExecutor(team_id=source.owner_team_id, effort_by_competency={})]
         for executor in source_executors:

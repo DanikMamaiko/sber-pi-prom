@@ -158,8 +158,14 @@ def test_team_board_column_headers_are_equalized_after_render_and_resize():
 
 def test_owner_board_uses_attraction_link_for_gray_information_sticker():
     utils = source("utils.js")
+    program = source("program-board.js")
+    boards = source("team-boards.js")
 
     assert "host.owner===teamName" in utils
     assert "attr.targetInitiativeId" in utils
     assert "!target.onBoard" in utils
+    assert "if(issue._ownerInfoSourceId&&!result[idx]._ownerInfoSourceId)" in utils
     assert "add({...target,owner:teamName,_ownerInfoSourceId:host.id})" in utils
+    assert "data-owner-info-source" in program
+    assert "el.dataset.ownerInfoSource || el.dataset.id" in boards
+    assert "const sourceId=el.dataset.ownerInfoSource" in boards

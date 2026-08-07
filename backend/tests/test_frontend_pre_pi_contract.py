@@ -51,7 +51,9 @@ def test_pre_pi_uses_only_backend_entities_for_executors_and_attractions():
 def test_pre_pi_executor_editor_uses_active_cycle_competencies():
     source = frontend_source()
 
-    assert "kind==='bk' ? backlogTeamCompetencies(iss.owner) : teamComps(iss.owner)" in source
+    assert "kind==='bk' ? backlogTeamCompetencies(ex.team) : teamComps(ex.team)" in source
+    assert "const current=issueExecutors(iss)[0]" in source
+    assert "function boardOwnerExecutorView(iss)" in source
     assert "Компетенции команды владельца" in pre_pi_source()
     assert "+ Команда-исполнитель" not in pre_pi_source()
     assert "data-pi-execadd" not in pre_pi_source()
@@ -59,6 +61,14 @@ def test_pre_pi_executor_editor_uses_active_cycle_competencies():
 
 def test_pre_pi_attraction_requests_are_stacked_in_their_column():
     assert 'class="attr-list"' in pre_pi_source()
+
+
+def test_pre_pi_attraction_excludes_the_current_board_owner():
+    section = pre_pi_source()
+
+    assert "team._teamId!==host.teamId" in section
+    assert "team.name!==host.team" in section
+    assert "Нельзя привлекать команду-владельца текущей доски" in section
 
 
 def test_pre_pi_submit_refreshes_dependent_tabs_before_render():

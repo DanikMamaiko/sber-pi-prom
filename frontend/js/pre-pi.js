@@ -248,7 +248,7 @@ function rowDelBtnHTML(id,isUpper){
   return `<button class="row-del" data-pi-delrow="${esc(id)}" data-pi-delblock="${isUpper?'upper':'lower'}" title="${title}">✕</button>`;
 }
 function attractionsHTML(iss){
-  const ex=ownerExecutorView(iss);
+  const ex=boardOwnerExecutorView(iss);
   const list=(ex && ex.attractions) || [];
   const rows=list.map(a=>{
     const aid=a.id;
@@ -263,8 +263,8 @@ function attractionsHTML(iss){
 
 let prepDragId=null;
 function prePiExecutorPayload(iss,mutate){
-  const owner=ownerExecutorView(iss);
-  const rows=iss.owner?[owner].map((ex,index)=>({
+  const boardOwner=boardOwnerExecutorView(iss);
+  const rows=boardOwner.team?[boardOwner].map((ex,index)=>({
     id:ex._backendId||null,
     team_id:ex.teamId||null,
     team:ex.team||'',
@@ -500,20 +500,24 @@ async function prepSubmitToBoards(targets){
 }
 function openAttractionModal(rowId){
   const row=findIssue(rowId); if(!row)return;
-  const host=ownerExecutorView(row); if(!host.team) return;
+  const host=boardOwnerExecutorView(row); if(!host.team) return;
+  const attractionTeams=state.pi.teams.filter(team=>
+    host.teamId ? team._teamId!==host.teamId : team.name!==host.team);
   const sprintCount=+((prePiViews[currentCycleId()]||{}).cycle||{}).sprint_count||0;
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>Привлечение ресурса · ${esc(row.id)} <span class="muted" style="font-size:12px;font-weight:400">(исполнитель: ${esc(host.team)})</span></h3>
     <label><span>№ Issue (привлекаемая инициатива)</span><input id="am_id" placeholder="ID Issue из JSW (например, CORP-123)" autocomplete="off"></label>
-    <label><span>Команда-исполнитель (подтягивается из JSW)</span><select id="am_team">${allTeamNames().map(n=>`<option>${esc(n)}</option>`).join('')}</select></label>
+    <label><span>Команда-исполнитель (подтягивается из JSW)</span><select id="am_team" ${attractionTeams.length?'':'disabled'}>${attractionTeams.length
+      ? attractionTeams.map(team=>`<option value="${esc(team.name)}">${esc(team.name)}</option>`).join('')
+      : '<option value="">Нет доступных команд</option>'}</select></label>
     <label><span>Спринт (кол-во из данных PI-цикла)</span><select id="am_sprint">
       <option value="">не выбран</option>
       ${Array.from({length:sprintCount},(_,index)=>`<option value="${index}">Спринт ${index+1}</option>`).join('')}
     </select></label>
     <div class="modal-actions">
       <button id="am_cancel">Отмена</button>
-      <button class="primary" id="am_save">Добавить</button>
+      <button class="primary" id="am_save" ${attractionTeams.length?'':'disabled'}>Добавить</button>
     </div>
   </div></div>`;
   $('#am_cancel').onclick=()=>root.innerHTML='';
@@ -526,9 +530,11 @@ function openAttractionModal(rowId){
     if(!key){toast('Введите номер привлекаемой инициативы',{type:'warn'});return;}
     const ref=state.issues.find(issue=>String(issue.id).toLowerCase()===key.toLowerCase());
     const team=$('#am_team').value,teamRow=state.pi.teams.find(value=>value.name===team);if(!teamRow)return;
+    if((host.teamId&&teamRow._teamId===host.teamId)||teamRow.name===host.team){
+      toast('Нельзя привлекать команду-владельца текущей доски',{type:'warn'});return;
+    }
     const sprVal=$('#am_sprint').value;
     const sprint = sprVal===''? null : (+sprVal);
-    if(sprint===null){toast('Выберите спринт',{type:'warn'});return;}
     const executors=prePiExecutorPayload(row,rows=>rows[0].attractions.push({
       target_initiative_id:ref?ref._backendId:null,issue_key:key,target_team_id:teamRow._teamId,
       team:teamRow.name,sprint_index:sprint,approval_status:'pending',sort_order:rows[0].attractions.length,

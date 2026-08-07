@@ -318,7 +318,8 @@ function stickerHTML(iss,withDel,showDecomp,showTeams,extraClass){
 }
 // Серый информационный стикер на доске команды-владельца.
 function infoStickerHTML(iss){
-  return `<div class="sticker info" data-id="${esc(iss.id)}" data-sticker="${esc(iss.id)}" data-info-sticker="${esc(iss.id)}" style="--lane:${issueHue(iss)}">
+  const sourceAttr=iss._ownerInfoSourceId?` data-owner-info-source="${esc(iss._ownerInfoSourceId)}"`:'';
+  return `<div class="sticker info" data-id="${esc(iss.id)}" data-sticker="${esc(iss.id)}" data-info-sticker="${esc(iss.id)}"${sourceAttr} style="--lane:${issueHue(iss)}">
     <div class="stid"><span class="lane-dot"></span>${esc(iss.id)}</div>
     ${issueTagsHTML(iss)}
     ${issueTeamsHTML(iss)}

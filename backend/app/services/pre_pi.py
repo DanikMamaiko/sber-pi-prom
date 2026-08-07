@@ -171,15 +171,10 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
     actions = ["edit", "move", "reorder", "delete"]
     if item.pre_planned:
         actions.append("submit")
-    owner_executors = [
-        executor for executor in sorted(item.executors, key=lambda value: value.sort_order)
-        if executor.team_id == item.owner_team_id
-    ][:1]
-    read_executors = (
-        sorted(item.executors, key=lambda value: value.sort_order)[:1]
-        if item.generated_from_attraction
-        else owner_executors
-    )
+    board_executors = sorted(
+        item.executors,
+        key=lambda value: (value.sort_order, str(value.id)),
+    )[:1]
     return PrePiInitiativeRead(
         id=item.id,
         issue_key=item.issue_key,
@@ -208,7 +203,7 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
         sprint_index=item.sprint_index,
         week_index=item.week_index,
         sort_order=item.sort_order,
-        total_estimate=sum(_effort_total(executor) for executor in owner_executors),
+        total_estimate=sum(_effort_total(executor) for executor in board_executors),
         block="planned" if item.pre_planned else "backlog",
         required_fields=required,
         allowed_actions=actions,
@@ -225,7 +220,7 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
                 ],
                 "sort_order": executor.sort_order,
             }
-            for executor in read_executors
+            for executor in board_executors
         ],
     )
 
@@ -386,7 +381,7 @@ async def _replace_executors(
     sources,
 ) -> None:
     if len(sources) > 1:
-        raise ValueError("В компетенциях команды владельца может быть только одна команда")
+        raise ValueError("В компетенциях владельца доски может быть только одна команда")
     teams_by_key, teams_by_name, competencies_by_team = await cycle_team_context(session, cycle.id)
     initiatives = await _initiatives_query(session, cycle.id)
     initiatives_by_id = {row.id: row for row in initiatives}
@@ -411,8 +406,6 @@ async def _replace_executors(
                 raise ValueError("Команда-исполнитель не входит в данный PI-цикл")
         else:
             team = resolve_cycle_team(teams_by_key, teams_by_name, source.tribe, source.team)
-        if item.owner_team_id is None or team.id != item.owner_team_id:
-            raise ValueError("В компетенциях можно указывать только ресурсы команды-владельца")
         record = existing_by_id.get(source.id) if source.id else existing_by_team.get(team.id)
         if source.id and record is None:
             raise ValueError("ID исполнителя не относится к этой инициативе")
@@ -434,7 +427,7 @@ async def _replace_executors(
             for row in record.attraction_requests
         }
         attraction_result: list[InitiativeAttraction] = []
-        attraction_keys: set[tuple[str, uuid.UUID, int]] = set()
+        attraction_keys: set[tuple[str, uuid.UUID, int | None]] = set()
         for attraction_position, source_attraction in enumerate(source.attractions):
             requested_key = source_attraction.issue_key.strip()
             target = (
@@ -456,8 +449,8 @@ async def _replace_executors(
                 target_team = resolve_cycle_team(teams_by_key, teams_by_name, "", source_attraction.team)
             if target_team is None:
                 raise ValueError("Укажите команду-цель привлечения")
-            if source_attraction.sprint_index is None:
-                raise ValueError("Укажите спринт привлечения")
+            if target_team.id == team.id:
+                raise ValueError("Нельзя привлекать команду-владельца текущей доски")
             validate_sprint_position(cycle, source_attraction.sprint_index, None, "Привлечение")
             if target is None:
                 target = Initiative(
@@ -510,8 +503,13 @@ async def _replace_executors(
                 ]
             if target.generated_from_attraction and not target.on_board:
                 target.pre_planned = False
-                target.status = "backlog"
                 target.sprint_index = source_attraction.sprint_index
+                target.week_index = None
+                if source_attraction.sprint_index is None:
+                    target.on_board = True
+                    target.status = "on_board"
+                else:
+                    target.status = "backlog"
             key = (issue_key.casefold(), target_team.id, source_attraction.sprint_index)
             if key in attraction_keys:
                 raise ValueError("Дублирующийся запрос на привлечение")

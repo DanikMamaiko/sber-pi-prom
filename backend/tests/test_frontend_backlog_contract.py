@@ -73,6 +73,14 @@ def test_backlog_keeps_the_prototype_structure_and_empty_states():
     assert "data-bk-execadd" not in view
 
 
+def test_backlog_competencies_follow_the_board_owner_not_the_task_owner():
+    source = _source()
+
+    assert "const boardTeam=(row.executors&&row.executors[0]&&row.executors[0].team)" in source
+    assert "backlogTeamCompetencies(ex.team)" in source
+    assert "backlogTeamCompetencies(iss.owner)" not in source
+
+
 def test_backlog_dispatch_refreshes_and_renders_pre_pi_data():
     source = _source()
     start = source.index("async function sendBacklogToPrePI(")

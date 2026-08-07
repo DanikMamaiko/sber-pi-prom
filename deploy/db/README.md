@@ -17,7 +17,7 @@ psql -v ON_ERROR_STOP=1 -d sberpi -f 01_sberpi_schema.sql
 Проверенные версии после применения:
 
 ```text
-alembic_version       = 20260805_0017
+alembic_version       = 20260807_0024
 audit_alembic_version = 20260804_0001
 ```
 

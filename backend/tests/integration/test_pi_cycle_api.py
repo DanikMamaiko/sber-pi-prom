@@ -520,8 +520,8 @@ async def test_invalid_aggregate_puts_return_422_and_are_atomic(api_client):
                         "target_quarter": "Q4",
                         "executors": [
                             {
-                                "team": "Команда Альфа",
-                                "effort_by_competency": {"SA": 1},
+                                "team": "Проект Бета",
+                                "effort_by_competency": {"DEV": 1},
                             }
                         ],
                     }
@@ -538,6 +538,9 @@ async def test_invalid_aggregate_puts_return_422_and_are_atomic(api_client):
     )
     assert dispatch["items"][0]["sent_to"] == ["2028-Q4"]
     initiative = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"][0]
+    assert initiative["owner_team"] == "Команда Альфа"
+    assert initiative["executors"][0]["team"] == "Проект Бета"
+    assert initiative["total_estimate"] == 1
 
     pre_pi_payload = {
         "initiatives": [
@@ -576,9 +579,12 @@ async def test_invalid_aggregate_puts_return_422_and_are_atomic(api_client):
     other_cycle_team["initiatives"][0]["executors"][0].update(
         {"team": "Проект Бета", "effort_by_competency": {"DEV": 2}}
     )
-    response = await api_client.put(f"/pi-cycles/{cycle_id}/pre-pi", json=other_cycle_team)
-    assert response.status_code == 422
-    assert "только ресурсы команды-владельца" in response.json()["detail"]
+    board_owned = assert_ok(
+        await api_client.put(f"/pi-cycles/{cycle_id}/pre-pi", json=other_cycle_team)
+    )["initiatives"][0]
+    assert board_owned["owner_team"] == "Команда Альфа"
+    assert board_owned["executors"][0]["team"] == "Проект Бета"
+    assert board_owned["total_estimate"] == 2
 
     bad_competency = deepcopy(pre_pi_payload)
     bad_competency["initiatives"][0]["executors"][0]["effort_by_competency"] = {"UX": 2}
@@ -1762,6 +1768,30 @@ async def test_pre_pi_focused_commands_return_canonical_read_model(api_client):
     first = next(row for row in moved_first["planned"] if row["issue_key"] == "CMD-1")
     assert [row["issue_key"] for row in moved_first["planned"]] == ["CMD-1"]
 
+    self_attraction = await api_client.patch(
+        f"{path}/pre-pi/initiatives/{first['id']}",
+        json={
+            "executors": [
+                {
+                    "id": first["executors"][0]["id"],
+                    "team_id": alpha["id"],
+                    "team": alpha["name"],
+                    "tribe": alpha["tribe"],
+                    "effort_by_competency": {"SA": 3, "DEV": 2},
+                    "attractions": [
+                        {
+                            "issue_key": "SELF-ATTRACTION",
+                            "target_team_id": alpha["id"],
+                            "sprint_index": 1,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert self_attraction.status_code == 422
+    assert "владельца текущей доски" in self_attraction.json()["detail"]
+
     edited = assert_ok(
         await api_client.patch(
             f"{path}/pre-pi/initiatives/{first['id']}",
@@ -1806,6 +1836,34 @@ async def test_pre_pi_focused_commands_return_canonical_read_model(api_client):
     assert external_before_submit["on_board"] is False
     assert external_before_submit["sprint_index"] == 1
     assert external_before_submit["executors"][0]["team"] == "Проект Бета"
+
+    # LEGAL/DEV scenario: the source team remains the factual task owner, while
+    # the target board owner enters its own competencies into the same card.
+    edited_external = assert_ok(
+        await api_client.patch(
+            f"{path}/pre-pi/initiatives/{external_before_submit['id']}",
+            json={
+                "executors": [
+                    {
+                        "id": external_before_submit["executors"][0]["id"],
+                        "team_id": beta["id"],
+                        "team": beta["name"],
+                        "tribe": beta["tribe"],
+                        "effort_by_competency": {"SA": 6},
+                        "attractions": [],
+                    }
+                ]
+            },
+        )
+    )
+    external_after_effort = next(
+        row for row in edited_external["initiatives"]
+        if row["issue_key"] == "EXTERNAL-404"
+    )
+    assert external_after_effort["owner_team"] == "Команда Альфа"
+    assert external_after_effort["executors"][0]["team"] == "Проект Бета"
+    assert external_after_effort["executors"][0]["effort_by_competency"] == {"SA": 6.0}
+    assert external_after_effort["total_estimate"] == 6
 
     submitted = assert_ok(
         await api_client.post(
@@ -1901,6 +1959,82 @@ async def test_pre_pi_focused_commands_return_canonical_read_model(api_client):
     returned_first = next(row for row in returned["backlog"] if row["id"] == first["id"])
     assert returned_first["on_board"] is False
     assert returned_first["status"] == "backlog"
+
+
+@pytest.mark.asyncio
+async def test_pre_pi_attraction_without_sprint_goes_to_executor_board_backlog(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2034, quarter="Q4")
+    path = f"/pi-cycles/{cycle['id']}"
+    created = assert_ok(
+        await api_client.put(
+            f"{path}/pre-pi",
+            json={
+                "initiatives": [
+                    {
+                        "issue_key": "ATTR-SOURCE",
+                        "title": "Source initiative",
+                        "owner_team": "Команда Альфа",
+                        "owner_tribe": "Регрессия",
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "tribe": "Регрессия",
+                                "effort_by_competency": {"SA": 1},
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    source = next(row for row in created["backlog"] if row["issue_key"] == "ATTR-SOURCE")
+    alpha = next(row for row in created["teams"] if row["name"] == "Команда Альфа")
+    beta = next(row for row in created["teams"] if row["name"] == "Проект Бета")
+
+    edited = assert_ok(
+        await api_client.patch(
+            f"{path}/pre-pi/initiatives/{source['id']}",
+            json={
+                "executors": [
+                    {
+                        "id": source["executors"][0]["id"],
+                        "team_id": alpha["id"],
+                        "team": alpha["name"],
+                        "tribe": alpha["tribe"],
+                        "effort_by_competency": {"SA": 1},
+                        "attractions": [
+                            {
+                                "issue_key": "ATTR-BACKLOG",
+                                "target_team_id": beta["id"],
+                                "sprint_index": None,
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    )
+
+    attraction = next(
+        row for row in edited["initiatives"] if row["issue_key"] == "ATTR-SOURCE"
+    )["executors"][0]["attractions"][0]
+    assert attraction["sprint_index"] is None
+
+    target = next(row for row in edited["backlog"] if row["issue_key"] == "ATTR-BACKLOG")
+    assert target["owner_team"] == "Команда Альфа"
+    assert target["executors"][0]["team"] == "Проект Бета"
+    assert target["pre_planned"] is False
+    assert target["on_board"] is True
+    assert target["status"] == "on_board"
+    assert target["sprint_index"] is None
+
+    board_target = next(
+        row
+        for row in assert_ok(await api_client.get(f"{path}/team-boards"))["initiatives"]
+        if row["issue_key"] == "ATTR-BACKLOG"
+    )
+    assert board_target["on_board"] is True
+    assert board_target["sprint_index"] is None
 
 
 @pytest.mark.asyncio
@@ -2289,7 +2423,7 @@ async def test_pre_pi_regulatory_agenda_buckets_legal_owner_as_common(api_client
             },
         )
     )
-    # Ёмкость команд-владельцев — чтобы знаменатели процентов были ненулевыми.
+    # Ёмкость владельцев досок — чтобы знаменатели процентов были ненулевыми.
     assert_ok(
         await api_client.put(
             f"{path}/capacity",
@@ -2316,7 +2450,7 @@ async def test_pre_pi_regulatory_agenda_buckets_legal_owner_as_common(api_client
     # Две регуляторные инициативы типа «Требования законодательства»:
     #   владелец Legal  → бакет «общая» (100),
     #   владелец Альфа  → бакет «командная» (30).
-    # Ресурсы в каждой строке принадлежат только соответствующей команде-владельцу.
+    # LEGAL остаётся владельцем первой задачи, но ресурсы вводит владелец доски — Альфа.
     assert_ok(
         await api_client.put(
             f"{path}/pre-pi",
@@ -2331,7 +2465,7 @@ async def test_pre_pi_regulatory_agenda_buckets_legal_owner_as_common(api_client
                         "status": "planned",
                         "pre_planned": True,
                         "executors": [
-                            {"team": "Legal", "tribe": "Регрессия", "effort_by_competency": {"DEV": 100}}
+                            {"team": "Команда Альфа", "tribe": "Регрессия", "effort_by_competency": {"DEV": 100}}
                         ],
                     },
                     {
@@ -2356,18 +2490,14 @@ async def test_pre_pi_regulatory_agenda_buckets_legal_owner_as_common(api_client
     legal_id = next(team["id"] for team in pre_pi["teams"] if team["name"] == "Legal")
 
     alpha_metrics = pre_pi["capacity"]["teams"][alpha_id]
-    alpha_reg = alpha_metrics["reg_agenda"]
-    assert alpha_reg["common_effort"] == 0.0
-    assert alpha_reg["team_effort"] == 30.0
-    assert alpha_reg["total_effort"] == 30.0
-    assert alpha_reg["total_percent"] == round(30.0 / alpha_metrics["available_capacity"] * 100, 1)
+    reg = alpha_metrics["reg_agenda"]
+    assert reg["common_effort"] == 100.0  # фактический владелец Legal → «общая»
+    assert reg["team_effort"] == 30.0  # фактический владелец Альфа → «командная»
+    assert reg["total_effort"] == 130.0
+    assert reg["total_percent"] == round(130.0 / alpha_metrics["available_capacity"] * 100, 1)
 
-    legal_metrics = pre_pi["capacity"]["teams"][legal_id]
-    legal_reg = legal_metrics["reg_agenda"]
-    assert legal_reg["common_effort"] == 100.0
-    assert legal_reg["team_effort"] == 0.0
-    assert legal_reg["total_effort"] == 100.0
-    assert legal_reg["total_percent"] == round(100.0 / legal_metrics["available_capacity"] * 100, 1)
+    # Legal владеет задачей, но не доской: нагрузка относится на Альфу.
+    assert pre_pi["capacity"]["teams"][legal_id]["reg_agenda"]["total_effort"] == 0.0
 
     # Верхнеуровневый (overall) блок и независимость от техповестки.
     assert pre_pi["reg_agenda"]["common_effort"] == 100.0

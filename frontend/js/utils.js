@@ -344,29 +344,29 @@ function teamOptionsHTML(teamOptions,selected,withTribe=false){
     `</optgroup>`
   ).join('');
 }
-// Единственная допустимая запись исполнителя инициативы — команда-владелец.
-// Для старых данных с несколькими исполнителями берём только владельца; если записи
-// ещё нет, создаём пустое представление, чтобы компетенции и привлечения можно было
-// заполнить без отдельной кнопки добавления исполнителя.
-function ownerExecutorView(iss){
-  const owner=(iss&&iss.owner)||'';
-  const current=issueExecutors(iss).find(ex=>ex.team===owner);
+// Единственная ресурсная запись относится к владельцу доски, на которой находится
+// задача. Фактическая команда-владелец задачи (iss.owner) остаётся независимым полем.
+// Для старых данных без ресурсной строки используем владельца задачи как безопасный
+// вариант по умолчанию.
+function boardOwnerExecutorView(iss){
+  const current=issueExecutors(iss)[0];
   if(current) return current;
-  const team=teamObjByName(owner);
+  const boardOwner=(iss&&iss.owner)||'';
+  const team=teamObjByName(boardOwner);
   return {
     _backendId:null,
     teamId:team&&team._teamId||null,
-    team:owner,
+    team:boardOwner,
     comps:{},
     attractions:[],
   };
 }
-// Ячейка «Компетенции команды владельца». Название команды уже показывается в
-// отдельном столбце, поэтому здесь остаются только необязательные трудозатраты.
+// Ячейка «Компетенции команды владельца»: здесь владелец — владелец доски, а не
+// команда-владелец задачи из отдельного столбца.
 function ownerCompsBlockHTML(iss, kind, readonly=false){
-  const ex=ownerExecutorView(iss);
+  const ex=boardOwnerExecutorView(iss);
   const idAttr = kind==='bk' ? iss._uid : iss.id;
-  const avail = kind==='bk' ? backlogTeamCompetencies(iss.owner) : teamComps(iss.owner);
+  const avail = kind==='bk' ? backlogTeamCompetencies(ex.team) : teamComps(ex.team);
   if(readonly){
     const values=avail.filter(c=>+(ex.comps&&ex.comps[c])>0)
       .map(c=>`<span class="comp-cell"><span class="cc-lab">${esc(c)}</span>${esc(ex.comps[c])}</span>`).join('');
@@ -413,11 +413,16 @@ function isOwnerInfoIssue(iss,teamName){
 }
 function ownerInfoIssues(teamName){
   const result=[];
-  const seen=new Set();
+  const seen=new Map();
   const add=issue=>{
     const key=String(issue._backendId||issue.id||'').toLowerCase();
-    if(!key||seen.has(key))return;
-    seen.add(key);result.push(issue);
+    if(!key)return;
+    if(seen.has(key)){
+      const idx=seen.get(key);
+      if(issue._ownerInfoSourceId&&!result[idx]._ownerInfoSourceId)result[idx]={...result[idx],_ownerInfoSourceId:issue._ownerInfoSourceId};
+      return;
+    }
+    seen.set(key,result.length);result.push(issue);
   };
   state.issues.filter(i=>isOwnerInfoIssue(i,teamName)).forEach(add);
 

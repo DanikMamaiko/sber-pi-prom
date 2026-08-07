@@ -821,7 +821,7 @@ function bindTeams(){
       //  История       → 'story'  (сама История + её белые + задача-родитель);
       //  белый Истории → 'story'  (та же ветка Истории);
       //  прямой белый  → 'direct' (задача-родитель + только её прямые белые, без Историй).
-      const issueId = el.dataset.id || el.dataset.wissue || el.dataset.storyIssue;
+      const issueId = el.dataset.ownerInfoSource || el.dataset.id || el.dataset.wissue || el.dataset.storyIssue;
       let mode='issue', storyUid=null;
       if(el.classList.contains('story')){ mode='story'; storyUid=el.dataset.storyUid; }
       else if(el.classList.contains('white')){
@@ -1226,15 +1226,16 @@ function setBoardFocus(id,mode,storyUid){
     scroll.querySelectorAll('.sticker,.white,.story').forEach(el=>{
       const isSticker=el.classList.contains('sticker');
       const isWhite=el.classList.contains('white');
+      const sourceId=el.dataset.ownerInfoSource;
       let on;
       if(mode==='story'){
         // ветка одной Истории (сам зелёный стикер + её белые) + задача-родитель (цветной стикер)
-        on = el.dataset.story===storyUid || (isSticker && el.dataset.id===id);
+        on = sourceId===id || el.dataset.story===storyUid || (isSticker && el.dataset.id===id);
       }else if(mode==='direct'){
         // задача-родитель (цветной) + только её прямые белые (без Истории), Истории не подсвечиваем
-        on = (isSticker && el.dataset.id===id) || (isWhite && el.dataset.wissue===id && !el.dataset.story);
+        on = sourceId===id || (isSticker && el.dataset.id===id) || (isWhite && el.dataset.wissue===id && !el.dataset.story);
       }else{
-        const eid=el.dataset.id||el.dataset.wissue||el.dataset.storyIssue;
+        const eid=sourceId||el.dataset.id||el.dataset.wissue||el.dataset.storyIssue;
         on = eid===id; // вся задача (Истории + все белые)
       }
       el.classList.toggle('lane-on', on);
