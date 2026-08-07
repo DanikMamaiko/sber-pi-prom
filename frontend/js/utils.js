@@ -344,23 +344,37 @@ function teamOptionsHTML(teamOptions,selected,withTribe=false){
     `</optgroup>`
   ).join('');
 }
-// Ячейка «Команда-исполнитель и компетенции» для одного исполнителя (2 уровня: команда / компетенции).
-// kind: 'bk' | 'pi'. teamOptions — список команд для выпадающего списка.
-function execBlockHTML(iss, ex, ei, kind, teamOptions){
-  const total=iss.executors.length;
+// Единственная допустимая запись исполнителя инициативы — команда-владелец.
+// Для старых данных с несколькими исполнителями берём только владельца; если записи
+// ещё нет, создаём пустое представление, чтобы компетенции и привлечения можно было
+// заполнить без отдельной кнопки добавления исполнителя.
+function ownerExecutorView(iss){
+  const owner=(iss&&iss.owner)||'';
+  const current=issueExecutors(iss).find(ex=>ex.team===owner);
+  if(current) return current;
+  const team=teamObjByName(owner);
+  return {
+    _backendId:null,
+    teamId:team&&team._teamId||null,
+    team:owner,
+    comps:{},
+    attractions:[],
+  };
+}
+// Ячейка «Компетенции команды владельца». Название команды уже показывается в
+// отдельном столбце, поэтому здесь остаются только необязательные трудозатраты.
+function ownerCompsBlockHTML(iss, kind, readonly=false){
+  const ex=ownerExecutorView(iss);
   const idAttr = kind==='bk' ? iss._uid : iss.id;
-  const avail = kind==='bk' ? backlogTeamCompetencies(ex.team) : teamComps(ex.team);
-  const selAttr = kind==='bk' ? `data-bk-exec="${esc(idAttr)}"` : `data-pi-exec="${esc(idAttr)}"`;
-  const delAttr = kind==='bk' ? `data-bk-execdel="${esc(idAttr)}"` : `data-pi-execdel="${esc(idAttr)}"`;
-  const addAttr = kind==='bk' ? `data-bk-execadd="${esc(idAttr)}"` : `data-pi-execadd="${esc(idAttr)}"`;
+  const avail = kind==='bk' ? backlogTeamCompetencies(iss.owner) : teamComps(iss.owner);
+  if(readonly){
+    const values=avail.filter(c=>+(ex.comps&&ex.comps[c])>0)
+      .map(c=>`<span class="comp-cell"><span class="cc-lab">${esc(c)}</span>${esc(ex.comps[c])}</span>`).join('');
+    return `<td class="exec-cell"><div class="exec-block"><div class="comp-cells">${values||'<span class="comp-cells-empty">—</span>'}</div></div></td>`;
+  }
   return `<td class="exec-cell">
     <div class="exec-block">
-      <div class="exec-team-line">
-        <select ${selAttr} data-ei="${ei}" class="exec-team">${kind==='bk'?'<option value="">—</option>':''}${teamOptionsHTML(teamOptions,ex.team,kind==='bk')}</select>
-        ${total>1?`<button class="icon danger sm" ${delAttr} data-ei="${ei}" title="Убрать исполнителя">✕</button>`:''}
-      </div>
-      ${compFieldsHTML(avail, ex.comps, kind, idAttr, ei)}
-      ${ei===total-1?`<div class="exec-add-line"><button class="plus sm" ${addAttr} title="Добавить команду-исполнителя">+ Команда-исполнитель</button></div>`:''}
+      ${compFieldsHTML(avail, ex.comps, kind, idAttr, 0)}
     </div>
   </td>`;
 }
@@ -371,16 +385,17 @@ function issueEffortLabel(iss){
   const tn=issuePrimaryTeam(iss); const c=execComps(iss,tn);
   return teamComps(tn).map(k=>`${k} ${+c[k]||0}`).join(' · ') || '—';
 }
-// Инлайн-поля компетенций команды-исполнителя (только её компетенции).
-// kind: 'bk' (Бэклог команд) | 'pi' (Pre PI). id — идентификатор инициативы, ei — индекс исполнителя.
+// Инлайн-поля компетенций команды-владельца. Нулевая оценка отображается пустым
+// полем: ресурсы владельца необязательны, если вся работа выполняется привлечёнными командами.
+// kind: 'bk' (Бэклог команд) | 'pi' (Pre PI). id — идентификатор инициативы.
 function compFieldsHTML(avail, comps, kind, id, ei){
-  if(!avail || !avail.length) return `<span class="comp-cells-empty">нет компетенций у команды</span>`;
+  if(!avail || !avail.length) return `<span class="comp-cells-empty">—</span>`;
   const attr=c=> kind==='bk'
     ? `data-bk-comp="${esc(id)}" data-ei="${ei}" data-c="${c}"`
     : `data-pi-comp="${esc(id)}" data-ei="${ei}" data-c="${c}"`;
   return `<div class="comp-cells">`+avail.map(c=>{
-    const v=(comps&&comps[c])||0;
-    return `<label class="comp-cell"><span class="cc-lab">${c}</span><input type="number" min="0" ${attr(c)} value="${esc(v)}"></label>`;
+    const raw=comps&&comps[c], v=+raw>0?raw:'';
+    return `<label class="comp-cell"><span class="cc-lab">${c}</span><input type="number" min="0" placeholder="0" ${attr(c)} value="${esc(v)}"></label>`;
   }).join('')+`</div>`;
 }
 // Цвет стикера/чипа привлечения:
@@ -397,7 +412,29 @@ function isOwnerInfoIssue(iss,teamName){
   return !!(iss && teamName && iss.onBoard && iss.owner===teamName && pt && pt!==teamName);
 }
 function ownerInfoIssues(teamName){
-  return state.issues.filter(i=>isOwnerInfoIssue(i,teamName));
+  const result=[];
+  const seen=new Set();
+  const add=issue=>{
+    const key=String(issue._backendId||issue.id||'').toLowerCase();
+    if(!key||seen.has(key))return;
+    seen.add(key);result.push(issue);
+  };
+  state.issues.filter(i=>isOwnerInfoIssue(i,teamName)).forEach(add);
+
+  // В новой модели внешняя Jira-задача является отдельной инициативой целевой
+  // команды. На доске владельца показываем её серую информационную проекцию по
+  // нормализованной связи «Запрос на привлечение» исходной инициативы.
+  const byBackend=new Map(state.issues.filter(i=>i._backendId).map(i=>[String(i._backendId),i]));
+  const byKey=new Map(state.issues.filter(i=>i.id).map(i=>[String(i.id).toLowerCase(),i]));
+  state.issues.filter(host=>host.owner===teamName).forEach(host=>{
+    issueExecutors(host).forEach(ex=>(ex.attractions||[]).forEach(attr=>{
+      const target=(attr.targetInitiativeId&&byBackend.get(String(attr.targetInitiativeId)))||
+        byKey.get(String(attr.id||'').toLowerCase());
+      if(!target||!target.onBoard||issuePrimaryTeam(target)===teamName)return;
+      add({...target,owner:teamName,_ownerInfoSourceId:host.id});
+    }));
+  });
+  return result;
 }
 function issueTeamsHTML(iss){
   return `<div class="stteam"><span>Владелец: <b>${esc(iss.owner)||'—'}</b></span><span>Исполнитель: <b>${esc(issueExecTeams(iss).join(', '))||esc(iss.executor)||'—'}</b></span></div>`;

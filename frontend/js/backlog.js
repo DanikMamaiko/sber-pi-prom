@@ -16,10 +16,12 @@ function backlogTeamCompetencies(name){
 // Адаптер только для отображения в точной разметке прототипа. Канонические
 // бизнес-данные остаются неизменённым read model backend в backlogBoard.
 function backlogViewItem(row){
-  const executors=(row.executors||[]).map(ex=>({
+  const owner=row.owner_team||'';
+  const ownerExecutor=(row.executors||[]).find(ex=>ex.team===owner);
+  const executors=(ownerExecutor?[ownerExecutor]:[]).map(ex=>({
     id:ex.id,team:ex.team,comps:{...(ex.effort_by_competency||{})},attractions:[],
   }));
-  if(!executors.length) executors.push({id:null,team:'',comps:{},attractions:[]});
+  if(!executors.length) executors.push({id:null,team:owner,comps:{},attractions:[]});
   return {
     _uid:row.id,_backendId:row.id,id:row.issue_key,name:row.title||'',
     description:row.description||'',product:row.product||'',owner:row.owner_team||'',
@@ -34,6 +36,8 @@ function backlogViewItem(row){
 // Используется только старым, не развиваемым бюджетным экраном над transient-адаптером.
 function ensureBacklogShape(it){ return it; }
 function backlogCommandPayload(row){
+  const owner=row.owner_team||'';
+  const current=(row.executors||[]).find(ex=>ex.team===owner);
   return {
     tribe:row.tribe,issue_key:row.issue_key,title:row.title||'',
     description:row.description||'',product:row.product||'',owner_team:row.owner_team||'',
@@ -41,9 +45,11 @@ function backlogCommandPayload(row){
     target_quarter:row.target_quarter,customer_priority:row.customer_priority||'',
     team_priority:row.team_priority||'',status:row.status||'Нет оценки',tshirt_size:row.tshirt_size||'',
     tags:Array.isArray(row.tags)?row.tags:[],systems:Array.isArray(row.systems)?row.systems:[],
-    executors:(row.executors||[]).map(ex=>({
-      id:ex.id||null,team:ex.team,effort_by_competency:{...(ex.effort_by_competency||{})},
-    })),
+    executors:owner?[{
+      id:current&&current.id||null,
+      team:owner,
+      effort_by_competency:{...((current&&current.effort_by_competency)||{})},
+    }]:[],
   };
 }
 function backlogCascadeMessage(detail){
@@ -90,7 +96,7 @@ function viewBacklogSelect(){
 }
 // Столбцы «Бэклога команд», по которым доступен фильтр.
 // Порядок совпадает с порядком ячеек в backlogRowHTML(); без №/названия инициативы
-// и без «Команды-исполнителя и компетенций».
+// и без «Компетенций команды владельца».
 const BK_FILTER_COLS=[
   {k:'custPrio',label:'Приоритет заказчика'},
   {k:'teamPrio',label:'Приоритет трайба/команды'},
@@ -249,7 +255,7 @@ function viewBacklogBoard(tribe){
       <th class="stik1">№ Инициативы</th>
       <th>Название инициативы</th>`+
       BK_FILTER_COLS.map(c=>c.k==='quarter'?bkQuarterThHTML():filterThHTML(c,'bk')).join('')+
-      `<th>Команда-исполнитель и компетенции</th>
+      `<th>Компетенции команды владельца</th>
       <th class="del-col"></th>
     </tr>
   </thead>`;
@@ -290,12 +296,8 @@ function backlogTshirtCell(it,readonly=false){
   const disabled=readonly||it.status==='Отправлена в Pre PI Planning';
   return `<select data-bk="${it._uid}" data-bp="tshirt" ${disabled?'disabled':''}>${TSHIRT_SIZES.map(s=>`<option value="${s}" ${it.tshirt===s?'selected':''}>${s||'—'}</option>`).join('')}</select>`;
 }
-function backlogExecutorTeamOptions(){
-  return backlogTeamRefs();
-}
 function backlogRowHTML(it,tribe,teams,readonly=false){
-  const execTeamOptions=backlogExecutorTeamOptions();
-  const exs=it.executors, span=exs.length;
+  const span=1;
   const ro=readonly?'readonly':'', dis=readonly?'disabled':'';
   const lead=`
     <td class="stik1" rowspan="${span}"><div class="id-cell">
@@ -314,14 +316,7 @@ function backlogRowHTML(it,tribe,teams,readonly=false){
     <td rowspan="${span}">${backlogTshirtCell(it,readonly)}</td>
     <td rowspan="${span}" style="text-align:center;font-weight:700">${round1(it.totalEffort)}</td>`;
   const delCell=readonly?`<td class="row-del-cell" rowspan="${span}"></td>`:`<td class="row-del-cell" rowspan="${span}"><button class="row-del" data-bk-delrow="${esc(it._uid)}" title="Удалить инициативу">✕</button></td>`;
-  let rows='';
-  exs.forEach((ex,ei)=>{
-    const executorCell=readonly
-      ? `<td class="exec-cell"><div class="exec-block"><b>${esc(ex.team)||'—'}</b><div class="comp-cells">${Object.entries(ex.comps||{}).map(([c,v])=>`<span class="comp-cell"><span class="cc-lab">${esc(c)}</span>${esc(v)}</span>`).join('')||'<span class="comp-cells-empty">нет оценки</span>'}</div></div></td>`
-      : execBlockHTML(it, ex, ei, 'bk', execTeamOptions);
-    rows+=`<tr class="exec-row" data-bk-row="${esc(it._uid)}">${ei===0?lead:''}${executorCell}${ei===0?delCell:''}</tr>`;
-  });
-  return rows;
+  return `<tr class="exec-row" data-bk-row="${esc(it._uid)}">${lead}${ownerCompsBlockHTML(it,'bk',readonly)}${delCell}</tr>`;
 }
 async function sendBacklogToPrePI(tribe){
   const q=state.ui.backlogQuarter, y=state.ui.backlogYear;
@@ -472,50 +467,30 @@ function bindBacklog(){
     else if(bp==='year') payload.target_year=el.value?+el.value:null;
     else if(bp==='quarter') payload.target_quarter=el.value||null;
     else payload[fieldMap[bp]]=el.value;
-    try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
-    catch(_){ }
-  });
-  // выбор команды-исполнителя: единый список, сгруппированный по трайбам
-  document.querySelectorAll('[data-bk-exec]').forEach(el=>el.onchange=async()=>{
-    const row=findBacklogRow(el.dataset.bkExec); if(!row) return;
-    const ei=+el.dataset.ei, payload=backlogCommandPayload(row);
-    if(!payload.executors[ei]){
-      payload.executors[ei]={id:null,team:el.value,effort_by_competency:{}};
+    if(bp==='owner'){
+      const current=(row.executors||[]).find(ex=>ex.team===el.value);
+      payload.executors=el.value?[{
+        id:current&&current.id||null,
+        team:el.value,
+        effort_by_competency:Object.fromEntries(backlogTeamCompetencies(el.value).map(code=>[
+          code,+((current&&current.effort_by_competency||{})[code])||0,
+        ])),
+      }]:[];
     }
-    const old=payload.executors[ei].effort_by_competency||{}, effort={};
-    backlogTeamCompetencies(el.value).forEach(code=>{ effort[code]=+old[code]||0; });
-    payload.executors[ei]={...payload.executors[ei],team:el.value,effort_by_competency:effort};
     try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
     catch(_){ }
   });
   // ввод чел/дн по компетенции
   document.querySelectorAll('[data-bk-comp]').forEach(el=>el.onchange=async()=>{
     const row=findBacklogRow(el.dataset.bkComp); if(!row) return;
-    const ei=+el.dataset.ei, payload=backlogCommandPayload(row);
-    if(!payload.executors[ei]) return;
-    payload.executors[ei].effort_by_competency={
-      ...payload.executors[ei].effort_by_competency,[el.dataset.c]:+el.value||0,
+    const payload=backlogCommandPayload(row);
+    if(!payload.executors[0]) return;
+    payload.executors[0].effort_by_competency={
+      ...payload.executors[0].effort_by_competency,[el.dataset.c]:+el.value||0,
     };
     try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
     catch(_){ }
   });
-  // добавить/убрать исполнителя
-  document.querySelectorAll('[data-bk-execadd]').forEach(el=>el.onclick=async()=>{
-    const row=findBacklogRow(el.dataset.bkExecadd); if(!row) return;
-    const payload=backlogCommandPayload(row), used=new Set(payload.executors.map(ex=>ex.team));
-    const team=backlogTeamRefs().find(value=>!used.has(value.name));
-    if(!team){ toast('Все доступные команды уже добавлены',{type:'info'}); return; }
-    payload.executors.push({id:null,team:team.name,effort_by_competency:Object.fromEntries(team.competencies.map(code=>[code,0]))});
-    try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
-    catch(_){ }
-  });
-  document.querySelectorAll('[data-bk-execdel]').forEach(el=>el.onclick=async()=>{
-    const row=findBacklogRow(el.dataset.bkExecdel); if(!row) return;
-    const payload=backlogCommandPayload(row); payload.executors.splice(+el.dataset.ei,1);
-    try{ await executeBacklogCommand(`/backlog-board/items/${row.id}`,'PATCH',payload); }
-    catch(_){ }
-  });
-
   // перетаскивание строк — изменение порядка инициатив
   bindBacklogRowDrag(tribe);
 }

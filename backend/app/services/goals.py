@@ -742,42 +742,13 @@ async def submit_pre_pi(
             initiative.status = "on_board"
             board_added += 1
 
-    selected_ids = {team.id for team, _ in selected}
-    selected_by_id = {team.id: team for team, _ in selected}
-    attractions_added = 0
-    for host in initiatives:
-        matching_executor = next(
-            (executor for executor in host.executors if executor.team_id in selected_ids),
-            None,
-        )
-        if matching_executor is None:
-            continue
-        fallback_owner = host.owner_team_id or selected_by_id[matching_executor.team_id].id
-        for executor in host.executors:
-            for attraction in executor.attraction_requests:
-                referenced = attraction.target_initiative
-                validate_sprint_position(
-                    cycle,
-                    attraction.sprint_index,
-                    None,
-                    f"Привлечение {referenced.issue_key}",
-                )
-                if referenced.owner_team_id is None:
-                    referenced.owner_team_id = fallback_owner
-                if not referenced.on_board:
-                    referenced.on_board = True
-                    referenced.status = "on_board"
-                    referenced.sprint_index = attraction.sprint_index
-                    referenced.week_index = None
-                    attractions_added += 1
-
     cycle.goals_initialized = True
     await session.commit()
     return PrePiSubmitRead(
         version=cycle.version,
         goals_added=goals_added,
         board_added=board_added,
-        attractions_added=attractions_added,
+        attractions_added=0,
         pre_pi=await read_pre_pi(session, cycle),
         goals=await read_goals(session, cycle),
     )

@@ -177,7 +177,7 @@ function prepTshirtCellHTML(i){
   return `<select data-pi="${esc(i.id)}" data-pk="tshirt">${TSHIRT_SIZES.map(s=>`<option value="${s}" ${i.tshirt===s?'selected':''}>${s||'—'}</option>`).join('')}</select>`;
 }
 // Фильтруемые столбцы Pre PI: все столбцы блока (кроме №/названия инициативы и
-// «Команды-исполнителя и компетенций») + расчётная «Общая оценка».
+// «Компетенций команды владельца») + расчётная «Общая оценка».
 function prepFilterCols(cols,withEffort){
   const fcols=cols.map(c=>({k:c.k,label:c.label}));
   if(withEffort) fcols.push({k:'effort',label:'Общая оценка (чел/дн)',val:i=>round1(i.totalEstimate||0)});
@@ -186,7 +186,7 @@ function prepFilterCols(cols,withEffort){
 function prepScope(isUpper){ return 'prep:'+(isUpper?'upper':'lower'); }
 
 // Единая таблица инициатив (Agile и «ИТ-проект»): приоритеты, «Цель/Веха», метрика,
-// AS IS / TO BE / Гипотезы / Редизайн, матрица компетенций по исполнителям, привлечение.
+// AS IS / TO BE / Гипотезы / Редизайн, компетенции команды-владельца, привлечение.
 function prepTable(rows,isUpper){
   const cols=prepColsFor(isUpper);
   const scope=prepScope(isUpper);
@@ -201,7 +201,7 @@ function prepTable(rows,isUpper){
       <th class="stik1">№ Инициативы</th>
       <th class="stik2">Название инициативы</th>`+
       fcols.map(c=>filterThHTML(c,scope)).join('')+
-      `<th>Команда-исполнитель и компетенции</th>`+
+      `<th>Компетенции команды владельца</th>`+
       (isUpper?`<th>Запросы на привлечение</th>`:``)+
       `<th class="del-col"></th>
     </tr>
@@ -213,9 +213,8 @@ function prepTable(rows,isUpper){
     body=`<tr><td class="stik1 muted">—</td><td class="stik2 muted">${msg}</td>`+
       cols.map(()=>`<td></td>`).join('')+`<td></td><td></td><td></td>`+(isUpper?`<td></td>`:``)+`</tr>`;
   }else{
-    const opts=allTeamNames();
     rows.forEach(i=>{
-      const exs=Array.isArray(i.executors)&&i.executors.length?i.executors:[{team:'',comps:{},attractions:[]}], span=exs.length;
+      const span=1;
       const lead=`
         <td class="stik1" rowspan="${span}"><div class="id-cell">
           <span class="row-drag" title="${sorted?'Перетащите, чтобы перенести в другой блок (порядок внутри блока задаёт сортировка)':'Перетащите, чтобы изменить порядок или перенести в другой блок'}">⠿</span>
@@ -234,11 +233,9 @@ function prepTable(rows,isUpper){
         ).join('')+
         `<td rowspan="${span}" style="text-align:center;font-weight:700">${round1(i.totalEstimate||0)}</td>`;
       const delCell=`<td class="row-del-cell" rowspan="${span}">${rowDelBtnHTML(i.id,isUpper)}</td>`;
-      exs.forEach((ex,ei)=>{
-        const execCell=execBlockHTML(i, ex, ei, 'pi', opts);
-        const attrCell=isUpper?`<td class="attr-cell" data-attr-row="${esc(i.id)}">${attractionsHTML(i, ei)}</td>`:'';
-        body+=`<tr class="exec-row" ${ei===0?`draggable="true" data-rowdrag="${esc(i.id)}"`:''}>${ei===0?lead:''}${execCell}${attrCell}${ei===0?delCell:''}</tr>`;
-      });
+      const execCell=ownerCompsBlockHTML(i,'pi');
+      const attrCell=isUpper?`<td class="attr-cell" data-attr-row="${esc(i.id)}">${attractionsHTML(i)}</td>`:'';
+      body+=`<tr class="exec-row" draggable="true" data-rowdrag="${esc(i.id)}">${lead}${execCell}${attrCell}${delCell}</tr>`;
     });
   }
   return tableToolsBarHTML(scope)+
@@ -250,23 +247,24 @@ function rowDelBtnHTML(id,isUpper){
   const title=isUpper?'Вернуть в бэклог инициатив':'Удалить инициативу';
   return `<button class="row-del" data-pi-delrow="${esc(id)}" data-pi-delblock="${isUpper?'upper':'lower'}" title="${title}">✕</button>`;
 }
-function attractionsHTML(iss, ei){
-  const ex=iss.executors && iss.executors[ei];
+function attractionsHTML(iss){
+  const ex=ownerExecutorView(iss);
   const list=(ex && ex.attractions) || [];
-  let s=list.map(a=>{
+  const rows=list.map(a=>{
     const aid=a.id;
     const col=a.visualState||({approved:'red',rejected:'gray'}[a.status]||'purple');
     const team=a.team||'—';
     const spr = (a.sprint!==null && a.sprint!==undefined) ? ` · Спринт ${(+a.sprint)+1}` : '';
-    return `<span class="chip ${col}"><span class="chip-id">${esc(aid)}</span><span class="chip-team">${esc(team)}${spr}</span><span class="chip-x" data-attr-del="${esc(iss.id)}" data-attr-ei="${ei}" data-attr-aid="${esc(aid)}">✕</span></span>`;
+    return `<span class="chip ${col}"><span class="chip-id">${esc(aid)}</span><span class="chip-team">${esc(team)}${spr}</span><span class="chip-x" data-attr-del="${esc(iss.id)}" data-attr-aid="${esc(aid)}">✕</span></span>`;
   }).join('');
-  s+=`<button class="attr-add" data-attr-add="${esc(iss.id)}" data-attr-ei="${ei}" title="Добавить привлечение">+</button>`;
-  return s;
+  const add=`<button class="attr-add" data-attr-add="${esc(iss.id)}" title="Добавить привлечение">+</button>`;
+  return `<div class="attr-list">${rows}${add}</div>`;
 }
 
 let prepDragId=null;
 function prePiExecutorPayload(iss,mutate){
-  const rows=(iss.executors||[]).map((ex,index)=>({
+  const owner=ownerExecutorView(iss);
+  const rows=iss.owner?[owner].map((ex,index)=>({
     id:ex._backendId||null,
     team_id:ex.teamId||null,
     team:ex.team||'',
@@ -279,7 +277,7 @@ function prePiExecutorPayload(iss,mutate){
       approval_status:a.status||'pending',sort_order:position,
     })),
     sort_order:index,
-  }));
+  })):[];
   mutate(rows);
   return rows;
 }
@@ -352,34 +350,10 @@ function bindPrep(){
     // Enter завершает редактирование так же, как уход из поля, и отправляет ровно одну команду.
     el.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commit();el.blur();}};
   });
-  // выбор команды-исполнителя
-  document.querySelectorAll('[data-pi-exec]').forEach(el=>el.onchange=()=>{
-    const iss=findIssue(el.dataset.piExec); if(!iss)return;
-    const ei=+el.dataset.ei,team=state.pi.teams.find(t=>t.name===el.value); if(!iss.executors[ei]||!team)return;
-    const executors=prePiExecutorPayload(iss,rows=>{
-      rows[ei].team_id=team._teamId;rows[ei].team=team.name;rows[ei].tribe=team.tribe;
-      const allowed=new Set(team.comps||[]);
-      rows[ei].effort_by_competency=Object.fromEntries(Object.entries(rows[ei].effort_by_competency).filter(([key])=>allowed.has(key)));
-    });
-    runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
-  });
   // ввод чел/дн по компетенции
   document.querySelectorAll('[data-pi-comp]').forEach(el=>el.onchange=()=>{
     const iss=findIssue(el.dataset.piComp); if(!iss)return;
-    const ei=+el.dataset.ei;if(!iss.executors[ei])return;
-    const executors=prePiExecutorPayload(iss,rows=>{rows[ei].effort_by_competency[el.dataset.c]=+el.value||0;});
-    runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
-  });
-  // добавить/убрать исполнителя
-  document.querySelectorAll('[data-pi-execadd]').forEach(el=>el.onclick=()=>{
-    const iss=findIssue(el.dataset.piExecadd);if(!iss)return;
-    const first=teams.find(t=>!(iss.executors||[]).some(ex=>ex.team===t.name));if(!first)return;
-    const executors=prePiExecutorPayload(iss,rows=>rows.push({team_id:first._teamId,team:first.name,tribe:first.tribe,effort_by_competency:{},attractions:[],sort_order:rows.length}));
-    runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
-  });
-  document.querySelectorAll('[data-pi-execdel]').forEach(el=>el.onclick=()=>{
-    const iss=findIssue(el.dataset.piExecdel);if(!iss)return;
-    const ei=+el.dataset.ei,executors=prePiExecutorPayload(iss,rows=>rows.splice(ei,1));
+    const executors=prePiExecutorPayload(iss,rows=>{if(rows[0])rows[0].effort_by_competency[el.dataset.c]=+el.value||0;});
     runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
   });
 
@@ -394,13 +368,11 @@ function bindPrep(){
     const iss=findIssue(id);if(iss)await runPrePiCascadeCommand(`/initiatives/${iss._backendId}`,'DELETE',{});
   });
 
-  // привлечение (по конкретному исполнителю)
-  document.querySelectorAll('[data-attr-add]').forEach(b=>b.onclick=()=>openAttractionModal(b.dataset.attrAdd, +b.dataset.attrEi));
+  // Внешние ресурсы оформляются отдельно от компетенций владельца.
+  document.querySelectorAll('[data-attr-add]').forEach(b=>b.onclick=()=>openAttractionModal(b.dataset.attrAdd));
   document.querySelectorAll('[data-attr-del]').forEach(b=>b.onclick=()=>{
     const iss=findIssue(b.dataset.attrDel); if(!iss)return;
-    const ex=iss.executors[+b.dataset.attrEi]; if(!ex)return;
-    const ei=+b.dataset.attrEi;
-    const executors=prePiExecutorPayload(iss,rows=>{rows[ei].attractions=rows[ei].attractions.filter(a=>a.issue_key!==b.dataset.attrAid);});
+    const executors=prePiExecutorPayload(iss,rows=>{if(rows[0])rows[0].attractions=rows[0].attractions.filter(a=>a.issue_key!==b.dataset.attrAid);});
     runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});
   });
 
@@ -526,10 +498,9 @@ async function prepSubmitToBoards(targets){
     }
   }
 }
-function openAttractionModal(rowId, ei){
+function openAttractionModal(rowId){
   const row=findIssue(rowId); if(!row)return;
-  ei=+ei||0;
-  const host=row.executors && row.executors[ei]; if(!host) return;
+  const host=ownerExecutorView(row); if(!host.team) return;
   const sprintCount=+((prePiViews[currentCycleId()]||{}).cycle||{}).sprint_count||0;
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
@@ -537,7 +508,7 @@ function openAttractionModal(rowId, ei){
     <label><span>№ Issue (привлекаемая инициатива)</span><input id="am_id" placeholder="ID Issue из JSW (например, CORP-123)" autocomplete="off"></label>
     <label><span>Команда-исполнитель (подтягивается из JSW)</span><select id="am_team">${allTeamNames().map(n=>`<option>${esc(n)}</option>`).join('')}</select></label>
     <label><span>Спринт (кол-во из данных PI-цикла)</span><select id="am_sprint">
-      <option value="">— не выбран —</option>
+      <option value="">не выбран</option>
       ${Array.from({length:sprintCount},(_,index)=>`<option value="${index}">Спринт ${index+1}</option>`).join('')}
     </select></label>
     <div class="modal-actions">
@@ -558,9 +529,9 @@ function openAttractionModal(rowId, ei){
     const sprVal=$('#am_sprint').value;
     const sprint = sprVal===''? null : (+sprVal);
     if(sprint===null){toast('Выберите спринт',{type:'warn'});return;}
-    const executors=prePiExecutorPayload(row,rows=>rows[ei].attractions.push({
+    const executors=prePiExecutorPayload(row,rows=>rows[0].attractions.push({
       target_initiative_id:ref?ref._backendId:null,issue_key:key,target_team_id:teamRow._teamId,
-      team:teamRow.name,sprint_index:sprint,approval_status:'pending',sort_order:rows[ei].attractions.length,
+      team:teamRow.name,sprint_index:sprint,approval_status:'pending',sort_order:rows[0].attractions.length,
     }));
     root.innerHTML='';
     runPrePiUiCommand(`/initiatives/${row._backendId}`,'PATCH',{executors},'Запрос на привлечение добавлен');

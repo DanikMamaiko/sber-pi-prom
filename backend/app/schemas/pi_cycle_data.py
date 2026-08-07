@@ -126,7 +126,7 @@ class PiCycleTeamDataCreate(PiCycleDataCommand):
     name: str = Field(min_length=1, max_length=180)
     team_type: str = Field(default="Agile", pattern="^(Agile|ИТ-проект)$")
     excluded_from_goals: bool = False
-    competencies: list[str] = Field(min_length=1)
+    competencies: list[str] = Field(default_factory=list)
 
 
 class PiCycleTeamDataUpdate(PiCycleTeamDataCreate):
@@ -169,7 +169,7 @@ class PiCycleTeamDataWrite(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     team_type: str = Field(default="Agile", pattern="^(Agile|ИТ-проект)$")
     excluded_from_goals: bool = False
-    competencies: list[str] = Field(min_length=1)
+    competencies: list[str] = Field(default_factory=list)
 
 
 class PiNamedDataWrite(BaseModel):

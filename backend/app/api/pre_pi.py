@@ -181,10 +181,10 @@ async def create_initiative(
         )
     _, _, competencies_by_team = await cycle_team_context(session, cycle.id)
     team_ids = [row.team_id for row in payload.executors]
-    if len(team_ids) != len(set(team_ids)):
+    if len(team_ids) > 1:
         raise HTTPException(
             status_code=422,
-            detail="Команда-исполнитель может встречаться только один раз",
+            detail="В компетенциях команды владельца может быть только одна команда",
         )
     if payload.owner_team_id is not None and payload.owner_team_id not in competencies_by_team:
         raise HTTPException(
@@ -196,6 +196,8 @@ async def create_initiative(
         for executor in payload.executors:
             if executor.team_id not in competencies_by_team:
                 raise ValueError(f"Команда-исполнитель не входит в данный PI-цикл: {executor.team_id}")
+            if payload.owner_team_id is None or executor.team_id != payload.owner_team_id:
+                raise ValueError("В компетенциях можно указывать только ресурсы команды-владельца")
             normalized_executors.append(
                 (
                     executor.team_id,

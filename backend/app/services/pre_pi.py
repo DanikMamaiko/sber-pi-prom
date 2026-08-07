@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import Iterable
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,6 +14,7 @@ from app.models.pi_cycle import (
     PiCycleTeam,
     PiGoal,
     PiGoalInitiative,
+    Risk,
     Team,
 )
 from app.schemas.pi_cycle import (
@@ -155,7 +156,7 @@ def _attraction_read(row: InitiativeAttraction) -> dict:
     return {
         "id": row.id,
         "target_initiative_id": row.target_initiative_id,
-        "issue_key": row.target_initiative.issue_key,
+        "issue_key": row.issue_key,
         "target_team_id": row.target_team_id,
         "team": row.target_team.name,
         "sprint_index": row.sprint_index,
@@ -170,6 +171,15 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
     actions = ["edit", "move", "reorder", "delete"]
     if item.pre_planned:
         actions.append("submit")
+    owner_executors = [
+        executor for executor in sorted(item.executors, key=lambda value: value.sort_order)
+        if executor.team_id == item.owner_team_id
+    ][:1]
+    read_executors = (
+        sorted(item.executors, key=lambda value: value.sort_order)[:1]
+        if item.generated_from_attraction
+        else owner_executors
+    )
     return PrePiInitiativeRead(
         id=item.id,
         issue_key=item.issue_key,
@@ -198,7 +208,7 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
         sprint_index=item.sprint_index,
         week_index=item.week_index,
         sort_order=item.sort_order,
-        total_estimate=sum(_effort_total(executor) for executor in item.executors),
+        total_estimate=sum(_effort_total(executor) for executor in owner_executors),
         block="planned" if item.pre_planned else "backlog",
         required_fields=required,
         allowed_actions=actions,
@@ -215,7 +225,7 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
                 ],
                 "sort_order": executor.sort_order,
             }
-            for executor in sorted(item.executors, key=lambda value: value.sort_order)
+            for executor in read_executors
         ],
     )
 
@@ -375,10 +385,20 @@ async def _replace_executors(
     item: Initiative,
     sources,
 ) -> None:
+    if len(sources) > 1:
+        raise ValueError("В компетенциях команды владельца может быть только одна команда")
     teams_by_key, teams_by_name, competencies_by_team = await cycle_team_context(session, cycle.id)
     initiatives = await _initiatives_query(session, cycle.id)
     initiatives_by_id = {row.id: row for row in initiatives}
     initiatives_by_key = {row.issue_key.casefold(): row for row in initiatives}
+    next_initiative_order = max((row.sort_order for row in initiatives), default=-1) + 1
+    cleanup_candidates = {
+        attraction.target_initiative
+        for executor in item.executors
+        for attraction in executor.attraction_requests
+        if attraction.target_initiative is not None
+        and attraction.target_initiative.generated_from_attraction
+    }
     existing_by_id = {row.id: row for row in item.executors}
     existing_by_team = {row.team_id: row for row in item.executors}
     used: set[uuid.UUID] = set()
@@ -391,6 +411,8 @@ async def _replace_executors(
                 raise ValueError("Команда-исполнитель не входит в данный PI-цикл")
         else:
             team = resolve_cycle_team(teams_by_key, teams_by_name, source.tribe, source.team)
+        if item.owner_team_id is None or team.id != item.owner_team_id:
+            raise ValueError("В компетенциях можно указывать только ресурсы команды-владельца")
         record = existing_by_id.get(source.id) if source.id else existing_by_team.get(team.id)
         if source.id and record is None:
             raise ValueError("ID исполнителя не относится к этой инициативе")
@@ -408,16 +430,24 @@ async def _replace_executors(
         record.sort_order = position
         existing_attractions = {row.id: row for row in record.attraction_requests}
         natural_attractions = {
-            (row.target_initiative_id, row.target_team_id, row.sprint_index): row
+            (row.issue_key.casefold(), row.target_team_id, row.sprint_index): row
             for row in record.attraction_requests
         }
         attraction_result: list[InitiativeAttraction] = []
-        attraction_keys: set[tuple[uuid.UUID, uuid.UUID, int]] = set()
+        attraction_keys: set[tuple[str, uuid.UUID, int]] = set()
         for attraction_position, source_attraction in enumerate(source.attractions):
-            target = initiatives_by_id.get(source_attraction.target_initiative_id) if source_attraction.target_initiative_id else initiatives_by_key.get(source_attraction.issue_key.strip().casefold())
-            if target is None:
-                raise ValueError("Инициатива для привлечения не найдена в данном PI-цикле")
-            if target.id == item.id:
+            requested_key = source_attraction.issue_key.strip()
+            target = (
+                initiatives_by_id.get(source_attraction.target_initiative_id)
+                if source_attraction.target_initiative_id
+                else None
+            )
+            if target is None and requested_key:
+                target = initiatives_by_key.get(requested_key.casefold())
+            issue_key = target.issue_key if target is not None else requested_key
+            if not issue_key:
+                raise ValueError("Укажите ID Issue для привлечения")
+            if issue_key.casefold() == item.issue_key.casefold():
                 raise ValueError("Инициатива не может привлекать сама себя")
             target_team = None
             if source_attraction.target_team_id:
@@ -429,7 +459,60 @@ async def _replace_executors(
             if source_attraction.sprint_index is None:
                 raise ValueError("Укажите спринт привлечения")
             validate_sprint_position(cycle, source_attraction.sprint_index, None, "Привлечение")
-            key = (target.id, target_team.id, source_attraction.sprint_index)
+            if target is None:
+                target = Initiative(
+                    id=uuid.uuid4(),
+                    cycle_id=cycle.id,
+                    issue_key=issue_key,
+                    title=issue_key,
+                    owner_team_id=item.owner_team_id,
+                    status="backlog",
+                    generated_from_attraction=True,
+                    pre_planned=False,
+                    sprint_index=source_attraction.sprint_index,
+                    sort_order=next_initiative_order,
+                )
+                target.executors = [
+                    InitiativeExecutor(
+                        id=uuid.uuid4(),
+                        team_id=target_team.id,
+                        effort_by_competency={},
+                        sort_order=0,
+                    )
+                ]
+                session.add(target)
+                initiatives_by_id[target.id] = target
+                initiatives_by_key[issue_key.casefold()] = target
+                next_initiative_order += 1
+            elif (
+                not target.generated_from_attraction
+                and target.owner_team_id not in {None, item.owner_team_id}
+            ):
+                raise ValueError(
+                    f"Issue {issue_key} уже относится к другой команде-владельцу"
+                )
+            if target.generated_from_attraction:
+                target.owner_team_id = item.owner_team_id
+            elif target.owner_team_id is None:
+                target.owner_team_id = item.owner_team_id
+            if not any(executor.team_id == target_team.id for executor in target.executors):
+                if target.executors:
+                    raise ValueError(
+                        f"Issue {issue_key} уже назначен другой команде-исполнителю"
+                    )
+                target.executors = [
+                    InitiativeExecutor(
+                        id=uuid.uuid4(),
+                        team_id=target_team.id,
+                        effort_by_competency={},
+                        sort_order=0,
+                    )
+                ]
+            if target.generated_from_attraction and not target.on_board:
+                target.pre_planned = False
+                target.status = "backlog"
+                target.sprint_index = source_attraction.sprint_index
+            key = (issue_key.casefold(), target_team.id, source_attraction.sprint_index)
             if key in attraction_keys:
                 raise ValueError("Дублирующийся запрос на привлечение")
             attraction_keys.add(key)
@@ -438,7 +521,8 @@ async def _replace_executors(
                 raise ValueError("ID привлечения не относится к этому исполнителю")
             if attraction is None:
                 attraction = InitiativeAttraction(id=uuid.uuid4(), approval_status="pending")
-            attraction.target_initiative_id = target.id
+            attraction.issue_key = issue_key
+            attraction.target_initiative = target
             attraction.target_team_id = target_team.id
             attraction.sprint_index = source_attraction.sprint_index
             attraction.sort_order = attraction_position
@@ -446,6 +530,25 @@ async def _replace_executors(
         record.attraction_requests = attraction_result
         result.append(record)
     item.executors = result
+    await session.flush()
+    for target in cleanup_candidates:
+        references = await session.scalar(
+            select(func.count())
+            .select_from(InitiativeAttraction)
+            .where(InitiativeAttraction.target_initiative_id == target.id)
+        )
+        if not references:
+            await _delete_or_unlink_goals_for_initiatives(
+                session, cycle.id, [target.id]
+            )
+            await session.execute(
+                update(Risk)
+                .where(Risk.cycle_id == cycle.id, Risk.initiative_id == target.id)
+                .values(initiative_id=None)
+            )
+            await session.delete(target)
+    await session.flush()
+    await delete_dangling_connections(session, cycle.id)
 
 
 async def update_pre_pi_initiative(

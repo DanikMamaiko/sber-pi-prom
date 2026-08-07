@@ -51,8 +51,14 @@ def test_pre_pi_uses_only_backend_entities_for_executors_and_attractions():
 def test_pre_pi_executor_editor_uses_active_cycle_competencies():
     source = frontend_source()
 
-    assert "kind==='bk' ? backlogTeamCompetencies(ex.team) : teamComps(ex.team)" in source
-    assert "kind==='bk' ? backlogTeamCompetencies(ex.team) : teamCompsFor(ex.team)" not in source
+    assert "kind==='bk' ? backlogTeamCompetencies(iss.owner) : teamComps(iss.owner)" in source
+    assert "Компетенции команды владельца" in pre_pi_source()
+    assert "+ Команда-исполнитель" not in pre_pi_source()
+    assert "data-pi-execadd" not in pre_pi_source()
+
+
+def test_pre_pi_attraction_requests_are_stacked_in_their_column():
+    assert 'class="attr-list"' in pre_pi_source()
 
 
 def test_pre_pi_submit_refreshes_dependent_tabs_before_render():

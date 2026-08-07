@@ -29,12 +29,12 @@ def upgrade() -> None:
     op.execute(
         """
         INSERT INTO initiative_attractions (
-            id, executor_id, target_initiative_id, target_team_id,
+            id, executor_id, issue_key, target_initiative_id, target_team_id,
             sprint_index, approval_status, sort_order
         )
         SELECT md5(executor.id::text || target.id::text || target_team.id::text ||
                    (entry.value->>'sprint_index'))::uuid,
-               executor.id, target.id, target_team.id,
+               executor.id, target.issue_key, target.id, target_team.id,
                (entry.value->>'sprint_index')::integer,
                CASE WHEN target.agreed THEN 'approved' ELSE 'pending' END,
                entry.ordinality - 1

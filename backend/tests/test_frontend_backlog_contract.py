@@ -63,11 +63,14 @@ def test_backlog_keeps_the_prototype_structure_and_empty_states():
         "Добавить по № Issue",
         "Отправить на Pre PI Planning",
         "Бэклог пуст — добавьте инициативу по № Issue.",
-        "Команда-исполнитель и компетенции",
+        "Компетенции команды владельца",
         "prep-wrap",
         "bk-table",
     ):
         assert marker in view
+
+    assert "+ Команда-исполнитель" not in view
+    assert "data-bk-execadd" not in view
 
 
 def test_backlog_dispatch_refreshes_and_renders_pre_pi_data():

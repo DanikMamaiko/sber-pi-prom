@@ -468,11 +468,6 @@ async def create_team(payload: TeamCreate, session: AsyncSession = Depends(get_s
         code = raw_code.strip().upper()
         if code and code not in competencies:
             competencies.append(code)
-    if not competencies:
-        raise HTTPException(
-            status_code=422,
-            detail="Требуется хотя бы одна компетенция команды",
-        )
     team = Team(
         tribe_id=payload.tribe_id,
         name=payload.name.strip(),

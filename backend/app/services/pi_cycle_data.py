@@ -479,8 +479,6 @@ def _validate_team_payload(payload) -> list[str]:
     unknown = [code for code in competencies if code not in COMPETENCIES]
     if unknown:
         raise ValueError(f"Неподдерживаемые компетенции: {', '.join(unknown)}")
-    if not competencies:
-        raise ValueError("Требуется хотя бы одна компетенция")
     return competencies
 
 

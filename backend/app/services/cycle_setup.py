@@ -111,8 +111,6 @@ async def replace_cycle_setup(
         if item.team_type not in {"Agile", "ИТ-проект"}:
             raise ValueError(f"Неподдерживаемый тип команды: {item.team_type}")
         competencies = _unique_non_empty([value.upper() for value in item.competencies])
-        if not competencies:
-            raise ValueError(f"Для команды требуется хотя бы одна компетенция: {item.name}")
         if any(len(code) > 32 for code in competencies):
             raise ValueError(f"Код компетенции слишком длинный для команды: {item.name}")
     if any(not event.name.strip() for event in payload.pirs):

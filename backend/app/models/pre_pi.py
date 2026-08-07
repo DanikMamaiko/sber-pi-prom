@@ -47,6 +47,9 @@ class Initiative(Base, TimestampMixin):
     team_priority: Mapped[str] = mapped_column(String(40), default="")
     estimate: Mapped[str] = mapped_column(String(120), default="")
     comment: Mapped[str] = mapped_column(Text, default="")
+    generated_from_attraction: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     pre_planned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     on_board: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     agreed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -91,7 +94,7 @@ class InitiativeAttraction(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint(
             "executor_id",
-            "target_initiative_id",
+            "issue_key",
             "target_team_id",
             "sprint_index",
             name="uq_initiative_attraction_target",
@@ -104,8 +107,9 @@ class InitiativeAttraction(Base, TimestampMixin):
     executor_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("initiative_executors.id", ondelete="CASCADE"), nullable=False
     )
-    target_initiative_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("initiatives.id", ondelete="CASCADE"), nullable=False
+    issue_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    target_initiative_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("initiatives.id", ondelete="SET NULL"), nullable=True
     )
     target_team_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("teams.id"), nullable=False
@@ -119,7 +123,7 @@ class InitiativeAttraction(Base, TimestampMixin):
     executor: Mapped[InitiativeExecutor] = relationship(
         back_populates="attraction_requests"
     )
-    target_initiative: Mapped[Initiative] = relationship(
+    target_initiative: Mapped[Initiative | None] = relationship(
         foreign_keys=[target_initiative_id]
     )
     target_team: Mapped[Team] = relationship(foreign_keys=[target_team_id])

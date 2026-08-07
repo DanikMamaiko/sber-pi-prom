@@ -168,8 +168,8 @@ function viewBoard(t){
     .map(i=>({ord:(i.ord??0), html:stickerHTML(i,true,true)}))
     .concat(ownerInfoIssues(t.name).filter(i=>i.sprint===null).map(i=>({ord:(i.ord??0), html:infoStickerHTML(i)})))
     .sort((a,b)=>a.ord-b.ord);
-  html+=`<div class="backlog-col dropzone" data-tb-sprint="backlog"><div class="col-title">Бэклог</div>`+
-    backlogItems.map(o=>o.html).join('')+`</div>`;
+  html+=`<div class="backlog-col dropzone" data-tb-sprint="backlog"><div class="board-col-head backlog-head"><div class="sprint-head backlog-title"><div class="num">Бэклог</div><div class="dates">Незапланированные задачи</div></div><div class="backlog-summary" aria-hidden="true"></div></div><div class="backlog-body">`+
+    backlogItems.map(o=>o.html).join('')+`</div></div>`;
   // спринты / недели
   periods.forEach(p=>{
     html+=`<div class="sprint-col${p.week===null?'':' week-col'}"><div class="board-col-head"><div class="sprint-head">${periodHeadHTML(p)}</div>`;
@@ -593,6 +593,20 @@ function issueHasChildrenAfter(iss,sprint,week){
   const after=item=>boardPeriodAfter(item.sprint,itemWeek(item),sprint,week);
   return (iss.stories||[]).some(after)||(iss.subtasks||[]).some(after);
 }
+function equalizeBoardColumnHeaders(){
+  const scroll=$('#boardScroll');if(!scroll)return;
+  const heads=[...scroll.querySelectorAll('.board-grid > .backlog-col > .board-col-head, .board-grid > .sprint-col > .board-col-head')];
+  if(heads.length<2)return;
+  heads.forEach(head=>head.style.height='auto');
+  const equalizeRows=selector=>{
+    const rows=[...scroll.querySelectorAll(selector)];
+    rows.forEach(row=>row.style.height='auto');
+    const height=Math.max(...rows.map(row=>Math.ceil(row.getBoundingClientRect().height)));
+    rows.forEach(row=>row.style.height=`${height}px`);
+  };
+  equalizeRows('.board-grid > .backlog-col .backlog-title, .board-grid > .sprint-col .sprint-head');
+  equalizeRows('.board-grid > .backlog-col .backlog-summary, .board-grid > .sprint-col .cap-summary');
+}
 function bindTeams(){
   // разворачивание трайба (аккордеон)
   document.querySelectorAll('[data-tribe]').forEach(el=>el.onclick=()=>{
@@ -831,9 +845,9 @@ function bindTeams(){
       document.addEventListener('mousemove',onArrowMove);
       document.addEventListener('mouseup',onArrowUp);
     }));
-    requestAnimationFrame(drawArrows);
+    requestAnimationFrame(()=>{equalizeBoardColumnHeaders();drawArrows();});
     scroll.onscroll=drawArrows;
-    window.onresize=drawArrows;
+    window.onresize=()=>{equalizeBoardColumnHeaders();drawArrows();};
   }
   // удаление выбранной стрелки клавишей Delete / Backspace
   document.onkeydown=(e)=>{

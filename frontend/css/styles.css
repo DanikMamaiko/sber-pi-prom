@@ -314,12 +314,17 @@
   .board-scroll > table thead th{position:sticky;top:0;z-index:7;background:var(--panel2)}
   .arrow-layer{position:absolute;top:0;left:0;pointer-events:none;z-index:5;overflow:visible}
   .board-grid{display:flex;align-items:stretch;min-height:420px}
-  .backlog-col{min-width:200px;width:200px;border-right:2px solid var(--border2);padding:10px;background:linear-gradient(180deg,var(--panel),var(--bg2))}
-  .col-title{position:sticky;top:0;z-index:7;background:linear-gradient(180deg,var(--panel),var(--bg2));font-weight:700;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.8px;margin:-10px -10px 10px;padding:10px;text-align:center;border-bottom:1px solid var(--border)}
+  .backlog-col{min-width:200px;width:200px;border-right:2px solid var(--border2);background:linear-gradient(180deg,var(--panel),var(--bg2));display:flex;flex-direction:column}
+  .backlog-head{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;background:var(--panel2)}
+  .backlog-title{flex:0 0 auto;background:linear-gradient(180deg,var(--panel2),var(--panel))}
+  .backlog-summary{flex:0 0 auto;min-height:84px;background:linear-gradient(180deg,var(--bg2),rgba(23,24,33,.72))}
   .sprint-col{min-width:200px;width:200px;border-right:1px solid var(--border);display:flex;flex-direction:column}
   .sprint-col:last-child{border-right:none}
-  .board-col-head{position:sticky;top:0;z-index:7;background:var(--panel2);box-shadow:0 1px 0 var(--border)}
+  .board-col-head{position:sticky;top:0;z-index:7;background:var(--panel2);box-shadow:0 1px 0 var(--border);box-sizing:border-box;overflow:hidden}
   .sprint-head{padding:9px 10px;border-bottom:1px solid var(--border);background:var(--panel2);min-height:96px;overflow:visible}
+  .sprint-head .num{font-weight:700;color:var(--text);font-size:13px;line-height:1.25}
+  .sprint-head .dates{font-size:11.5px;line-height:1.35;color:var(--muted);font-weight:400;margin-top:3px}
+  .backlog-title .dates{color:var(--muted2)}
   .sprint-head .week-label{font-size:11px;color:#d6fcec;font-weight:700;margin-top:2px}
   .cap-summary{padding:7px 9px;background:var(--bg2);min-height:84px;overflow:visible}
   .cap-summary table{font-size:11px}
@@ -327,8 +332,8 @@
   .cap-summary tr:last-child td{border-bottom:none}
   .cap-summary .neg{color:var(--danger);font-weight:700}
   .sprint-body{flex:1;padding:10px;min-height:200px;display:flex;flex-direction:column;gap:11px;transition:background var(--ease)}
-  .sprint-body .sticker,.sprint-body .white,.sprint-body .story,.backlog-col .sticker{margin:0}
-  .backlog-col{display:flex;flex-direction:column;gap:9px}
+  .backlog-body{flex:1;padding:10px;min-height:200px;display:flex;flex-direction:column;gap:9px}
+  .sprint-body .sticker,.sprint-body .white,.sprint-body .story,.backlog-body .sticker{margin:0}
   .sprint-body.dragover,.backlog-col.dragover{background:var(--accent-soft);box-shadow:inset 0 0 0 2px var(--accent)}
   /* ----- Трудозатраты по ФИО ----- */
   button.effort-fio-btn:not(.primary){background:var(--accent-soft);border:1px solid var(--accent-d);color:var(--text);font-weight:600}
@@ -526,6 +531,9 @@
   .chip .chip-x{padding:2px 6px;cursor:pointer;color:var(--muted);background:var(--bg2)}
   .chip .chip-x:hover{color:var(--danger)}
   .attr-add{padding:2px 9px;font-size:13px;line-height:1.2}
+  .attr-list{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+  .attr-list .chip{margin:0;max-width:100%}
+  .attr-list .attr-add{margin-top:1px}
   /* ----- Program Board: команды на стикере ----- */
   .sticker .stteam{font-size:10.5px;color:rgba(255,255,255,.85);margin-top:3px;display:flex;flex-wrap:wrap;gap:1px 8px}
   .sticker .stteam b{color:#fff;font-weight:600}
@@ -840,7 +848,7 @@
   /* ячейка «Тип инициативы»: select канонических типов + раскрывающийся ввод «Другое…» */
   .type-field{display:flex;flex-direction:column;gap:3px}
   .type-field select, .type-field .type-other{min-width:150px}
-  /* ячейка «Команда-исполнитель и компетенции»: 2 уровня — команда / компетенции в один ряд */
+  /* ячейка «Компетенции команды владельца» */
   .exec-cell, .attr-cell{vertical-align:top}
   .exec-block{display:flex;flex-direction:column;gap:6px}
   .exec-team-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
