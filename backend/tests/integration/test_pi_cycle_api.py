@@ -137,6 +137,7 @@ async def test_full_pi_cycle_flow_persists_and_deletes_dependencies(api_client):
                         "target_quarter": "Q4",
                         "customer_priority": "1",
                         "team_priority": "1",
+                        "tags": ["E2E"],
                         "systems": ["E2E"],
                         "executors": [
                             {
@@ -172,8 +173,11 @@ async def test_full_pi_cycle_flow_persists_and_deletes_dependencies(api_client):
                 "owner_team": "Команда Альфа",
                 "owner_tribe": "Регрессия",
                 "initiative_type": "Развитие функционала",
+                "customer_priority": "1",
+                "team_priority": "1",
                 "status": "planned",
                 "pre_planned": True,
+                "tags": ["E2E"],
                 "executors": [
                     {
                         "team": "Команда Альфа",
@@ -559,9 +563,9 @@ async def test_invalid_aggregate_puts_return_422_and_are_atomic(api_client):
                 "pre_planned": True,
                 "executors": [
                     {
-                        "team": "Команда Альфа",
+                        "team": "Проект Бета",
                         "tribe": "Регрессия",
-                        "effort_by_competency": {"SA": 1},
+                        "effort_by_competency": {"DEV": 1},
                     }
                 ],
             }
@@ -573,18 +577,22 @@ async def test_invalid_aggregate_puts_return_422_and_are_atomic(api_client):
     unknown_team["initiatives"][0]["executors"][0]["team"] = "Чужая команда"
     response = await api_client.put(f"/pi-cycles/{cycle_id}/pre-pi", json=unknown_team)
     assert response.status_code == 422
-    assert assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"][0]["executors"][0]["team"] == "Команда Альфа"
+    assert assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"][0]["executors"][0]["team"] == "Проект Бета"
 
-    other_cycle_team = deepcopy(pre_pi_payload)
-    other_cycle_team["initiatives"][0]["executors"][0].update(
+    locked_backlog_effort = deepcopy(pre_pi_payload)
+    locked_backlog_effort["initiatives"][0]["executors"][0].update(
         {"team": "Проект Бета", "effort_by_competency": {"DEV": 2}}
     )
-    board_owned = assert_ok(
-        await api_client.put(f"/pi-cycles/{cycle_id}/pre-pi", json=other_cycle_team)
-    )["initiatives"][0]
+    locked_response = await api_client.put(
+        f"/pi-cycles/{cycle_id}/pre-pi", json=locked_backlog_effort
+    )
+    assert locked_response.status_code == 422
+    board_owned = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))[
+        "initiatives"
+    ][0]
     assert board_owned["owner_team"] == "Команда Альфа"
     assert board_owned["executors"][0]["team"] == "Проект Бета"
-    assert board_owned["total_estimate"] == 2
+    assert board_owned["total_estimate"] == 1
 
     bad_competency = deepcopy(pre_pi_payload)
     bad_competency["initiatives"][0]["executors"][0]["effort_by_competency"] = {"UX": 2}
@@ -826,6 +834,7 @@ def backlog_write_row(row: dict, **changes) -> dict:
         "customer_priority": row["customer_priority"],
         "team_priority": row["team_priority"],
         "status": row["status"],
+        "tshirt_size": row["tshirt_size"],
         "tags": row["tags"],
         "systems": row["systems"],
         "sort_order": row["sort_order"],
@@ -838,6 +847,14 @@ def backlog_write_row(row: dict, **changes) -> dict:
             for executor in row["executors"]
         ],
     }
+    payload.update(changes)
+    return payload
+
+
+def backlog_command_row(row: dict, **changes) -> dict:
+    payload = backlog_write_row(row)
+    payload.pop("id")
+    payload.pop("sort_order")
     payload.update(changes)
     return payload
 
@@ -1092,6 +1109,10 @@ async def test_backlog_bulk_swap_reorder_dispatch_and_confirmed_unlink_are_atomi
     assert repeated["version"] == repeat_version + 1
     assert assert_ok(await api_client.get("/backlog-board"))["version"] == repeated["version"]
     assert len(assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"]) == 2
+    cycle_after_repeat = next(
+        row for row in assert_ok(await api_client.get("/pi-cycles")) if row["id"] == cycle_id
+    )
+    assert cycle_after_repeat["version"] == cycle_after["version"] + 1
 
     cascade = await api_client.delete(f"/backlog-board/items/{a['id']}")
     assert cascade.status_code == 409
@@ -1108,11 +1129,11 @@ async def test_backlog_bulk_swap_reorder_dispatch_and_confirmed_unlink_are_atomi
     cycle_unlinked = next(
         row for row in assert_ok(await api_client.get("/pi-cycles")) if row["id"] == cycle_id
     )
-    assert cycle_unlinked["version"] == cycle_after["version"] + 1
+    assert cycle_unlinked["version"] == cycle_after_repeat["version"] + 1
 
 
 @pytest.mark.asyncio
-async def test_backlog_dispatch_skips_already_sent_and_sends_new_items(api_client):
+async def test_backlog_dispatch_resyncs_already_sent_and_sends_new_items(api_client):
     cycle, _ = await create_cycle_with_setup(api_client, year=2034, quarter="Q1")
     cycle_id = cycle["id"]
     board = assert_ok(
@@ -1195,6 +1216,202 @@ async def test_backlog_dispatch_skips_already_sent_and_sends_new_items(api_clien
     )
     assert repeated["version"] == repeat_version + 1
     assert len(assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))["initiatives"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_backlog_redispatch_updates_owned_fields_and_preserves_pre_pi_fields(api_client):
+    cycle, _ = await create_cycle_with_setup(api_client, year=2035, quarter="Q2")
+    cycle_id = cycle["id"]
+    board = assert_ok(
+        await api_client.put(
+            "/backlog-board",
+            json={
+                "items": [
+                    {
+                        "tribe": "Регрессия",
+                        "issue_key": "SYNC-LOCK-1",
+                        "title": "Название из Бэклога",
+                        "description": "Описание из Бэклога",
+                        "product": "Продукт 1",
+                        "owner_team": "Команда Альфа",
+                        "initiative_type": "Развитие функционала",
+                        "target_year": 2035,
+                        "target_quarter": "Q2",
+                        "customer_priority": "1",
+                        "team_priority": "2",
+                        "tshirt_size": "M",
+                        "tags": ["E2E"],
+                        "systems": ["CRM"],
+                        "executors": [
+                            {
+                                "team": "Команда Альфа",
+                                "effort_by_competency": {"SA": 2},
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    backlog_item = board["items"][0]
+    assert_ok(
+        await api_client.post(
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2035, "target_quarter": "Q2"},
+        )
+    )
+    pre_pi = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))
+    source = next(row for row in pre_pi["initiatives"] if row["issue_key"] == "SYNC-LOCK-1")
+    source_id = source["id"]
+    executor_id = source["executors"][0]["id"]
+    assert {
+        "issue_key",
+        "title",
+        "product",
+        "owner_team_id",
+        "initiative_type",
+        "tshirt_size",
+        "customer_priority",
+        "team_priority",
+        "tags",
+        "executor_team",
+        "effort_by_competency",
+    } <= set(source["locked_fields"])
+
+    moved = assert_ok(
+        await api_client.post(
+            f"/pi-cycles/{cycle_id}/pre-pi/initiatives/{source_id}/move",
+            json={"target_block": "planned"},
+        )
+    )
+    source = next(row for row in moved["initiatives"] if row["id"] == source_id)
+    alpha = next(row for row in moved["teams"] if row["name"] == "Команда Альфа")
+    beta = next(row for row in moved["teams"] if row["name"] == "Проект Бета")
+    edited = assert_ok(
+        await api_client.patch(
+            f"/pi-cycles/{cycle_id}/pre-pi/initiatives/{source_id}",
+            json={
+                "goal_text": "Цель только Pre PI",
+                "metric": "Метрика только Pre PI",
+                "current_value": "10%",
+                "target_value": "25%",
+                "hypothesis": "Гипотеза только Pre PI",
+                "redesign": "Редизайн только Pre PI",
+                "executors": [
+                    {
+                        "id": executor_id,
+                        "team_id": alpha["id"],
+                        "team": alpha["name"],
+                        "tribe": alpha["tribe"],
+                        "effort_by_competency": {"SA": 2},
+                        "attractions": [
+                            {
+                                "issue_key": "SYNC-EXT-1",
+                                "target_team_id": beta["id"],
+                                "sprint_index": 1,
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    )
+    source = next(row for row in edited["initiatives"] if row["id"] == source_id)
+    attraction_id = source["executors"][0]["attractions"][0]["id"]
+    pre_pi_sort_order = source["sort_order"]
+
+    locked_scalar = await api_client.patch(
+        f"/pi-cycles/{cycle_id}/pre-pi/initiatives/{source_id}",
+        json={"product": "Нельзя изменить в Pre PI"},
+    )
+    assert locked_scalar.status_code == 422
+    assert "только на вкладке «Бэклог»" in locked_scalar.json()["detail"]
+    locked_effort = await api_client.patch(
+        f"/pi-cycles/{cycle_id}/pre-pi/initiatives/{source_id}",
+        json={
+            "executors": [
+                {
+                    "id": executor_id,
+                    "team_id": alpha["id"],
+                    "team": alpha["name"],
+                    "tribe": alpha["tribe"],
+                    "effort_by_competency": {"SA": 99},
+                    "attractions": [],
+                }
+            ]
+        },
+    )
+    assert locked_effort.status_code == 422
+
+    current_backlog = assert_ok(await api_client.get("/backlog-board"))["items"][0]
+    updated_board = assert_ok(
+        await api_client.patch(
+            f"/backlog-board/items/{backlog_item['id']}",
+            json=backlog_command_row(
+                current_backlog,
+                issue_key="SYNC-LOCK-RENAMED",
+                title="Обновлённое название",
+                description="Обновлённое описание",
+                product="Продукт 2",
+                customer_priority="3",
+                team_priority="4",
+                tshirt_size="XL",
+                executors=[
+                    {
+                        "id": current_backlog["executors"][0]["id"],
+                        "team": "Команда Альфа",
+                        "effort_by_competency": {"SA": 5, "DEV": 1},
+                    }
+                ],
+            ),
+        )
+    )
+    assert updated_board["items"][0]["tshirt_size"] == "XL"
+    assert_ok(
+        await api_client.post(
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2035, "target_quarter": "Q2"},
+        )
+    )
+
+    synced = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))
+    source = next(
+        row for row in synced["initiatives"] if row["issue_key"] == "SYNC-LOCK-RENAMED"
+    )
+    assert source["id"] == source_id
+    assert source["title"] == "Обновлённое название"
+    assert source["description"] == "Обновлённое описание"
+    assert source["product"] == "Продукт 2"
+    assert source["customer_priority"] == "3"
+    assert source["team_priority"] == "4"
+    assert source["tshirt_size"] == "XL"
+    assert source["goal_text"] == "Цель только Pre PI"
+    assert source["metric"] == "Метрика только Pre PI"
+    assert source["current_value"] == "10%"
+    assert source["target_value"] == "25%"
+    assert source["hypothesis"] == "Гипотеза только Pre PI"
+    assert source["redesign"] == "Редизайн только Pre PI"
+    assert source["pre_planned"] is True
+    assert source["sort_order"] == pre_pi_sort_order
+    assert source["executors"][0]["id"] == executor_id
+    assert source["executors"][0]["effort_by_competency"] == {"SA": 5.0, "DEV": 1.0}
+    assert source["executors"][0]["attractions"][0]["id"] == attraction_id
+    assert source["executors"][0]["attractions"][0]["issue_key"] == "SYNC-EXT-1"
+    assert all(row["issue_key"] != "SYNC-LOCK-1" for row in synced["initiatives"])
+
+    count_before_repeat = len(synced["initiatives"])
+    assert_ok(
+        await api_client.post(
+            "/backlog-board/dispatch",
+            json={"tribe": "Регрессия", "target_year": 2035, "target_quarter": "Q2"},
+        )
+    )
+    repeated = assert_ok(await api_client.get(f"/pi-cycles/{cycle_id}/pre-pi"))
+    assert len(repeated["initiatives"]) == count_before_repeat
+    assert next(
+        row for row in repeated["initiatives"] if row["issue_key"] == "SYNC-LOCK-RENAMED"
+    )["id"] == source_id
+
 
 @pytest.mark.asyncio
 async def test_pi_cycle_data_bulk_commands_keep_ids_and_rollback(api_client):
@@ -1820,12 +2037,18 @@ async def test_pre_pi_focused_commands_return_canonical_read_model(api_client):
     edited_first = next(row for row in edited["initiatives"] if row["id"] == first["id"])
     assert edited_first["id"] == first["id"]
     assert edited_first["executors"][0]["id"] == first["executors"][0]["id"]
+    assert edited_first["owner_estimate"] == 7
+    assert edited_first["attraction_estimate"] == 0
+    assert edited_first["pending_attraction_estimate"] == 0
     assert edited_first["total_estimate"] == 7
     attraction = edited_first["executors"][0]["attractions"][0]
     assert attraction["id"]
     assert attraction["issue_key"] == "EXTERNAL-404"
     assert attraction["approval_status"] == "pending"
     assert attraction["visual_state"] == "purple"
+    assert attraction["effort_by_competency"] == {}
+    assert attraction["resource_estimate"] == 0
+    assert attraction["included_in_total"] is True
     external_before_submit = next(
         row for row in edited["backlog"] if row["issue_key"] == "EXTERNAL-404"
     )
@@ -1864,6 +2087,16 @@ async def test_pre_pi_focused_commands_return_canonical_read_model(api_client):
     assert external_after_effort["executors"][0]["team"] == "Проект Бета"
     assert external_after_effort["executors"][0]["effort_by_competency"] == {"SA": 6.0}
     assert external_after_effort["total_estimate"] == 6
+    source_after_external_effort = next(
+        row for row in edited_external["initiatives"] if row["id"] == first["id"]
+    )
+    assert source_after_external_effort["owner_estimate"] == 7
+    assert source_after_external_effort["attraction_estimate"] == 6
+    assert source_after_external_effort["pending_attraction_estimate"] == 6
+    assert source_after_external_effort["total_estimate"] == 13
+    source_attraction = source_after_external_effort["executors"][0]["attractions"][0]
+    assert source_attraction["effort_by_competency"] == {"SA": 6.0}
+    assert source_attraction["resource_estimate"] == 6
 
     submitted = assert_ok(
         await api_client.post(
@@ -1932,6 +2165,10 @@ async def test_pre_pi_focused_commands_return_canonical_read_model(api_client):
         row["issue_key"] != "EXTERNAL-404"
         for row in cancelled["initiatives"]
     )
+    cancelled_source = next(row for row in cancelled["initiatives"] if row["id"] == first["id"])
+    assert cancelled_source["owner_estimate"] == 7
+    assert cancelled_source["attraction_estimate"] == 0
+    assert cancelled_source["total_estimate"] == 7
     team_boards_after_cancel = assert_ok(
         await api_client.get(f"{path}/team-boards")
     )

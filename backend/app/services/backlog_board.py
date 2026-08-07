@@ -1,7 +1,7 @@
 import re
 import uuid
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -10,6 +10,7 @@ from app.models.pi_cycle import (
     BacklogExecutor,
     BacklogItem,
     Initiative,
+    InitiativeAttraction,
     InitiativeExecutor,
     PiCycle,
     PiCycleTeam,
@@ -731,12 +732,6 @@ async def dispatch_backlog_items(
             f"Нет инициатив для трайба {payload.tribe} с периодом реализации {target_key}"
         )
 
-    candidates = [
-        item for item in candidates if target_key not in (item.sent_to or [])
-    ]
-    if not candidates:
-        return
-
     _, _, competencies_by_team = await cycle_team_context(session, target.id)
     for source in candidates:
         if source.owner_team_id is not None and source.owner_team_id not in competencies_by_team:
@@ -756,7 +751,8 @@ async def dispatch_backlog_items(
                 f"Бэклог {source.issue_key} / отправка",
             )
 
-    issue_keys = [item.issue_key for item in candidates]
+    candidate_ids = {item.id for item in candidates}
+    issue_keys = {item.issue_key.casefold() for item in candidates}
     existing_initiatives = list(
         (
             await session.scalars(
@@ -764,38 +760,77 @@ async def dispatch_backlog_items(
                 .options(selectinload(Initiative.executors))
                 .where(
                     Initiative.cycle_id == target.id,
-                    Initiative.issue_key.in_(issue_keys),
+                    or_(
+                        Initiative.backlog_item_id.in_(candidate_ids),
+                        func.lower(Initiative.issue_key).in_(issue_keys),
+                    ),
                 )
             )
         ).all()
     )
-    initiatives_by_key = {item.issue_key: item for item in existing_initiatives}
-
-    conflicts = [
-        item.issue_key
+    initiatives_by_backlog_id = {
+        item.backlog_item_id: item
         for item in existing_initiatives
         if item.backlog_item_id is not None
-        and item.backlog_item_id
-        != next(row.id for row in candidates if row.issue_key == item.issue_key)
-    ]
-    if conflicts:
-        raise ValueError(
-            "PI-цикл уже содержит инициативы, связанные с другим элементом бэклога: "
-            + ", ".join(conflicts)
+    }
+    initiatives_by_key = {
+        item.issue_key.casefold(): item for item in existing_initiatives
+    }
+    max_sort_order = await session.scalar(
+        select(func.max(Initiative.sort_order)).where(
+            Initiative.cycle_id == target.id
         )
-
-    for sort_order, source in enumerate(candidates):
-        initiative = initiatives_by_key.get(source.issue_key)
-        if initiative is None:
+    )
+    next_sort_order = int(max_sort_order if max_sort_order is not None else -1) + 1
+    assignments: list[tuple[BacklogItem, Initiative, bool]] = []
+    assigned_ids: set[uuid.UUID] = set()
+    conflicts: list[str] = []
+    for source in candidates:
+        linked = initiatives_by_backlog_id.get(source.id)
+        keyed = initiatives_by_key.get(source.issue_key.casefold())
+        initiative = linked
+        if linked is not None and keyed is not None and keyed.id != linked.id:
+            if keyed.backlog_item_id not in candidate_ids:
+                conflicts.append(source.issue_key)
+        elif linked is None and keyed is not None:
+            if keyed.backlog_item_id is None:
+                initiative = keyed
+            elif keyed.backlog_item_id not in candidate_ids:
+                conflicts.append(source.issue_key)
+        is_new = initiative is None
+        if is_new:
             initiative = Initiative(
                 id=uuid.uuid4(),
                 cycle_id=target.id,
-                issue_key=source.issue_key,
+                issue_key=f"__pre_pi_sync_{uuid.uuid4().hex}",
+                title=source.title,
+                status="planned",
+                pre_planned=False,
+                sort_order=next_sort_order,
                 executors=[],
             )
+            next_sort_order += 1
             session.add(initiative)
-            initiatives_by_key[source.issue_key] = initiative
+        if initiative.id in assigned_ids:
+            conflicts.append(source.issue_key)
+        assigned_ids.add(initiative.id)
+        assignments.append((source, initiative, is_new))
+    if conflicts:
+        raise ValueError(
+            "PI-цикл уже содержит инициативы, связанные с другим элементом бэклога: "
+            + ", ".join(sorted(set(conflicts)))
+        )
+
+    # Освобождаем уникальные Issue перед поддерживаемыми UUID-стабильными
+    # переименованиями и перестановками ключей между уже отправленными строками.
+    for source, initiative, is_new in assignments:
+        if not is_new and initiative.issue_key != source.issue_key:
+            initiative.issue_key = f"__pre_pi_sync_{initiative.id.hex}"
+    await session.flush()
+
+    for source, initiative, _ in assignments:
         initiative.backlog_item_id = source.id
+        initiative.issue_key = source.issue_key
         initiative.title = source.title
         initiative.description = source.description
         initiative.product = source.product
@@ -805,11 +840,11 @@ async def dispatch_backlog_items(
         initiative.customer_priority = source.customer_priority
         initiative.team_priority = source.team_priority
         initiative.tags = list(source.tags or [])
-        initiative.status = "planned"
-        initiative.sort_order = sort_order
-        existing_executors = {
-            executor.team_id: executor for executor in initiative.executors
-        }
+        initiative.generated_from_attraction = False
+        existing_executors = sorted(
+            initiative.executors,
+            key=lambda executor: (executor.sort_order, str(executor.id)),
+        )[:1]
         initiative_executors: list[InitiativeExecutor] = []
         # Keep one resource row for the board that owns this planning view. For
         # legacy items without such a row, the task owner's team is the safe default.
@@ -817,12 +852,19 @@ async def dispatch_backlog_items(
         if source.owner_team_id is not None and not source_executors:
             source_executors = [BacklogExecutor(team_id=source.owner_team_id, effort_by_competency={})]
         for executor in source_executors:
-            record = existing_executors.get(executor.team_id)
+            record = existing_executors[0] if existing_executors else None
             if record is None:
                 record = InitiativeExecutor(team_id=executor.team_id)
+            record.team_id = executor.team_id
             record.effort_by_competency = dict(executor.effort_by_competency or {})
+            record.sort_order = 0
             initiative_executors.append(record)
         initiative.executors = initiative_executors
+        await session.execute(
+            update(InitiativeAttraction)
+            .where(InitiativeAttraction.target_initiative_id == initiative.id)
+            .values(issue_key=source.issue_key)
+        )
         source.status = SENT_STATUS
         source.sent_to = _clean_unique([*(source.sent_to or []), target_key])
 

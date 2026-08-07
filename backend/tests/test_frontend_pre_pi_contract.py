@@ -59,8 +59,45 @@ def test_pre_pi_executor_editor_uses_active_cycle_competencies():
     assert "data-pi-execadd" not in pre_pi_source()
 
 
+def test_backlog_managed_pre_pi_fields_are_rendered_read_only():
+    source = frontend_source()
+    section = pre_pi_source()
+
+    assert "lockedFields:Array.isArray(row.locked_fields)?row.locked_fields:[]" in source
+    assert "function prepFieldLocked" in section
+    assert "sourceField:'customer_priority'" in section
+    assert "sourceField:'team_priority'" in section
+    assert "sourceField:'product'" in section
+    assert "sourceField:'owner_team_id'" in section
+    assert "sourceField:'initiative_type'" in section
+    assert "sourceField:'tshirt_size'" in section
+    assert "prepFieldLocked(i,'effort_by_competency')" in section
+    assert "ownerCompsBlockHTML(i,'pi',effortLocked" in section
+    assert "Поля с 🔒 синхронизируются из вкладки «Бэклог»" in section
+
+
 def test_pre_pi_attraction_requests_are_stacked_in_their_column():
-    assert 'class="attr-list"' in pre_pi_source()
+    section = pre_pi_source()
+
+    assert 'class="attr-list"' in section
+    assert 'class="attr-request' in section
+    assert "effortByCompetency" in section
+    assert "resourceEstimate" in section
+    assert "Ресурсы задачи" in section
+
+
+def test_pre_pi_total_estimate_shows_owner_and_attraction_breakdown():
+    source = frontend_source()
+    section = pre_pi_source()
+
+    assert "function prepEffortSummaryHTML" in section
+    assert "ownerEstimate" in section
+    assert "attractionEstimate" in section
+    assert "pendingAttractionEstimate" in section
+    assert "Свои ${owner} + привлечённые ${attracted}" in section
+    assert "ownerEstimate:+row.owner_estimate" in source
+    assert "attractionEstimate:+row.attraction_estimate" in source
+    assert "pendingAttractionEstimate:+row.pending_attraction_estimate" in source
 
 
 def test_pre_pi_attraction_excludes_the_current_board_owner():

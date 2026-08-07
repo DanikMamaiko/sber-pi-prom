@@ -50,6 +50,31 @@ STATUS_TRANSITIONS = {
     "on_board": {"on_board", "done"},
     "done": {"done"},
 }
+BACKLOG_MANAGED_FIELDS = frozenset(
+    {
+        "issue_key",
+        "title",
+        "description",
+        "product",
+        "owner_team_id",
+        "initiative_type",
+        "tshirt_size",
+        "customer_priority",
+        "team_priority",
+        "tags",
+        "executor_team",
+        "effort_by_competency",
+    }
+)
+BACKLOG_SCALAR_COMMAND_FIELDS = BACKLOG_MANAGED_FIELDS - {
+    "issue_key",
+    "executor_team",
+    "effort_by_competency",
+}
+BACKLOG_EDIT_MESSAGE = (
+    "Поля, полученные из Бэклога, можно изменить только на вкладке «Бэклог» "
+    "с последующей отправкой в Pre PI"
+)
 
 
 class PrePiCascadeRequired(ValueError):
@@ -70,6 +95,13 @@ def _clean_unique(values: Iterable[str]) -> list[str]:
 
 def _effort_total(executor: InitiativeExecutor) -> float:
     return sum(float(value or 0) for value in (executor.effort_by_competency or {}).values())
+
+
+def _effort_projection(values: dict[str, float]) -> dict[str, float]:
+    return {
+        str(code).strip().upper(): float(value)
+        for code, value in (values or {}).items()
+    }
 
 
 def _regulatory_by_team(initiatives: Iterable[Initiative]) -> dict[str, dict[str, float]]:
@@ -129,7 +161,8 @@ async def _initiatives_query(session: AsyncSession, cycle_id: uuid.UUID) -> list
                     .selectinload(Team.tribe),
                     selectinload(Initiative.executors)
                     .selectinload(InitiativeExecutor.attraction_requests)
-                    .selectinload(InitiativeAttraction.target_initiative),
+                    .selectinload(InitiativeAttraction.target_initiative)
+                    .selectinload(Initiative.executors),
                     selectinload(Initiative.executors)
                     .selectinload(InitiativeExecutor.attraction_requests)
                     .selectinload(InitiativeAttraction.target_team),
@@ -149,10 +182,31 @@ def _required_fields(item: Initiative, team_type: str) -> list[str]:
     return list(IT_REQUIRED_FIELDS if _is_it_project(team_type) else AGILE_REQUIRED_FIELDS)
 
 
+def _attraction_effort(row: InitiativeAttraction) -> dict[str, float]:
+    target = row.target_initiative
+    if target is None:
+        return {}
+    target_executors = sorted(
+        target.executors,
+        key=lambda value: (value.sort_order, str(value.id)),
+    )
+    executor = next(
+        (value for value in target_executors if value.team_id == row.target_team_id),
+        target_executors[0] if target_executors else None,
+    )
+    if executor is None:
+        return {}
+    return {
+        code: float(value or 0)
+        for code, value in (executor.effort_by_competency or {}).items()
+    }
+
+
 def _attraction_read(row: InitiativeAttraction) -> dict:
     visual = {"pending": "purple", "approved": "red", "rejected": "gray"}.get(
         row.approval_status, "purple"
     )
+    effort = _attraction_effort(row)
     return {
         "id": row.id,
         "target_initiative_id": row.target_initiative_id,
@@ -163,6 +217,9 @@ def _attraction_read(row: InitiativeAttraction) -> dict:
         "approval_status": row.approval_status,
         "visual_state": visual,
         "sort_order": row.sort_order,
+        "effort_by_competency": effort,
+        "resource_estimate": sum(effort.values()),
+        "included_in_total": row.approval_status != "rejected",
     }
 
 
@@ -175,6 +232,39 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
         item.executors,
         key=lambda value: (value.sort_order, str(value.id)),
     )[:1]
+    owner_estimate = sum(_effort_total(executor) for executor in board_executors)
+    attraction_estimate = 0.0
+    pending_attraction_estimate = 0.0
+    executor_rows = []
+    for executor in board_executors:
+        attraction_rows = [
+            _attraction_read(attraction)
+            for attraction in sorted(
+                executor.attraction_requests,
+                key=lambda value: value.sort_order,
+            )
+        ]
+        attraction_estimate += sum(
+            row["resource_estimate"]
+            for row in attraction_rows
+            if row["included_in_total"]
+        )
+        pending_attraction_estimate += sum(
+            row["resource_estimate"]
+            for row in attraction_rows
+            if row["approval_status"] == "pending"
+        )
+        executor_rows.append(
+            {
+                "id": executor.id,
+                "team_id": executor.team_id,
+                "team": executor.team.name,
+                "tribe": executor.team.tribe.name if executor.team.tribe else "",
+                "effort_by_competency": dict(executor.effort_by_competency or {}),
+                "attractions": attraction_rows,
+                "sort_order": executor.sort_order,
+            }
+        )
     return PrePiInitiativeRead(
         id=item.id,
         issue_key=item.issue_key,
@@ -203,25 +293,17 @@ def _initiative_read(item: Initiative, team_types: dict[uuid.UUID, str]) -> PreP
         sprint_index=item.sprint_index,
         week_index=item.week_index,
         sort_order=item.sort_order,
-        total_estimate=sum(_effort_total(executor) for executor in board_executors),
+        owner_estimate=owner_estimate,
+        attraction_estimate=attraction_estimate,
+        pending_attraction_estimate=pending_attraction_estimate,
+        total_estimate=owner_estimate + attraction_estimate,
         block="planned" if item.pre_planned else "backlog",
         required_fields=required,
         allowed_actions=actions,
-        executors=[
-            {
-                "id": executor.id,
-                "team_id": executor.team_id,
-                "team": executor.team.name,
-                "tribe": executor.team.tribe.name if executor.team.tribe else "",
-                "effort_by_competency": dict(executor.effort_by_competency or {}),
-                "attractions": [
-                    _attraction_read(attraction)
-                    for attraction in sorted(executor.attraction_requests, key=lambda value: value.sort_order)
-                ],
-                "sort_order": executor.sort_order,
-            }
-            for executor in board_executors
-        ],
+        locked_fields=(
+            sorted(BACKLOG_MANAGED_FIELDS) if item.backlog_item_id is not None else []
+        ),
+        executors=executor_rows,
     )
 
 
@@ -379,9 +461,17 @@ async def _replace_executors(
     cycle: PiCycle,
     item: Initiative,
     sources,
+    *,
+    lock_backlog_fields: bool = False,
 ) -> None:
     if len(sources) > 1:
         raise ValueError("В компетенциях владельца доски может быть только одна команда")
+    locked_executors = sorted(
+        item.executors,
+        key=lambda value: (value.sort_order, str(value.id)),
+    )[:1]
+    if lock_backlog_fields and len(sources) != len(locked_executors):
+        raise ValueError(BACKLOG_EDIT_MESSAGE)
     teams_by_key, teams_by_name, competencies_by_team = await cycle_team_context(session, cycle.id)
     initiatives = await _initiatives_query(session, cycle.id)
     initiatives_by_id = {row.id: row for row in initiatives}
@@ -415,11 +505,19 @@ async def _replace_executors(
             raise ValueError(f"Команда-исполнитель включена более одного раза: {team.name}")
         used.add(record.id)
         record.team_id = team.id
-        record.effort_by_competency = normalized_effort(
+        effort = normalized_effort(
             source.effort_by_competency,
             competencies_by_team.get(team.id, set()),
             f"Pre PI {item.issue_key} / {team.name}",
         )
+        if lock_backlog_fields:
+            locked = locked_executors[position]
+            if (
+                team.id != locked.team_id
+                or effort != _effort_projection(locked.effort_by_competency)
+            ):
+                raise ValueError(BACKLOG_EDIT_MESSAGE)
+        record.effort_by_competency = effort
         record.sort_order = position
         existing_attractions = {row.id: row for row in record.attraction_requests}
         natural_attractions = {
@@ -556,6 +654,11 @@ async def update_pre_pi_initiative(
     payload: PrePiInitiativeCommand,
 ) -> PrePiRead:
     item = await _initiative_or_error(session, cycle.id, initiative_id)
+    locked_changes = BACKLOG_SCALAR_COMMAND_FIELDS.intersection(
+        payload.model_fields_set
+    )
+    if item.backlog_item_id is not None and locked_changes:
+        raise ValueError(BACKLOG_EDIT_MESSAGE)
     changes = payload.model_dump(exclude_unset=True, exclude={"expected_version", "executors"})
     owner_team_id = changes.pop("owner_team_id", None) if "owner_team_id" in changes else None
     if "owner_team_id" in payload.model_fields_set:
@@ -570,7 +673,13 @@ async def update_pre_pi_initiative(
             validate_status_transition(item.status, value)
         setattr(item, field, value)
     if payload.executors is not None:
-        await _replace_executors(session, cycle, item, payload.executors)
+        await _replace_executors(
+            session,
+            cycle,
+            item,
+            payload.executors,
+            lock_backlog_fields=item.backlog_item_id is not None,
+        )
     await session.commit()
     return await read_pre_pi(session, cycle)
 
@@ -710,6 +819,35 @@ async def delete_pre_pi_initiative(
     return await read_pre_pi(session, cycle)
 
 
+def _assert_bulk_backlog_fields_unchanged(item: Initiative, source, owner_id) -> None:
+    current = {
+        "issue_key": item.issue_key,
+        "title": item.title,
+        "description": item.description or "",
+        "product": item.product or "",
+        "owner_team_id": item.owner_team_id,
+        "initiative_type": item.initiative_type or "",
+        "tshirt_size": item.tshirt_size or "",
+        "customer_priority": item.customer_priority or "",
+        "team_priority": item.team_priority or "",
+        "tags": list(item.tags or []),
+    }
+    requested = {
+        "issue_key": source.issue_key.strip(),
+        "title": source.title,
+        "description": source.description,
+        "product": source.product,
+        "owner_team_id": owner_id,
+        "initiative_type": source.initiative_type,
+        "tshirt_size": source.tshirt_size,
+        "customer_priority": source.customer_priority,
+        "team_priority": source.team_priority,
+        "tags": _clean_unique(source.tags),
+    }
+    if requested != current:
+        raise ValueError(BACKLOG_EDIT_MESSAGE)
+
+
 async def replace_pre_pi(session: AsyncSession, cycle: PiCycle, payload: PrePiWrite) -> PrePiRead:
     """Compatibility bulk command; the active frontend uses focused commands."""
     normalized_keys = [row.issue_key.strip().casefold() for row in payload.initiatives]
@@ -734,19 +872,39 @@ async def replace_pre_pi(session: AsyncSession, cycle: PiCycle, payload: PrePiWr
         owner = None
         if source.owner_team.strip():
             owner = resolve_cycle_team(teams_by_key, teams_by_name, source.owner_tribe, source.owner_team)
-        item.issue_key = source.issue_key.strip()
+        backlog_managed = item.backlog_item_id is not None
+        owner_id = owner.id if owner else None
+        if backlog_managed:
+            _assert_bulk_backlog_fields_unchanged(item, source, owner_id)
+        else:
+            item.issue_key = source.issue_key.strip()
+            for field in (
+                "title",
+                "description",
+                "product",
+                "initiative_type",
+                "tshirt_size",
+                "customer_priority",
+                "team_priority",
+            ):
+                setattr(item, field, getattr(source, field))
+            item.owner_team_id = owner_id
+            item.tags = _clean_unique(source.tags)
         for field in (
-            "title", "description", "product", "initiative_type", "tshirt_size", "status", "goal_text",
-            "metric", "current_value", "target_value", "hypothesis", "redesign",
-            "customer_priority", "team_priority", "estimate", "comment", "pre_planned",
+            "status", "goal_text", "metric", "current_value", "target_value", "hypothesis", "redesign",
+            "estimate", "comment", "pre_planned",
             "on_board", "agreed", "sprint_index", "week_index",
         ):
             setattr(item, field, getattr(source, field))
-        item.owner_team_id = owner.id if owner else None
-        item.tags = _clean_unique(source.tags)
         item.sort_order = source.sort_order if source.sort_order is not None else position
         validate_sprint_position(cycle, item.sprint_index, item.week_index, f"Инициатива {item.issue_key}")
-        await _replace_executors(session, cycle, item, source.executors)
+        await _replace_executors(
+            session,
+            cycle,
+            item,
+            source.executors,
+            lock_backlog_fields=backlog_managed,
+        )
     removed = [row for row in existing if row.id not in used_ids]
     if removed:
         await _delete_or_unlink_goals_for_initiatives(

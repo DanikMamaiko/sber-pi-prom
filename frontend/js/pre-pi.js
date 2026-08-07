@@ -8,18 +8,28 @@
 //  lowerHide — скрыть в нижнем блоке «Бэклог инициатив».
 const PREP_COLS=[
   {k:'cel',label:'Цель/Веха',sel:true},
-  {k:'custPrio',label:'Приоритет заказчика'},
-  {k:'teamPrio',label:'Приоритет трайба/команды'},
-  {k:'product',label:'Продукт'},
-  {k:'owner',label:'Команда-владелец',ro:true},
-  {k:'type',label:'Тип инициативы'},
+  {k:'custPrio',label:'Приоритет заказчика',sourceField:'customer_priority'},
+  {k:'teamPrio',label:'Приоритет трайба/команды',sourceField:'team_priority'},
+  {k:'product',label:'Продукт',sourceField:'product'},
+  {k:'owner',label:'Команда-владелец',ro:true,sourceField:'owner_team_id'},
+  {k:'type',label:'Тип инициативы',sourceField:'initiative_type'},
   {k:'metric',label:'Метрика',lowerHide:true},
   {k:'fact',label:'AS IS (текущее)',lowerHide:true},
   {k:'plan',label:'TO BE (прогноз)',lowerHide:true},
   {k:'hypo',label:'Гипотезы',lowerHide:true},
   {k:'redesign',label:'Редизайн',lowerHide:true},
-  {k:'tshirt',label:'Размер майки'},
+  {k:'tshirt',label:'Размер майки',sourceField:'tshirt_size'},
 ];
+const PREP_SOURCE_FIELD_TITLE='Поле синхронизируется из Бэклога. Измените его там и повторно нажмите «Отправить на Pre PI Planning».';
+function prepFieldLocked(initiative,field){
+  return !!field&&Array.isArray(initiative.lockedFields)&&initiative.lockedFields.includes(field);
+}
+function prepSourceValueHTML(value,locked){
+  const content=esc(value)||'<span class="auto">—</span>';
+  return locked
+    ? `<span class="prep-source-value" title="${esc(PREP_SOURCE_FIELD_TITLE)}"><span class="prep-source-lock" aria-hidden="true">🔒</span>${content}</span>`
+    : content;
+}
 // Набор столбцов блока (верхний/нижний). От типа команды не зависит.
 function prepColsFor(isUpper){
   return PREP_COLS.filter(c=>(!c.upperOnly||isUpper) && (isUpper||!c.lowerHide));
@@ -154,7 +164,7 @@ function viewPrepBoard(tribe){
     <div class="prep-block-title">Бэклог инициатив — нижний блок</div>
     ${prepTable(lower,false)}
   </div>`;
-  html+=`<div class="note" style="margin-top:6px">Инициативы попадают в нижний блок с вкладки «Бэклог». Перетащите строку (за ручку <b>⠿</b> в столбце «№ Инициативы») из нижнего блока в верхний, чтобы «взять» инициативу; внутри блока перетаскивание меняет порядок строк. Кнопка <b>▼</b> в шапке столбца — фильтр и сортировка (пустые значения всегда внизу); пока сортировка активна, порядок внутри блока задаёт она, но перетаскивание между блоками работает. Крестик <b>✕</b> в верхнем блоке возвращает инициативу в нижний блок. «Общая оценка (чел/дн)» = сумма по всем командам-исполнителям и компетенциям. У каждого исполнителя — свои компетенции (из «Данных PI-цикла»). «Привлечение»: <b>+</b> добавляет ресурс другой команды с выбором спринта (фиолетовый — не согласовано, красный — согласовано).</div>`;
+  html+=`<div class="note" style="margin-top:6px">Поля с 🔒 синхронизируются из вкладки «Бэклог» и изменяются только там; повторная отправка обновляет их в Pre PI, сохраняя остальные поля. Инициативы попадают в нижний блок с вкладки «Бэклог». Перетащите строку (за ручку <b>⠿</b> в столбце «№ Инициативы») из нижнего блока в верхний, чтобы «взять» инициативу; внутри блока перетаскивание меняет порядок строк. Кнопка <b>▼</b> в шапке столбца — фильтр и сортировка (пустые значения всегда внизу); пока сортировка активна, порядок внутри блока задаёт она, но перетаскивание между блоками работает. Крестик <b>✕</b> в верхнем блоке возвращает инициативу в нижний блок. «Общая оценка» = ресурсы команды владельца + ресурсы всех активных запросов на привлечение; несогласованные запросы учитываются и помечаются отдельно, отклонённые — не учитываются. Нажмите на запрос, чтобы увидеть ресурсы по компетенциям.</div>`;
   html+=`</div>`;
   return html;
 }
@@ -184,6 +194,18 @@ function prepFilterCols(cols,withEffort){
   return fcols;
 }
 function prepScope(isUpper){ return 'prep:'+(isUpper?'upper':'lower'); }
+
+function prepEffortSummaryHTML(i){
+  const total=round1(i.totalEstimate||0);
+  const owner=round1(i.ownerEstimate||0);
+  const attracted=round1(i.attractionEstimate||0);
+  const pending=round1(i.pendingAttractionEstimate||0);
+  return `<div class="prep-effort" title="Общая оценка: свои ${owner} + привлечённые ${attracted}">
+    <div class="prep-effort-total"><b>${total}</b><span>чел/дн</span></div>
+    <div class="prep-effort-formula">Свои ${owner} + привлечённые ${attracted}</div>
+    ${pending>0?`<div class="prep-effort-pending">в т.ч. ${pending} не согласовано</div>`:''}
+  </div>`;
+}
 
 // Единая таблица инициатив (Agile и «ИТ-проект»): приоритеты, «Цель/Веха», метрика,
 // AS IS / TO BE / Гипотезы / Редизайн, компетенции команды-владельца, привлечение.
@@ -215,25 +237,31 @@ function prepTable(rows,isUpper){
   }else{
     rows.forEach(i=>{
       const span=1;
+      const issueLocked=prepFieldLocked(i,'issue_key');
+      const titleLocked=prepFieldLocked(i,'title');
       const lead=`
         <td class="stik1" rowspan="${span}"><div class="id-cell">
           <span class="row-drag" title="${sorted?'Перетащите, чтобы перенести в другой блок (порядок внутри блока задаёт сортировка)':'Перетащите, чтобы изменить порядок или перенести в другой блок'}">⠿</span>
-          <b>${esc(i.id)}</b>
+          <b>${prepSourceValueHTML(i.id,issueLocked)}</b>
         </div></td>
-        <td class="stik2" rowspan="${span}">${esc(i.name)||'<span class=auto>—</span>'}</td>`+
-        cols.map(c=> c.ro
-          ? `<td rowspan="${span}">${esc(i[c.k])||'<span class=auto>—</span>'}</td>`
+        <td class="stik2${titleLocked?' prep-source-cell':''}" rowspan="${span}">${prepSourceValueHTML(i.name,titleLocked)}</td>`+
+        cols.map(c=> {
+          const sourceLocked=prepFieldLocked(i,c.sourceField);
+          return c.ro||sourceLocked
+          ? `<td class="${sourceLocked?'prep-source-cell':''}" rowspan="${span}">${prepSourceValueHTML(i[c.k],sourceLocked)}</td>`
           : c.sel
           ? `<td rowspan="${span}">${goalInputHTML(i)}</td>`
           : c.k==='type'
           ? `<td rowspan="${span}">${initiativeTypeFieldHTML(i[c.k], `data-pi="${esc(i.id)}" data-pk="type"`)}</td>`
           : c.k==='tshirt'
           ? `<td rowspan="${span}">${prepTshirtCellHTML(i)}</td>`
-          : `<td rowspan="${span}"><input data-pi="${esc(i.id)}" data-pk="${c.k}" value="${esc(i[c.k])}" class="${c.k==='custPrio'||c.k==='teamPrio'?'w-narrow':''}"></td>`
+          : `<td rowspan="${span}"><input data-pi="${esc(i.id)}" data-pk="${c.k}" value="${esc(i[c.k])}" class="${c.k==='custPrio'||c.k==='teamPrio'?'w-narrow':''}"></td>`;
+        }
         ).join('')+
-        `<td rowspan="${span}" style="text-align:center;font-weight:700">${round1(i.totalEstimate||0)}</td>`;
+        `<td class="prep-effort-cell" rowspan="${span}">${prepEffortSummaryHTML(i)}</td>`;
       const delCell=`<td class="row-del-cell" rowspan="${span}">${rowDelBtnHTML(i.id,isUpper)}</td>`;
-      const execCell=ownerCompsBlockHTML(i,'pi');
+      const effortLocked=prepFieldLocked(i,'effort_by_competency');
+      const execCell=ownerCompsBlockHTML(i,'pi',effortLocked,effortLocked?PREP_SOURCE_FIELD_TITLE:'');
       const attrCell=isUpper?`<td class="attr-cell" data-attr-row="${esc(i.id)}">${attractionsHTML(i)}</td>`:'';
       body+=`<tr class="exec-row" draggable="true" data-rowdrag="${esc(i.id)}">${lead}${execCell}${attrCell}${delCell}</tr>`;
     });
@@ -255,7 +283,31 @@ function attractionsHTML(iss){
     const col=a.visualState||({approved:'red',rejected:'gray'}[a.status]||'purple');
     const team=a.team||'—';
     const spr = (a.sprint!==null && a.sprint!==undefined) ? ` · Спринт ${(+a.sprint)+1}` : '';
-    return `<span class="chip ${col}"><span class="chip-id">${esc(aid)}</span><span class="chip-team">${esc(team)}${spr}</span><span class="chip-x" data-attr-del="${esc(iss.id)}" data-attr-aid="${esc(aid)}">✕</span></span>`;
+    const estimate=round1(a.resourceEstimate||0);
+    const comps=Object.entries(a.effortByCompetency||{}).filter(([,value])=>+value>0);
+    const compRows=comps.map(([code,value])=>`<span class="attr-comp"><b>${esc(code)}</b>${round1(+value||0)}</span>`).join('');
+    const included=a.includedInTotal!==false&&a.status!=='rejected';
+    const statusText=a.status==='approved'
+      ? 'Согласовано · учтено в общей оценке'
+      : a.status==='rejected'
+      ? 'Отклонено · не учтено в общей оценке'
+      : 'Не согласовано · учтено в общей оценке';
+    return `<div class="attr-request-row">
+      <details class="attr-request ${col}">
+        <summary class="chip ${col}" title="Показать ресурсы привлечённой задачи">
+          <span class="chip-id">${esc(aid)}</span>
+          <span class="chip-team">${esc(team)}${spr}</span>
+          <span class="chip-effort">${estimate} чел/дн</span>
+          <span class="chip-caret" aria-hidden="true">▾</span>
+        </summary>
+        <div class="attr-resource-panel">
+          <div class="attr-resource-head"><span>Ресурсы задачи</span><b>${estimate} чел/дн</b></div>
+          <div class="attr-resource-comps">${compRows||'<span class="attr-resource-empty">Оценка пока не указана</span>'}</div>
+          <div class="attr-resource-status ${included?'included':'excluded'}">${statusText}</div>
+        </div>
+      </details>
+      <button class="chip-x" data-attr-del="${esc(iss.id)}" data-attr-aid="${esc(aid)}" title="Удалить запрос" aria-label="Удалить запрос ${esc(aid)}">✕</button>
+    </div>`;
   }).join('');
   const add=`<button class="attr-add" data-attr-add="${esc(iss.id)}" title="Добавить привлечение">+</button>`;
   return `<div class="attr-list">${rows}${add}</div>`;
@@ -370,7 +422,8 @@ function bindPrep(){
 
   // Внешние ресурсы оформляются отдельно от компетенций владельца.
   document.querySelectorAll('[data-attr-add]').forEach(b=>b.onclick=()=>openAttractionModal(b.dataset.attrAdd));
-  document.querySelectorAll('[data-attr-del]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-attr-del]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();
     const iss=findIssue(b.dataset.attrDel); if(!iss)return;
     const executors=prePiExecutorPayload(iss,rows=>{if(rows[0])rows[0].attractions=rows[0].attractions.filter(a=>a.issue_key!==b.dataset.attrAid);});
     runPrePiUiCommand(`/initiatives/${iss._backendId}`,'PATCH',{executors});

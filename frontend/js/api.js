@@ -266,6 +266,9 @@ function prePiIssueFromApi(row,prior){
       sprint:a.sprint_index===null||a.sprint_index===undefined?null:+a.sprint_index,
       status:a.approval_status||'pending',
       visualState:a.visual_state||'purple',
+      effortByCompetency:a.effort_by_competency||{},
+      resourceEstimate:+a.resource_estimate||0,
+      includedInTotal:a.included_in_total!==false,
     })),
   }));
   Object.assign(it,{
@@ -297,7 +300,11 @@ function prePiIssueFromApi(row,prior){
     sprint:row.sprint_index===null||row.sprint_index===undefined?null:+row.sprint_index,
     week:row.week_index===null||row.week_index===undefined?null:+row.week_index,
     sortOrder:+row.sort_order||0,
+    ownerEstimate:+row.owner_estimate||0,
+    attractionEstimate:+row.attraction_estimate||0,
+    pendingAttractionEstimate:+row.pending_attraction_estimate||0,
     totalEstimate:+row.total_estimate||0,
+    lockedFields:Array.isArray(row.locked_fields)?row.locked_fields:[],
     allowedActions:Array.isArray(row.allowed_actions)?row.allowed_actions:[],
     requiredFields:Array.isArray(row.required_fields)?row.required_fields:[],
   });

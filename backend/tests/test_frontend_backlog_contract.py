@@ -89,3 +89,14 @@ def test_backlog_dispatch_refreshes_and_renders_pre_pi_data():
     assert "await loadPrePiCycles();" in handler
     assert handler.index("await loadPrePiCycles();") < handler.index("render();")
     assert "loadPrePiCycles().catch(()=>{})" not in handler
+    assert "updated=synced.length-added" in handler
+    assert "Нет новых инициатив" not in handler
+
+
+def test_sent_backlog_fields_remain_editable_for_redispatch():
+    source = _source()
+    start = source.index("function backlogTshirtCell(")
+    tshirt = source[start : source.index("function backlogRowHTML", start)]
+
+    assert "const disabled=readonly;" in tshirt
+    assert "Отправлена в Pre PI Planning" not in tshirt

@@ -70,6 +70,12 @@ class PrePiAttraction(BaseModel):
     sort_order: int = Field(default=0, ge=0)
 
 
+class PrePiAttractionRead(PrePiAttraction):
+    effort_by_competency: dict[str, float] = Field(default_factory=dict)
+    resource_estimate: float = 0
+    included_in_total: bool = True
+
+
 class PrePiExecutor(BaseModel):
     id: uuid.UUID | None = None
     team_id: uuid.UUID | None = None
@@ -78,6 +84,10 @@ class PrePiExecutor(BaseModel):
     effort_by_competency: dict[str, float] = Field(default_factory=dict)
     attractions: list[PrePiAttraction] = Field(default_factory=list)
     sort_order: int = Field(default=0, ge=0)
+
+
+class PrePiExecutorRead(PrePiExecutor):
+    attractions: list[PrePiAttractionRead] = Field(default_factory=list)
 
 
 class PrePiInitiativeWrite(BaseModel):
@@ -113,6 +123,11 @@ class PrePiInitiativeWrite(BaseModel):
 
 class PrePiInitiativeRead(PrePiInitiativeWrite):
     id: uuid.UUID
+    executors: list[PrePiExecutorRead] = Field(default_factory=list)
+    locked_fields: list[str] = Field(default_factory=list)
+    owner_estimate: float = 0
+    attraction_estimate: float = 0
+    pending_attraction_estimate: float = 0
     total_estimate: float = 0
     block: Literal["planned", "backlog"] = "backlog"
     required_fields: list[str] = Field(default_factory=list)

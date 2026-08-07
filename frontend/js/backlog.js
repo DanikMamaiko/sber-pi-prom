@@ -85,7 +85,7 @@ function viewBacklogSelect(){
   const isBudget=state.ui.mode==='budget';
   const tribes=backlogRefs().tribes.map(row=>row.name);
   let html=`<div class="card${isBudget?' budget-shell':''}"><div class="flex-between"><h2>Бэклог команд ${activeBadge()}</h2>
-    <div class="hint">Выберите трайб. Общий бэклог хранится в PostgreSQL и одинаково отображается после перезагрузки и в другом браузере. ${isBudget?'Бюджетные команды в эту доработку не входят.':'Инициативы отправляются на Pre PI по столбцу «Квартал реализации».'}</div></div>`;
+    <div class="hint">Выберите трайб. Общий бэклог хранится в PostgreSQL и одинаково отображается после перезагрузки и в другом браузере. ${isBudget?'Бюджетные команды в эту доработку не входят.':'Инициативы синхронизируются с Pre PI по столбцу «Квартал реализации»; повторная отправка обновляет ранее переданные данные.'}</div></div>`;
   html+=`<div class="tribe-list">`;
   if(!tribes.length) html+=`<div class="muted">Нет трайбов — добавьте команды на «${isBudget?'Данные для бюджетирования':'Данные PI-цикла'}».</div>`;
   tribes.forEach(tribe=>{
@@ -272,7 +272,7 @@ function viewBacklogBoard(tribe){
   html+=`<div class="note" style="margin-top:8px">Порядок инициатив можно менять: перетащите строку за ручку <b>⠿</b> в столбце «№ Инициативы». Кнопка <b>▼</b> в шапке столбца — фильтр и сортировка (по возрастанию / по убыванию, пустые значения всегда внизу). Пока сортировка активна, порядок задаёт она и ручка <b>⠿</b> неактивна — сбросьте сортировку в плашке над таблицей.</div>`;
   html+=isBudget
     ? `<div class="note" style="margin-top:8px">Для бюджета новые инициативы добавляются сразу на вкладке «Оценка инициатив». В карточке инициативы можно вручную указать ID Issue из бэклога.</div>`
-    : `<div class="note" style="margin-top:8px">«Отправить на Pre PI Planning»: сначала выберите <b>Квартал</b> и <b>Год</b>. Отправятся только инициативы, у которых «Квартал реализации» точно совпадает с выбранными. Если указан <b>только год</b> — инициатива не отправляется. Отправленные попадают в «Бэклог инициатив — нижний блок» на Pre PI выбранного цикла и получают статус «Отправлена в Pre PI Planning».</div>`;
+    : `<div class="note" style="margin-top:8px">«Отправить на Pre PI Planning»: сначала выберите <b>Квартал</b> и <b>Год</b>. Синхронизируются только инициативы, у которых «Квартал реализации» точно совпадает с выбранными. Если указан <b>только год</b> — инициатива не отправляется. Новые инициативы попадают в «Бэклог инициатив — нижний блок» на Pre PI выбранного цикла и получают статус «Отправлена в Pre PI Planning». Повторная отправка обновляет поля Бэклога в уже созданных инициативах Pre PI.</div>`;
   html+=`</div>`;
   return html;
 }
@@ -294,7 +294,7 @@ function backlogStatusCell(it,readonly=false){
   return `<select data-bk="${it._uid}" data-bp="status" ${disabled?'disabled':''}>${statuses.map(s=>`<option ${it.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>`;
 }
 function backlogTshirtCell(it,readonly=false){
-  const disabled=readonly||it.status==='Отправлена в Pre PI Planning';
+  const disabled=readonly;
   return `<select data-bk="${it._uid}" data-bp="tshirt" ${disabled?'disabled':''}>${TSHIRT_SIZES.map(s=>`<option value="${s}" ${it.tshirt===s?'selected':''}>${s||'—'}</option>`).join('')}</select>`;
 }
 function backlogRowHTML(it,tribe,teams,readonly=false){
@@ -323,7 +323,8 @@ async function sendBacklogToPrePI(tribe){
   const q=state.ui.backlogQuarter, y=state.ui.backlogYear;
   if(!q||!y){ toast('Сначала выберите Квартал и Год',{type:'warn'}); return; }
   const target=cycleId(y,q);
-  const before=new Set(backlogRows().filter(row=>(row.sent_to||[]).includes(target)).map(row=>row.id));
+  const eligible=row=>row.tribe===tribe&&String(row.target_year)===String(y)&&row.target_quarter===q;
+  const before=new Set(backlogRows().filter(row=>eligible(row)&&(row.sent_to||[]).includes(target)).map(row=>row.id));
   try{
     await executeBacklogCommand('/backlog-board/dispatch','POST',{
       tribe,target_year:+y,target_quarter:q,
@@ -333,13 +334,13 @@ async function sendBacklogToPrePI(tribe){
     // в цикл, конфликт версий бэклога) уже показаны внутри executeBacklogCommand.
     return;
   }
-  // Dispatch прошёл — read model бэклога уже обновлён. Считаем, что отправилось.
-  const sent=backlogRows().filter(row=>!before.has(row.id)&&(row.sent_to||[]).includes(target)).length;
-  if(sent){
-    toast(`Отправлено на Pre PI (${target}): ${sent} ${sent===1?'инициатива':'инициатив'}`,{type:'success',title:'Отправлено на Pre PI Planning'});
-  }else{
-    toast(`Нет новых инициатив для ${target} — все подходящие уже отправлены.`,{type:'info',title:'Отправка на Pre PI Planning'});
-  }
+  // Каждое нажатие повторно синхронизирует всю подходящую выборку: новые строки
+  // создаются, уже связанные — обновляются без потери собственных полей Pre PI.
+  const synced=backlogRows().filter(row=>eligible(row)&&(row.sent_to||[]).includes(target));
+  const added=synced.filter(row=>!before.has(row.id)).length;
+  const updated=synced.length-added;
+  toast(`Синхронизировано с Pre PI (${target}): ${synced.length}; новых — ${added}, обновлено — ${updated}`,
+    {type:'success',title:'Pre PI Planning обновлён'});
   // Обновляем Pre PI. Dispatch инкрементирует version целевого цикла, поэтому
   // сбрасываем локальную версию: иначе последующий read решит, что данные
   // изменились в другом окне (409), и молча погасит уведомление об отправке.

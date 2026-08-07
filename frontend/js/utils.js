@@ -363,14 +363,14 @@ function boardOwnerExecutorView(iss){
 }
 // Ячейка «Компетенции команды владельца»: здесь владелец — владелец доски, а не
 // команда-владелец задачи из отдельного столбца.
-function ownerCompsBlockHTML(iss, kind, readonly=false){
+function ownerCompsBlockHTML(iss, kind, readonly=false, readonlyTitle=''){
   const ex=boardOwnerExecutorView(iss);
   const idAttr = kind==='bk' ? iss._uid : iss.id;
   const avail = kind==='bk' ? backlogTeamCompetencies(ex.team) : teamComps(ex.team);
   if(readonly){
     const values=avail.filter(c=>+(ex.comps&&ex.comps[c])>0)
       .map(c=>`<span class="comp-cell"><span class="cc-lab">${esc(c)}</span>${esc(ex.comps[c])}</span>`).join('');
-    return `<td class="exec-cell"><div class="exec-block"><div class="comp-cells">${values||'<span class="comp-cells-empty">—</span>'}</div></div></td>`;
+    return `<td class="exec-cell${readonlyTitle?' prep-source-cell':''}"${readonlyTitle?` title="${esc(readonlyTitle)}"`:''}><div class="exec-block">${readonlyTitle?'<span class="prep-source-lock" aria-hidden="true">🔒</span>':''}<div class="comp-cells">${values||'<span class="comp-cells-empty">—</span>'}</div></div></td>`;
   }
   return `<td class="exec-cell">
     <div class="exec-block">

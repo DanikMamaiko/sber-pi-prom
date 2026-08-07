@@ -36,7 +36,8 @@ from app.schemas.backlog import (  # noqa: F401
 )
 
 from app.schemas.pre_pi import (  # noqa: F401
-    InitiativeCreate, InitiativeRead, PrePiAttraction, PrePiExecutor,
+    InitiativeCreate, InitiativeRead, PrePiAttraction, PrePiAttractionRead,
+    PrePiExecutor, PrePiExecutorRead,
     PrePiInitiativeWrite, PrePiInitiativeRead, PrePiWrite, PrePiRead,
     PrePiInitiativeCommand, PrePiMoveCommand, PrePiDeleteCommand, PrePiSubmitTeam,
     PrePiSubmitWrite, PrePiSubmitRead,

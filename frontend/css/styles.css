@@ -523,16 +523,44 @@
   .row-drag{flex:0 0 auto;cursor:grab;color:var(--muted);user-select:none;font-size:13px;line-height:1;padding:2px 1px}
   .row-drag:hover{color:var(--accent)}
   .row-drag:active{cursor:grabbing}
+  .prep-source-cell{background:rgba(148,163,184,.045)}
+  .prep-source-value{display:inline-flex;align-items:center;gap:5px;color:var(--text)}
+  .prep-source-lock{flex:0 0 auto;color:var(--muted);font-size:9px;line-height:1}
+  .prep-effort-cell{min-width:165px;vertical-align:middle!important}
+  .prep-effort{display:flex;flex-direction:column;align-items:flex-start;gap:2px;white-space:nowrap}
+  .prep-effort-total{display:flex;align-items:baseline;gap:4px;color:var(--text)}
+  .prep-effort-total b{font-size:17px;line-height:1.15;color:#eafff5}
+  .prep-effort-total span{font-size:10px;color:var(--muted);font-weight:700}
+  .prep-effort-formula{font-size:10.5px;color:var(--muted)}
+  .prep-effort-pending{font-size:10px;color:var(--purple-b);font-weight:700}
   .chip{display:inline-flex;align-items:center;gap:0;border-radius:7px;overflow:hidden;margin:2px 4px 2px 0;font-size:11px;border:1px solid var(--border2);vertical-align:middle}
   .chip .chip-id{padding:3px 8px;background:var(--panel2);font-weight:600}
   .chip .chip-team{padding:3px 8px;color:#fff}
   .chip.purple .chip-team{background:var(--purple);border-left:1px solid var(--purple-b)}
   .chip.red .chip-team{background:var(--red);border-left:1px solid var(--red-b)}
-  .chip .chip-x{padding:2px 6px;cursor:pointer;color:var(--muted);background:var(--bg2)}
-  .chip .chip-x:hover{color:var(--danger)}
+  .chip.gray .chip-team{background:var(--border);border-left:1px solid var(--muted2);color:var(--muted)}
+  .chip .chip-effort{padding:3px 7px;background:var(--bg2);color:var(--text);font-weight:800;white-space:nowrap}
+  .chip .chip-caret{padding:3px 6px 3px 2px;background:var(--bg2);color:var(--muted);transition:transform var(--ease)}
   .attr-add{padding:2px 9px;font-size:13px;line-height:1.2}
   .attr-list{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
-  .attr-list .chip{margin:0;max-width:100%}
+  .attr-cell{min-width:280px}
+  .attr-request-row{display:flex;align-items:flex-start;gap:4px;max-width:100%}
+  .attr-request{max-width:100%}
+  .attr-request > summary{list-style:none;cursor:pointer;margin:0;max-width:100%}
+  .attr-request > summary::-webkit-details-marker{display:none}
+  .attr-request[open] .chip-caret{transform:rotate(180deg)}
+  .attr-request-row > .chip-x{flex:0 0 auto;width:24px;height:24px;padding:0;border-radius:7px;background:var(--bg2);color:var(--muted);font-size:11px;line-height:1}
+  .attr-request-row > .chip-x:hover{color:var(--danger);border-color:var(--red-b)}
+  .attr-resource-panel{margin-top:4px;padding:8px 9px;border:1px solid var(--border2);border-radius:8px;background:var(--bg2);box-shadow:var(--shadow-sm)}
+  .attr-resource-head{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted);font-size:10.5px}
+  .attr-resource-head b{color:var(--text);font-size:11px;white-space:nowrap}
+  .attr-resource-comps{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+  .attr-comp{display:inline-flex;align-items:center;gap:5px;padding:2px 6px;border:1px solid var(--accent-d);border-radius:7px;background:var(--accent-soft);font-size:10.5px}
+  .attr-comp b{color:var(--accent);font-size:9.5px;letter-spacing:.35px}
+  .attr-resource-empty{color:var(--muted2);font-size:10.5px}
+  .attr-resource-status{margin-top:7px;padding-top:6px;border-top:1px solid var(--border);font-size:9.5px;font-weight:700}
+  .attr-resource-status.included{color:var(--accent)}
+  .attr-resource-status.excluded{color:var(--muted)}
   .attr-list .attr-add{margin-top:1px}
   /* ----- Program Board: команды на стикере ----- */
   .sticker .stteam{font-size:10.5px;color:rgba(255,255,255,.85);margin-top:3px;display:flex;flex-wrap:wrap;gap:1px 8px}
