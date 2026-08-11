@@ -169,3 +169,28 @@ def test_owner_board_uses_attraction_link_for_gray_information_sticker():
     assert "data-owner-info-source" in program
     assert "el.dataset.ownerInfoSource || el.dataset.id" in boards
     assert "const sourceId=el.dataset.ownerInfoSource" in boards
+
+
+def test_gantt_uses_employee_rows_and_daily_availability_calendar():
+    api = source("api.js")
+    boards = source("team-boards.js")
+    styles = css_source("styles.css")
+
+    assert "function ganttCalendarDays()" in boards
+    assert "function ganttDayAvailability(person,date)" in boards
+    assert "function ganttDayCapacity(person,date)" in boards
+    assert "function ganttScheduleFrom(startIso,effort,person,days)" in boards
+    assert "planned_start_date:st.startDate||null" in api
+    assert "startDate:w.planned_start_date||''" in api
+    assert "planned_start_date:schedule.startDate" in boards
+    assert "Дата окончания (расчёт)" in boards
+    assert "ФИО · должность" in boards
+    assert "data-gantt-day" in boards
+    assert "status.weekend?'weekend'" in boards
+    assert "status.vacation?'vacation'" in boards
+    assert "status.unavailable?'unavailable'" in boards
+    assert "data-gantt-days" in boards
+    assert "day.dataset.ganttSprint" in boards
+    assert ".gantt-person-cell{position:sticky;left:0" in styles
+    assert ".gantt-day-bg.vacation" in styles
+    assert ".gantt-day-bg.unavailable" in styles

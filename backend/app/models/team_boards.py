@@ -54,6 +54,7 @@ class WorkItem(Base, TimestampMixin):
     assignee_name: Mapped[str] = mapped_column(String(220), default="")
     competency: Mapped[str] = mapped_column(String(32), nullable=False)
     effort: Mapped[float] = mapped_column(Float, default=0)
+    planned_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     sprint_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     week_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

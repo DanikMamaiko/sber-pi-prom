@@ -556,6 +556,7 @@ function teamBoardsPayload(id,c){
       assignee_name:String(st.fio||''),
       competency:String(st.role||'SA'),
       effort:+st.cap||0,
+      planned_start_date:st.startDate||null,
       sprint_index:Number.isInteger(st.sprint)?st.sprint:null,
       week_index:Number.isInteger(st.week)?st.week:null,
       sort_order:sortOrder,
@@ -609,6 +610,7 @@ function applyTeamBoards(c,aggregate){
         _backendId:w.id,uid:w.client_uid,fio:w.assignee_name||'',role:w.competency||'',
         _assigneeMemberId:w.assignee_member_id||null,
         cap:+w.effort||0,
+        startDate:w.planned_start_date||'',
         sprint:w.sprint_index===null||w.sprint_index===undefined?null:+w.sprint_index,
         ord:+w.board_sort_order||0,
       });

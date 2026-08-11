@@ -27,7 +27,7 @@ function prepFieldLocked(initiative,field){
 function prepSourceValueHTML(value,locked){
   const content=esc(value)||'<span class="auto">—</span>';
   return locked
-    ? `<span class="prep-source-value" title="${esc(PREP_SOURCE_FIELD_TITLE)}"><span class="prep-source-lock" aria-hidden="true">🔒</span>${content}</span>`
+    ? `<span title="${esc(PREP_SOURCE_FIELD_TITLE)}">${content}</span>`
     : content;
 }
 // Набор столбцов блока (верхний/нижний). От типа команды не зависит.
@@ -164,7 +164,7 @@ function viewPrepBoard(tribe){
     <div class="prep-block-title">Бэклог инициатив — нижний блок</div>
     ${prepTable(lower,false)}
   </div>`;
-  html+=`<div class="note" style="margin-top:6px">Поля с 🔒 синхронизируются из вкладки «Бэклог» и изменяются только там; повторная отправка обновляет их в Pre PI, сохраняя остальные поля. Инициативы попадают в нижний блок с вкладки «Бэклог». Перетащите строку (за ручку <b>⠿</b> в столбце «№ Инициативы») из нижнего блока в верхний, чтобы «взять» инициативу; внутри блока перетаскивание меняет порядок строк. Кнопка <b>▼</b> в шапке столбца — фильтр и сортировка (пустые значения всегда внизу); пока сортировка активна, порядок внутри блока задаёт она, но перетаскивание между блоками работает. Крестик <b>✕</b> в верхнем блоке возвращает инициативу в нижний блок. «Общая оценка» = ресурсы команды владельца + ресурсы всех активных запросов на привлечение; несогласованные запросы учитываются и помечаются отдельно, отклонённые — не учитываются. Нажмите на запрос, чтобы увидеть ресурсы по компетенциям.</div>`;
+  html+=`<div class="note" style="margin-top:6px">Поля, синхронизируемые из вкладки «Бэклог», недоступны для редактирования в Pre PI; повторная отправка обновляет их, сохраняя остальные поля. Инициативы попадают в нижний блок с вкладки «Бэклог». Перетащите строку (за ручку <b>⠿</b> в столбце «№ Инициативы») из нижнего блока в верхний, чтобы «взять» инициативу; внутри блока перетаскивание меняет порядок строк. Кнопка <b>▼</b> в шапке столбца — фильтр и сортировка (пустые значения всегда внизу); пока сортировка активна, порядок внутри блока задаёт она, но перетаскивание между блоками работает. Крестик <b>✕</b> в верхнем блоке возвращает инициативу в нижний блок. «Общая оценка» = ресурсы команды владельца + ресурсы всех активных запросов на привлечение; несогласованные запросы учитываются и помечаются отдельно, отклонённые — не учитываются. Нажмите на запрос, чтобы увидеть ресурсы по компетенциям.</div>`;
   html+=`</div>`;
   return html;
 }
@@ -244,11 +244,11 @@ function prepTable(rows,isUpper){
           <span class="row-drag" title="${sorted?'Перетащите, чтобы перенести в другой блок (порядок внутри блока задаёт сортировка)':'Перетащите, чтобы изменить порядок или перенести в другой блок'}">⠿</span>
           <b>${prepSourceValueHTML(i.id,issueLocked)}</b>
         </div></td>
-        <td class="stik2${titleLocked?' prep-source-cell':''}" rowspan="${span}">${prepSourceValueHTML(i.name,titleLocked)}</td>`+
+        <td class="stik2" rowspan="${span}">${prepSourceValueHTML(i.name,titleLocked)}</td>`+
         cols.map(c=> {
           const sourceLocked=prepFieldLocked(i,c.sourceField);
           return c.ro||sourceLocked
-          ? `<td class="${sourceLocked?'prep-source-cell':''}" rowspan="${span}">${prepSourceValueHTML(i[c.k],sourceLocked)}</td>`
+          ? `<td rowspan="${span}">${prepSourceValueHTML(i[c.k],sourceLocked)}</td>`
           : c.sel
           ? `<td rowspan="${span}">${goalInputHTML(i)}</td>`
           : c.k==='type'

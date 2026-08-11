@@ -28,6 +28,7 @@ class TeamBoardWorkItemWrite(BaseModel):
     assignee_name: str = Field(default="", max_length=220)
     competency: str = Field(min_length=1, max_length=32)
     effort: float = Field(default=0, ge=0)
+    planned_start_date: date | None = None
     sprint_index: int | None = Field(default=None, ge=0)
     week_index: int | None = Field(default=None, ge=0, le=1)
     sort_order: int = Field(default=0, ge=0)
@@ -114,6 +115,7 @@ class TeamBoardWorkItemUpdate(TeamBoardCommand):
     assignee_name: str | None = Field(default=None, max_length=220)
     competency: str | None = Field(default=None, min_length=1, max_length=32)
     effort: float | None = Field(default=None, ge=0)
+    planned_start_date: date | None = None
     sprint_index: int | None = Field(default=None, ge=0)
     week_index: int | None = Field(default=None, ge=0, le=1)
     sort_order: int | None = Field(default=None, ge=0)

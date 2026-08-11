@@ -2432,8 +2432,9 @@ async def test_team_board_focused_commands_capacity_assignments_and_cascades(api
                 "assignee_name": "ignored in favor of member id",
                 "competency": "SA",
                 "effort": 2,
+                "planned_start_date": "2028-10-10",
                 "sprint_index": 0,
-                "week_index": 1,
+                "week_index": 0,
             },
         ),
         201,
@@ -2441,6 +2442,9 @@ async def test_team_board_focused_commands_capacity_assignments_and_cascades(api
     work_item = board["initiatives"][0]["work_items"][0]
     assert work_item["assignee_member_id"] == member["id"]
     assert work_item["assignee_name"] == "Иванов Иван"
+    assert work_item["planned_start_date"] == "2028-10-10"
+    assert work_item["sprint_index"] == 0
+    assert work_item["week_index"] == 1
 
     board = assert_ok(
         await api_client.raw.patch(

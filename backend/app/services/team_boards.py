@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,6 +94,7 @@ async def read_team_boards(session: AsyncSession, cycle: PiCycle) -> TeamBoardsR
                         "assignee_name": item.assignee_name or "",
                         "competency": item.competency,
                         "effort": item.effort,
+                        "planned_start_date": item.planned_start_date,
                         "sprint_index": item.sprint_index,
                         "week_index": item.week_index,
                         "sort_order": item.sort_order,
@@ -285,16 +286,16 @@ async def replace_team_boards(
                     raise ValueError(
                         f"UID истории не найден для задачи {uid}: {source_item.story_client_uid}"
                     )
-            validate_sprint_position(
-                cycle,
-                source_item.sprint_index,
-                source_item.week_index,
-                f"Задача {uid}",
-            )
+            sprint_index, week_index = source_item.sprint_index, source_item.week_index
+            if source_item.planned_start_date is not None:
+                sprint_index, week_index = _work_item_period_for_date(
+                    cycle, source_item.planned_start_date, f"Задача {uid}"
+                )
+            validate_sprint_position(cycle, sprint_index, week_index, f"Задача {uid}")
             _validate_decomposition_period(
                 "Подзадача",
-                source_item.sprint_index,
-                source_item.week_index,
+                sprint_index,
+                week_index,
                 initiative,
             )
             competency = source_item.competency.strip().upper()
@@ -327,8 +328,9 @@ async def replace_team_boards(
             item.assignee_name = assignee_name
             item.competency = competency
             item.effort = float(source_item.effort)
-            item.sprint_index = source_item.sprint_index
-            item.week_index = source_item.week_index
+            item.planned_start_date = source_item.planned_start_date
+            item.sprint_index = sprint_index
+            item.week_index = week_index
             item.sort_order = source_item.sort_order if source_item.sort_order is not None else position
             item.board_sort_order = source_item.board_sort_order
             desired_item_ids.add(item.id)
@@ -712,6 +714,23 @@ async def _story_by_client_uid(
     return story
 
 
+def _work_item_period_for_date(
+    cycle: PiCycle,
+    value: date,
+    label: str,
+) -> tuple[int, int]:
+    if cycle.start_date is None:
+        raise ValueError(f"{label}: сначала укажите дату начала PI-цикла")
+    cycle_end = cycle.start_date + timedelta(days=cycle.sprint_count * 14 - 1)
+    if value < cycle.start_date or value > cycle_end:
+        raise ValueError(
+            f"{label}: дата начала должна входить в PI-цикл "
+            f"({cycle.start_date.isoformat()}–{cycle_end.isoformat()})"
+        )
+    offset = (value - cycle.start_date).days
+    return offset // 14, (offset % 14) // 7
+
+
 async def create_board_work_item(
     session: AsyncSession,
     cycle: PiCycle,
@@ -733,8 +752,13 @@ async def create_board_work_item(
         roster,
     )
     story = await _story_by_client_uid(initiative, payload.story_client_uid)
-    validate_sprint_position(cycle, payload.sprint_index, payload.week_index, f"Задача {uid}")
-    _validate_decomposition_period("Подзадача", payload.sprint_index, payload.week_index, initiative)
+    sprint_index, week_index = payload.sprint_index, payload.week_index
+    if payload.planned_start_date is not None:
+        sprint_index, week_index = _work_item_period_for_date(
+            cycle, payload.planned_start_date, f"Задача {uid}"
+        )
+    validate_sprint_position(cycle, sprint_index, week_index, f"Задача {uid}")
+    _validate_decomposition_period("Подзадача", sprint_index, week_index, initiative)
     session.add(
         WorkItem(
             id=uuid.uuid4(),
@@ -745,8 +769,9 @@ async def create_board_work_item(
             assignee_name=assignee,
             competency=competency,
             effort=float(payload.effort),
-            sprint_index=payload.sprint_index,
-            week_index=payload.week_index,
+            planned_start_date=payload.planned_start_date,
+            sprint_index=sprint_index,
+            week_index=week_index,
             sort_order=payload.sort_order,
             board_sort_order=payload.board_sort_order,
         )
@@ -799,13 +824,23 @@ async def update_board_work_item(
     item.assignee_name = assignee
     if "effort" in fields:
         item.effort = float(payload.effort or 0)
-    if "sprint_index" in fields or "week_index" in fields:
+    if "planned_start_date" in fields:
+        item.planned_start_date = payload.planned_start_date
+        if payload.planned_start_date is not None:
+            sprint_index, week_index = _work_item_period_for_date(
+                cycle, payload.planned_start_date, f"Задача {item.client_uid}"
+            )
+            _validate_decomposition_period("Подзадача", sprint_index, week_index, initiative)
+            item.sprint_index = sprint_index
+            item.week_index = week_index
+    if ("sprint_index" in fields or "week_index" in fields) and payload.planned_start_date is None:
         sprint_index = payload.sprint_index if "sprint_index" in fields else item.sprint_index
         week_index = payload.week_index if "week_index" in fields else item.week_index
         validate_sprint_position(cycle, sprint_index, week_index, f"Задача {item.client_uid}")
         _validate_decomposition_period("Подзадача", sprint_index, week_index, initiative)
         item.sprint_index = sprint_index
         item.week_index = week_index
+        item.planned_start_date = None
     if "sort_order" in fields:
         item.sort_order = int(payload.sort_order or 0)
     if "board_sort_order" in fields:

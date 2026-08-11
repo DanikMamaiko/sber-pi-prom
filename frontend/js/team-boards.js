@@ -74,11 +74,13 @@ function boardSwitch(){
       <button class="${m==='lanes'?'active':''}" data-layout="lanes">▤ Дорожки</button>
       <button class="${m==='gantt'?'active':''}" data-layout="gantt">▥ Гант</button>
     </div>
-    <div class="board-switch">
+    ${m==='gantt'?'':`<div class="board-switch">
       <button class="${!w?'active':''}" data-week-mode="off">Спринты</button>
       <button class="${w?'active':''}" data-week-mode="on">Недели</button>
-    </div>
-    <span class="muted">Представление доски: по спринтам, по задачам (каждая задача — отдельная дорожка) или по ФИО; детализация — целый спринт или две недели внутри каждого спринта.</span>
+    </div>`}
+    <span class="muted">${m==='gantt'
+      ?'Календарь команды по дням: одна строка — один сотрудник, цветные полосы — назначенные подзадачи.'
+      :'Представление доски: по спринтам или по задачам; детализация — целый спринт или две недели внутри каждого спринта.'}</span>
   </div>`;
 }
 /* ---- 4.x Трудозатраты по спринтам в разрезе ФИО (по кнопке, скрыто по умолчанию) ---- */
@@ -284,97 +286,277 @@ function viewBoardLanes(t){
   </div></div>`;
   return html;
 }
-/* ---- 4.x Доска команды: представление «Гант» (строка = ФИО, трудозатраты по спринтам) ---- */
+/* ---- 4.x Доска команды: дневной Гант (строка = сотрудник, шкала = весь PI) ---- */
+function ganttCalendarDays(){
+  const out=[];
+  computeSprints().forEach(sprint=>{
+    for(let offset=0;offset<SPRINT_DAYS;offset++){
+      const date=addDays(sprint.start,offset);
+      out.push({date,sprint:sprint.index,week:offset<7?0:1});
+    }
+  });
+  return out;
+}
+function ganttIsoDate(date){
+  return `${date.getFullYear()}-${pad2(date.getMonth()+1)}-${pad2(date.getDate())}`;
+}
+// События ПИР/Регресс на сетке дней: проекция диапазонов в grid-column (1-индексация как у задач)
+function ganttEventSegments(days,events,type){
+  const out=[];
+  if(!days||!days.length||!Array.isArray(events))return out;
+  events.forEach(ev=>{
+    if(!ev||!ev.date)return;
+    let first=-1,last=-1;
+    for(let i=0;i<days.length;i++){
+      if(eventOverlaps(ev,days[i].date,days[i].date)){ if(first<0)first=i; last=i; }
+    }
+    if(first<0)return;
+    out.push({start:first+1,end:last+2,ev,type});
+  });
+  return out;
+}
+// Жадная раскладка пересекающихся событий по дорожкам, чтобы они не накладывались
+function ganttEventRows(segments){
+  const rows=[]; // каждая строка: массив сегментов (непересекающихся по [start,end))
+  const overlap=(a,b)=>a.end>b.start && b.end>a.start;
+  segments.forEach(seg=>{
+    let placed=false;
+    for(const row of rows){
+      if(!row.some(s=>overlap(seg,s))){ row.push(seg); placed=true; break; }
+    }
+    if(!placed)rows.push([seg]);
+  });
+  return rows;
+}
+function ganttEventMeta(type){
+  return type==='regression'
+    ? {label:'Регресс',title:'Регрессионное тестирование'}
+    : {label:'ПИР',title:'ПИР'};
+}
+function ganttDayAvailability(person,date){
+  const inRanges=field=>parseDateRanges(person&&person[field]).some(r=>date>=r.start&&date<=r.end);
+  const weekend=date.getDay()===0||date.getDay()===6;
+  const vacation=inRanges('vacation');
+  const unavailable=inRanges('extraUnavailable');
+  const reasons=[];
+  if(weekend)reasons.push('Выходной');
+  if(vacation)reasons.push('Отпуск');
+  if(unavailable)reasons.push('Недоступен');
+  return {weekend,vacation,unavailable,reasons};
+}
+function ganttMonthSegments(days){
+  const out=[];
+  days.forEach((day,index)=>{
+    const key=`${day.date.getFullYear()}-${day.date.getMonth()}`;
+    const last=out[out.length-1];
+    if(last&&last.key===key)last.end=index;
+    else out.push({key,start:index,end:index,label:`${MON_RU[day.date.getMonth()+1]} ${day.date.getFullYear()}`});
+  });
+  return out;
+}
+function ganttDayCapacity(person,date){
+  const status=ganttDayAvailability(person,date);
+  if(status.weekend||status.vacation||status.unavailable)return 0;
+  if(!person)return 1;
+  const rate=Math.max(0,Number.isFinite(+person.rate)?+person.rate:1);
+  const focus=Math.max(0,1-(+person.ceremonyPct||0)/100-(+person.riskPct||0)/100);
+  const efficiency=String(person.efficiency??'').trim()===''?1:Math.max(0,+person.efficiency||0);
+  return rate*focus*efficiency;
+}
+function ganttFallbackStartIso(task,days){
+  if(task.startDate)return task.startDate;
+  const sprint=+task.sprint;
+  const explicitWeek=task.week===0||task.week===1||task.week==='0'||task.week==='1';
+  const match=days.find(day=>day.sprint===sprint&&(!explicitWeek||day.week===+task.week));
+  return match?ganttIsoDate(match.date):'';
+}
+function ganttScheduleFrom(startIso,effort,person,days){
+  if(!days.length)return null;
+  let startIndex=days.findIndex(day=>ganttIsoDate(day.date)>=startIso);
+  if(startIndex<0)return null;
+  while(startIndex<days.length&&ganttDayCapacity(person,days[startIndex].date)<=1e-9)startIndex++;
+  if(startIndex>=days.length)return null;
+  let remaining=Math.max(0,+effort||0),endIndex=startIndex;
+  if(remaining>1e-9){
+    for(let index=startIndex;index<days.length;index++){
+      const capacity=ganttDayCapacity(person,days[index].date);
+      if(capacity<=1e-9)continue;
+      remaining-=capacity;endIndex=index;
+      if(remaining<=1e-9)break;
+    }
+  }
+  const first=days[startIndex],last=days[endIndex];
+  return {
+    start:startIndex+1,end:endIndex+2,
+    startDate:ganttIsoDate(first.date),endDate:ganttIsoDate(last.date),
+    sprint:first.sprint,week:first.week,complete:remaining<=1e-9,
+  };
+}
+function ganttTaskSchedule(task,person,days){
+  return ganttScheduleFrom(ganttFallbackStartIso(task,days),task.cap,person,days);
+}
+function ganttPeriodStartIso(sprintIndex,weekIndex=0){
+  if(!Number.isInteger(+sprintIndex)||sprintIndex===null||sprintIndex==='')return '';
+  const sprint=computeSprints().find(row=>row.index===+sprintIndex);
+  return sprint?ganttIsoDate(addDays(sprint.start,(+weekIndex||0)*7)):'';
+}
+function ganttPersonForTask(roster,task){
+  return roster.find(p=>task._assigneeMemberId&&p._backendId===task._assigneeMemberId)||
+    roster.find(p=>String(p.fio||'').trim()===String(task.fio||'').trim()&&(!task.role||p.role===task.role))||null;
+}
+function ganttScheduleLabel(schedule){
+  if(!schedule)return 'Не удалось рассчитать даты';
+  const start=fmt(parseISO(schedule.startDate)),end=fmt(parseISO(schedule.endDate));
+  return `Начало ${start} · окончание ${end}${schedule.complete?'':' · не помещается в PI'}`;
+}
 function viewBoardGantt(t){
-  const periods=boardPeriods();
+  const days=ganttCalendarDays();
+  const sprints=computeSprints().map(s=>({...s,week:null}));
   const key=teamKey(t.tribe,t.name);
   const roster=state.capacity[key]||[];
   const teamIssues=state.issues.filter(i=>issuePrimaryTeam(i)===t.name && i.onBoard);
-  // карта ФИО -> {role, plan:[по периодам], cells:[ по периодам: [{iss,st,si,cap,hue}] ]}
+  // карта участника команды -> доступность и все назначенные ему подзадачи
   const map=new Map();
-  const ensure=(fio,role)=>{
+  const ensure=(memberId,fio,role)=>{
     const name=(fio||'').trim()||'— без ФИО —';
-    if(!map.has(name)) map.set(name,{role:role||'',plan:periods.map(()=>0),cells:periods.map(()=>[])});
-    const rec=map.get(name);
+    const mapKey=memberId?`member:${memberId}`:`name:${name}|${role||''}`;
+    if(!map.has(mapKey)) map.set(mapKey,{fio:name,role:role||'',people:[],tasks:[],plan:0});
+    const rec=map.get(mapKey);
     if(!rec.role && role) rec.role=role;
     return rec;
   };
-  // сотрудники из ёмкости (в т.ч. без задач) + план по периодам
+  // сотрудники из ёмкости видны даже при отсутствии задач
   roster.forEach(p=>{
-    const rec=ensure(p.fio,p.role);
-    periods.forEach((period,idx)=>{ rec.plan[idx]+=personAvail(p,period); });
+    const rec=ensure(p._backendId||p.uid,p.fio,p.role);
+    rec.people.push(p);
+    rec.plan+=sprints.reduce((sum,sprint)=>sum+personAvail(p,sprint),0);
   });
-  // белые подзадачи → сегменты трудозатрат в ячейке ФИО × период
+  // Длина полосы определяется трудоёмкостью и реальной дневной доступностью сотрудника.
   teamIssues.forEach(iss=>{
     const hue=issueHue(iss);
     (iss.subtasks||[]).forEach((st,si)=>{
       if(st.sprint===null || st.sprint===undefined) return;
-      const idx=periods.findIndex(p=>p.index===st.sprint && (p.week===null || itemWeek(st)===p.week));
-      if(idx<0) return;
-      const rec=ensure(st.fio,st.role);
-      rec.cells[idx].push({iss,st,si,cap:(+st.cap||0),hue});
+      const person=ganttPersonForTask(roster,st);
+      const schedule=ganttTaskSchedule(st,person,days);if(!schedule)return;
+      const rec=ensure(person&&(person._backendId||person.uid),person?person.fio:st.fio,person?person.role:st.role);
+      rec.tasks.push({iss,st,si,cap:(+st.cap||0),hue,...schedule});
     });
   });
-  const rows=[...map.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ru'));
+  map.forEach(rec=>rec.tasks.sort((a,b)=>a.start-b.start||a.end-b.end||String(a.iss.id).localeCompare(String(b.iss.id),'ru')));
+  const rows=[...map.values()].sort((a,b)=>a.fio.localeCompare(b.fio,'ru')||a.role.localeCompare(b.role,'ru'));
+  const dayWidth=34;
+  const timelineWidth=Math.max(days.length*dayWidth,dayWidth);
+  const today=ganttIsoDate(new Date());
+  const weekNames=['вс','пн','вт','ср','чт','пт','сб'];
+  const monthSegments=ganttMonthSegments(days);
+  // события ПИР/Регресс на сетке дней
+  const eventSegments=[
+    ...ganttEventSegments(days,state.pi.pirs||[],'pir'),
+    ...ganttEventSegments(days,state.pi.regressions||[],'regression'),
+  ].sort((a,b)=>a.start-b.start||a.end-b.end);
+  const eventRows=ganttEventRows(eventSegments);
+  const pirEventCount=eventSegments.filter(seg=>seg.type==='pir').length;
+  const regressionEventCount=eventSegments.filter(seg=>seg.type==='regression').length;
 
   let html=`<div class="card">${teamToolbar(t,'board')}`;
   html+=boardSwitch();
-  html+=effortByFioBlock(t);
-  html+=`<div class="row" style="margin-bottom:10px">
-    <span class="muted">Диаграмма Ганта трудозатрат: <b>строка — сотрудник (ФИО)</b>, столбцы — спринты. В каждой ячейке — <b>полоса загрузки</b> (заполнение — факт трудозатрат на фоне плановой ёмкости; сегменты окрашены по задачам, цвет = цвет задачи) и карточки подзадач сотрудника. <b style="color:var(--danger)">Красным</b> выделен перегруз (факт &gt; план). Белые карточки можно перетаскивать между спринтами <b>в пределах строки своего сотрудника</b>.</span>
+  html+=`<div class="gantt-summary">
+    <span><i class="gantt-legend-day weekend"></i>Выходной</span>
+    <span><i class="gantt-legend-day vacation"></i>Отпуск</span>
+    <span><i class="gantt-legend-day unavailable"></i>Недоступен</span>
+    <span><i class="gantt-legend-event"></i>ПИР</span>
+    <span><i class="gantt-legend-event reg"></i>Регресс</span>
+    <span class="muted">Начало задаётся точной датой. Окончание рассчитывается по трудоёмкости, ставке, КПД и доступным рабочим дням сотрудника.</span>
   </div>`;
-  html+=`<div class="board-scroll">`;
-  html+=`<table class="lanes gantt"><thead><tr><th class="lane-id-head">ФИО</th>`;
-  periods.forEach(p=>{
-    html+=`<th class="lane-sp-head">${periodHeadHTML(p)}</th>`;
-  });
-  html+=`<th class="lane-sp-head gantt-tot-head"><div class="num">Итого</div></th></tr></thead><tbody>`;
-  if(!rows.length){
-    html+=`<tr><td class="lane-id"><span class="muted">Нет данных о сотрудниках</span></td>`+
-      periods.map(()=>`<td class="lane-cell"></td>`).join('')+`<td class="lane-cell gantt-tot"></td></tr>`;
-  }
-  // полоса загрузки: сегменты по задачам на фоне плана; перегруз — красным
-  const loadBar=(segs,plan)=>{
-    const fact=segs.reduce((s,g)=>s+g.cap,0);
-    const over=fact-plan>1e-9;
-    const denom=Math.max(plan,fact,1e-9);
-    const seg=segs.map(g=>`<span class="gseg" style="width:${(g.cap/denom*100)}%;background:${g.hue}" title="${esc(g.iss.id)}: ${round1(g.cap)} дн."></span>`).join('');
-    // если план больше факта — остаток пустой дорожкой; если перегруз — вся дорожка факта
-    return `<div class="gload${over?' over':''}" title="Факт ${round1(fact)} / План ${round1(plan)} дн.">
-      <div class="gload-track">${seg}</div>
-      <div class="gload-lbl"><span class="g-fact">${round1(fact)}</span><span class="g-plan">/ ${round1(plan)}</span></div>
+  html+=`<div class="board-scroll gantt-scroll" id="boardScroll"><div class="gantt-calendar" style="--gantt-days:${days.length};--gantt-width:${timelineWidth}px">
+    <div class="gantt-calendar-head">
+      <div class="gantt-person-head"><b>Сотрудник</b><span>ФИО · должность</span></div>
+      <div class="gantt-head-timeline" style="width:${timelineWidth}px">
+        <div class="gantt-months">${monthSegments.map(m=>`<div style="grid-column:${m.start+1}/${m.end+2}">${esc(m.label)}</div>`).join('')}</div>
+        <div class="gantt-day-heads">${days.map(day=>{
+          const iso=ganttIsoDate(day.date),weekend=day.date.getDay()===0||day.date.getDay()===6;
+          const cls=[weekend?'weekend':'',iso===today?'today':'',day.date.getDate()===1?'month-start':'',day.date.getDay()===1?'week-start':''].filter(Boolean).join(' ');
+          return `<div class="${cls}" title="${fmt(day.date)} · Спринт ${day.sprint+1}, неделя ${day.week+1}"><b>${day.date.getDate()}</b><span>${weekNames[day.date.getDay()]}</span></div>`;
+        }).join('')}</div>
+      </div>
     </div>`;
-  };
-  rows.forEach(([fio,rec])=>{
-    html+=`<tr><td class="lane-id gantt-fio"><div class="lane-id-top"><b>${esc(fio)}</b></div>
-      ${rec.role?`<div class="lane-id-status">${esc(rec.role)}</div>`:''}</td>`;
-    let totPlan=0;
-    rec.cells.forEach((segs,idx)=>{
-      const plan=rec.plan[idx];
-      totPlan+=plan;
-      const period=periods[idx];
-      html+=`<td class="lane-cell gantt-cell" data-tb-sprint="${period.index}"${periodWeekAttr(period)} data-tb-fio="${esc(fio)}">`+
-        loadBar(segs,plan)+
-        segs.map(g=>whiteGanttHTML(g.iss,g.st,g.si)).join('')+
-        `</td>`;
-    });
-    html+=`<td class="lane-cell gantt-tot">`+loadBar(
-      rec.cells.flat(), totPlan)+`</td></tr>`;
+  if(eventRows.length){
+    const eventRowHeight=32;
+    const eventsTimelineHeight=eventRows.length*eventRowHeight+16;
+    html+=`<div class="gantt-events">
+      <div class="gantt-events-head">
+        <b>События PI</b>
+        <span>ПИРы и регрессионное тестирование</span>
+        <div class="gantt-event-totals">
+          <i><em class="pir-dot"></em>ПИР: ${pirEventCount}</i>
+          <i class="reg"><em></em>Регресс: ${regressionEventCount}</i>
+        </div>
+      </div>
+      <div class="gantt-events-timeline" style="width:${timelineWidth}px;--event-rows:${eventRows.length};min-height:${eventsTimelineHeight}px">
+        <div class="gantt-event-grid" aria-hidden="true">${days.map(day=>{
+          const iso=ganttIsoDate(day.date),weekend=day.date.getDay()===0||day.date.getDay()===6;
+          const cls=[weekend?'weekend':'',iso===today?'today':'',day.date.getDate()===1?'month-start':'',day.date.getDay()===1?'week-start':''].filter(Boolean).join(' ');
+          return `<div class="${cls}"></div>`;
+        }).join('')}</div>
+        ${eventRows.map((row,rn)=>row.map(seg=>{
+          const isReg=seg.type==='regression';
+          const meta=ganttEventMeta(seg.type);
+          const range=eventRangeText(seg.ev);
+          const name=String(seg.ev.name||'').trim();
+          const title=`${meta.title}${name?' · '+esc(name):''}${range?' · '+range:''}`;
+          const single=seg.end-seg.start<=1;
+          return `<div class="gantt-event${isReg?' reg':''}${single?' single':''}" title="${title}" style="grid-column:${seg.start}/${seg.end};grid-row:${rn+1}">
+            <strong>${meta.label}</strong>
+            <span>${esc(name||meta.title)}</span>
+            ${range?`<i>${range}</i>`:''}
+          </div>`;
+        }).join('')).join('')}
+      </div>
+    </div>`;
+  }
+  if(!rows.length){
+    html+=`<div class="gantt-empty">Нет данных о сотрудниках. Добавьте состав команды в разделе «Изменить ёмкость».</div>`;
+  }
+  rows.forEach(rec=>{
+    const fio=rec.fio;
+    const fact=rec.tasks.reduce((sum,task)=>sum+task.cap,0);
+    const over=fact-rec.plan>1e-9;
+    const rowHeight=Math.max(54,rec.tasks.length*30+18);
+    const primaryPerson=rec.people[0]||null;
+    html+=`<div class="gantt-person-row" style="--gantt-row-height:${rowHeight}px">
+      <div class="gantt-person-cell">
+        <b title="${esc(fio)}">${esc(fio)}</b>
+        <span>${esc(rec.role||'Должность не указана')}</span>
+        <small class="${over?'over':''}" title="Назначено / доступно за PI">${round1(fact)} / ${round1(rec.plan)} дн.${over?' · перегруз':''}</small>
+      </div>
+      <div class="gantt-timeline-row" style="width:${timelineWidth}px" data-tb-sprint="0" data-tb-week="0" data-tb-fio="${esc(fio)}" data-gantt-days="${days.length}">
+        <div class="gantt-day-backgrounds">${days.map(day=>{
+          const status=ganttDayAvailability(primaryPerson,day.date);
+          const iso=ganttIsoDate(day.date);
+          const cls=[status.weekend?'weekend':'',status.vacation?'vacation':'',status.unavailable?'unavailable':'',iso===today?'today':'',day.date.getDate()===1?'month-start':'',day.date.getDay()===1?'week-start':''].filter(Boolean).join(' ');
+          const dayCapacity=ganttDayCapacity(primaryPerson,day.date);
+          const title=[fmt(day.date),...status.reasons,`Доступно: ${round1(dayCapacity)} дн.`,`Спринт ${day.sprint+1}, неделя ${day.week+1}`].join(' · ');
+          return `<div class="gantt-day-bg ${cls}" data-gantt-day data-gantt-date="${iso}" data-gantt-sprint="${day.sprint}" data-gantt-week="${day.week}" title="${esc(title)}"></div>`;
+        }).join('')}</div>
+        <div class="gantt-task-layer">${rec.tasks.map((task,index)=>whiteGanttHTML(task.iss,task.st,task.si,task,index+1)).join('')}</div>
+      </div>
+    </div>`;
   });
-  html+=`</tbody></table></div>
-  <div class="legend">
-    <span class="muted">Полоса в ячейке: цветные сегменты — трудозатраты по задачам (цвет = задача), длина ∝ дням; фон дорожки — плановая ёмкость сотрудника. «факт / план» — сумма и доступная ёмкость. Красная полоса — перегруз (факт &gt; план). Столбец «Итого» — суммарная загрузка за PI.</span>
-  </div></div>`;
+  html+=`</div></div></div>`;
   return html;
 }
-function whiteGanttHTML(iss,st,si){
+function whiteGanttHTML(iss,st,si,schedule,row){
   const hue=issueHue(iss);
   const sy=st.storyUid?storyById(iss,st.storyUid):null;
   const parentLabel = sy ? (sy.id||'История') : iss.id;
-  return `<div class="white gantt-white" draggable="true" data-drag="sub" data-id="${esc(iss.id)}" data-sub="${si}"
-    style="--lane:${hue};border-left-color:${hue}">
-    <div class="wparent">${esc(parentLabel)}</div>
-    <div class="wrole">${esc(st.role)} · ${st.cap}</div>
+  const range=`${fmt(parseISO(schedule.startDate))}–${fmt(parseISO(schedule.endDate))}`;
+  const span=schedule.end-schedule.start;
+  const detail=span>=8?`${range} · ${round1(st.cap)} чел.-дн.`:(span>=4?`${round1(st.cap)} чел.-дн.`:'');
+  return `<div class="white gantt-task${schedule.complete?'':' incomplete'}" draggable="true" data-drag="sub" data-id="${esc(iss.id)}" data-sub="${si}"
+    data-wissue="${esc(iss.id)}" data-wsub="${si}" data-wuid="${esc(st.uid)}" data-story="${esc(st.storyUid||'')}"
+    title="${esc(parentLabel)} · ${esc(st.role)} · ${round1(st.cap)} дн. · ${range}"
+    style="--lane:${hue};--task-color:${hue};grid-column:${schedule.start}/${schedule.end};grid-row:${row}">
+    <b>${esc(parentLabel)}</b>${detail?`<span>${detail}</span>`:''}
   </div>`;
 }
 function whiteHTML(iss,st,si){
@@ -740,8 +922,19 @@ function bindTeams(){
 
   // drag для доски (цветные + белые); zone — сама зона, чтобы знать строку в режиме дорожек
   enableDrag(document,async(payload,zone,ev)=>{
-    const target=zone.dataset.tbSprint;
-    const targetWeek=zone.dataset.tbWeek==='' || zone.dataset.tbWeek===undefined ? null : +zone.dataset.tbWeek;
+    let target=zone.dataset.tbSprint;
+    let targetWeek=zone.dataset.tbWeek==='' || zone.dataset.tbWeek===undefined ? null : +zone.dataset.tbWeek;
+    let targetDate='';
+    // В дневном Ганте зоной является вся строка сотрудника. Определяем день по X
+    // курсора и привязываем его к неделе, которую поддерживает текущая модель данных.
+    if(zone.dataset.ganttDays&&ev){
+      const dayCells=[...zone.querySelectorAll('[data-gantt-day]')];
+      const rect=zone.getBoundingClientRect();
+      const count=Math.max(1,+zone.dataset.ganttDays||dayCells.length);
+      const dayIndex=Math.max(0,Math.min(dayCells.length-1,Math.floor((ev.clientX-rect.left)/(rect.width/count))));
+      const day=dayCells[dayIndex];
+      if(day){ target=day.dataset.ganttSprint; targetWeek=+day.dataset.ganttWeek; targetDate=day.dataset.ganttDate||''; }
+    }
     const cellIssue=zone.dataset.tbIssue; // задаётся только в режиме «Дорожки»
     const cellFio=zone.dataset.tbFio; // задаётся только в режиме «Гант»
     const isColumns = cellIssue===undefined && cellFio===undefined; // «Колонки» (у «Дорожек» есть data-tb-issue, у «Ганта» — data-tb-fio)
@@ -793,20 +986,30 @@ function bindTeams(){
       const iss=state.issues.find(i=>i.id===payload.id);
       if(iss&&iss.subtasks[payload.sub]){
         const st=iss.subtasks[payload.sub];
-        if(decompositionAfterIssue(iss,+target,targetWeek)){ warnDecompositionAfterIssue('Подзадача'); return; }
         // в режиме «Гант» белый остаётся в строке своего сотрудника
         if(cellFio!==undefined){
           const stFio=(st.fio||'').trim()||'— без ФИО —';
           if(stFio!==cellFio){ toast('Подзадачу можно переносить только в пределах строки своего сотрудника',{type:'warn'}); return; }
         }
+        let plannedStartDate=null;
+        if(targetDate){
+          const team=teamObjByName(issuePrimaryTeam(iss));
+          const roster=team?(state.capacity[teamKey(team.tribe,team.name)]||[]):[];
+          const schedule=ganttScheduleFrom(targetDate,st.cap,ganttPersonForTask(roster,st),ganttCalendarDays());
+          if(!schedule){toast('На выбранной дате сотрудник недоступен до конца PI',{type:'warn'});return;}
+          if(!schedule.complete){toast('Трудоёмкость задачи не помещается в оставшиеся дни PI',{type:'warn'});return;}
+          target=schedule.sprint;targetWeek=schedule.week;plannedStartDate=schedule.startDate;
+        }
+        if(decompositionAfterIssue(iss,+target,targetWeek)){ warnDecompositionAfterIssue('Подзадача'); return; }
         setBoardPeriod(st,+target,targetWeek);
+        if(plannedStartDate)st.startDate=plannedStartDate;else delete st.startDate;
         // «Колонки»: свободное размещение среди всех стикеров колонки (цветных и белых)
         if(isColumns && ev){
           const beforeKey=stickerBeforeKey(zone,ev.clientY);
           reorderBoardItem(t.name,+target,targetWeek,'s:'+st.uid,beforeKey);
         }
         await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'PATCH',{
-          sprint_index:+target,week_index:targetWeek,board_sort_order:st.ord||0,
+          planned_start_date:plannedStartDate,sprint_index:+target,week_index:targetWeek,board_sort_order:st.ord||0,
         });
       }
     }
@@ -949,6 +1152,30 @@ function boardAssigneePayload(roster,name,role,validRoles){
     assignee_name:roleTokens.has(assigneeName.toUpperCase())?'':assigneeName,
   };
 }
+function ganttFormPerson(roster,fio,role){
+  return ganttPersonForTask(roster,{fio:String(fio||'').trim(),role:String(role||'').trim()});
+}
+function wireTaskSchedulePreview(prefix,roster){
+  const days=ganttCalendarDays();
+  const update=()=>{
+    const person=ganttFormPerson(roster,$(`#${prefix}_fio`).value,$(`#${prefix}_role`).value);
+    const schedule=ganttScheduleFrom($(`#${prefix}_start`).value,+$(`#${prefix}_cap`).value||0,person,days);
+    const end=$(`#${prefix}_end`),hint=$(`#${prefix}_schedule`);
+    end.value=schedule?schedule.endDate:'';
+    hint.textContent=schedule
+      ?`${ganttScheduleLabel(schedule)}. В рабочий день доступно ${round1(ganttDayCapacity(person,parseISO(schedule.startDate)))} чел.-дн.`
+      :'Выберите дату внутри PI и сотрудника с ненулевой доступностью.';
+    hint.classList.toggle('danger-text',!schedule||!schedule.complete);
+  };
+  [`${prefix}_fio`,`${prefix}_role`,`${prefix}_cap`,`${prefix}_start`].forEach(id=>{
+    const el=$(`#${id}`);if(el){el.addEventListener('input',update);el.addEventListener('change',update);}
+  });
+  update();
+  return ()=>{
+    const person=ganttFormPerson(roster,$(`#${prefix}_fio`).value,$(`#${prefix}_role`).value);
+    return ganttScheduleFrom($(`#${prefix}_start`).value,+$(`#${prefix}_cap`).value||0,person,days);
+  };
+}
 
 /* ---- Модальное окно подзадачи ---- */
 // storyUid задан → белый привязывается к Истории (её ID на плашке) + дефолтная стрелка от Истории;
@@ -956,9 +1183,13 @@ function boardAssigneePayload(roster,name,role,validRoles){
 function openSubtaskModal(issueId,storyUid){
   const iss=state.issues.find(i=>i.id===issueId);if(!iss)return;
   const sy=storyUid?storyById(iss,storyUid):null;
-  const sprints=computeSprints();
   const defSprint = sy ? sy.sprint : iss.sprint;
   const defWeek = sy ? itemWeek(sy) : itemWeek(iss);
+  const days=ganttCalendarDays();
+  const minDate=days.length?ganttIsoDate(days[0].date):'';
+  const maxDate=days.length?ganttIsoDate(days[days.length-1].date):'';
+  const rawDefStart=ganttPeriodStartIso(defSprint,defWeek)||minDate;
+  const defStart=(ganttScheduleFrom(rawDefStart,1,null,days)||{}).startDate||rawDefStart;
   const primaryTeam=teamObjByName(issuePrimaryTeam(iss));
   const roster=primaryTeam?(state.capacity[teamKey(primaryTeam.tribe,primaryTeam.name)]||[]):[];
   const comps=teamComps(issuePrimaryTeam(iss));
@@ -969,25 +1200,32 @@ function openSubtaskModal(issueId,storyUid){
     <label><span>ФИО</span><input id="m_fio" list="m_people" placeholder="Фамилия"></label>
     <datalist id="m_people">${boardAssigneeDatalist(roster)}</datalist>
     <label><span>Компетенция</span><select id="m_role">${comps.map(r=>`<option>${r}</option>`).join('')}</select></label>
-    <label><span>Ёмкость (дн.)</span><input id="m_cap" type="number" min="0" value="1"></label>
-    <label><span>Спринт</span><select id="m_sprint">${sprints.map(s=>`<option value="${s.index}" ${s.index===defSprint?'selected':''}>Спринт ${s.index+1}</option>`).join('')}</select></label>
-    ${weekSelectHTML('m_week',defWeek)}
+    <label><span>Трудоёмкость (чел.-дн.)</span><input id="m_cap" type="number" min="0" step="0.5" value="1"></label>
+    <label><span>Дата начала</span><input id="m_start" type="date" min="${minDate}" max="${maxDate}" value="${defStart}"></label>
+    <label><span>Дата окончания (расчёт)</span><input id="m_end" type="date" readonly></label>
+    <div class="note task-schedule-note" id="m_schedule"></div>
     <div class="modal-actions">
       <button id="m_cancel">Отмена</button>
       <button class="primary" id="m_save">Добавить подзадачу</button>
     </div>
   </div></div>`;
+  const readSchedule=wireTaskSchedulePreview('m',roster);
   $('#m_cancel').onclick=()=>{ if(sy){ root.innerHTML=''; openStoryModal(iss.id, storyUid); } else root.innerHTML=''; };
   $('#m_save').onclick=async()=>{
     const u=uid();
-    const white={uid:u,fio:$('#m_fio').value.trim(),role:$('#m_role').value,cap:+$('#m_cap').value||0,sprint:+$('#m_sprint').value,week:+$('#m_week').value};
+    const schedule=readSchedule();
+    if(!schedule){toast('Не удалось рассчитать даты: проверьте сотрудника и дату начала',{type:'warn'});return;}
+    if(!schedule.complete){toast('Трудоёмкость задачи не помещается в оставшиеся дни PI',{type:'warn'});return;}
+    const white={uid:u,fio:$('#m_fio').value.trim(),role:$('#m_role').value,cap:+$('#m_cap').value||0,
+      startDate:schedule.startDate,sprint:schedule.sprint,week:schedule.week};
     if(decompositionAfterIssue(iss,white.sprint,white.week)){ warnDecompositionAfterIssue('Подзадача'); return; }
     if(storyUid) white.storyUid=storyUid; // принадлежит Истории
     const assignee=boardAssigneePayload(roster,white.fio,white.role,comps);
     const created=await runBoardCommand(`/initiatives/${iss._backendId}/work-items`,'POST',{
       client_uid:white.uid,story_client_uid:white.storyUid||null,
       assignee_member_id:assignee.assignee_member_id,assignee_name:assignee.assignee_name,
-      competency:white.role,effort:white.cap,sprint_index:white.sprint,week_index:white.week,
+      competency:white.role,effort:white.cap,planned_start_date:white.startDate,
+      sprint_index:white.sprint,week_index:white.week,
       sort_order:(iss.subtasks||[]).length,board_sort_order:(iss.subtasks||[]).length,
     });
     if(!created)return;
@@ -1115,19 +1353,24 @@ function openStoryModal(issueId,storyUid){
 function openWhiteModal(issueId,si){
   const iss=state.issues.find(i=>i.id===issueId); if(!iss)return;
   const st=(iss.subtasks||[])[si]; if(!st)return;
-  const sprints=computeSprints();
   const primaryTeam=teamObjByName(issuePrimaryTeam(iss));
   const roster=primaryTeam?(state.capacity[teamKey(primaryTeam.tribe,primaryTeam.name)]||[]):[];
   const comps=teamComps(issuePrimaryTeam(iss));
+  const days=ganttCalendarDays();
+  const minDate=days.length?ganttIsoDate(days[0].date):'';
+  const maxDate=days.length?ganttIsoDate(days[days.length-1].date):'';
+  const initialSchedule=ganttTaskSchedule(st,ganttPersonForTask(roster,st),days);
+  const startDate=(initialSchedule&&initialSchedule.startDate)||ganttFallbackStartIso(st,days)||minDate;
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="modal">
     <h3>Подзадача · ${esc(iss.id)}</h3>
     <label><span>ФИО</span><input id="w_fio" list="w_people" value="${esc(st.fio||'')}" placeholder="Фамилия"></label>
     <datalist id="w_people">${boardAssigneeDatalist(roster)}</datalist>
     <label><span>Компетенция</span><select id="w_role">${comps.map(r=>`<option ${r===st.role?'selected':''}>${r}</option>`).join('')}</select></label>
-    <label><span>Ёмкость (дн.)</span><input id="w_cap" type="number" min="0" value="${+st.cap||0}"></label>
-    <label><span>Спринт</span><select id="w_sprint">${sprints.map(s=>`<option value="${s.index}" ${s.index===st.sprint?'selected':''}>Спринт ${s.index+1}</option>`).join('')}</select></label>
-    ${weekSelectHTML('w_week',st.week)}
+    <label><span>Трудоёмкость (чел.-дн.)</span><input id="w_cap" type="number" min="0" step="0.5" value="${+st.cap||0}"></label>
+    <label><span>Дата начала</span><input id="w_start" type="date" min="${minDate}" max="${maxDate}" value="${startDate}"></label>
+    <label><span>Дата окончания (расчёт)</span><input id="w_end" type="date" readonly></label>
+    <div class="note task-schedule-note" id="w_schedule"></div>
     <div class="modal-actions" style="justify-content:space-between">
       <button class="danger" id="w_del">Удалить</button>
       <div style="display:flex;gap:8px">
@@ -1136,6 +1379,7 @@ function openWhiteModal(issueId,si){
       </div>
     </div>
   </div></div>`;
+  const readSchedule=wireTaskSchedulePreview('w',roster);
   $('#w_cancel').onclick=()=>root.innerHTML='';
   $('#w_del').onclick=async()=>{
     try{
@@ -1150,12 +1394,14 @@ function openWhiteModal(issueId,si){
   };
   $('#w_save').onclick=async()=>{
     const assignee=boardAssigneePayload(roster,$('#w_fio').value,$('#w_role').value,comps);
-    const sprint=+$('#w_sprint').value, week=+$('#w_week').value;
-    if(decompositionAfterIssue(iss,sprint,week)){ warnDecompositionAfterIssue('Подзадача'); return; }
+    const schedule=readSchedule();
+    if(!schedule){toast('Не удалось рассчитать даты: проверьте сотрудника и дату начала',{type:'warn'});return;}
+    if(!schedule.complete){toast('Трудоёмкость задачи не помещается в оставшиеся дни PI',{type:'warn'});return;}
+    if(decompositionAfterIssue(iss,schedule.sprint,schedule.week)){ warnDecompositionAfterIssue('Подзадача'); return; }
     const body={
       assignee_member_id:assignee.assignee_member_id,assignee_name:assignee.assignee_name,competency:$('#w_role').value,
-      effort:+$('#w_cap').value||0,sprint_index:sprint,
-      week_index:week,board_sort_order:st.ord||0,
+      effort:+$('#w_cap').value||0,planned_start_date:schedule.startDate,
+      sprint_index:schedule.sprint,week_index:schedule.week,board_sort_order:st.ord||0,
     };
     if(await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'PATCH',body))root.innerHTML='';
   };

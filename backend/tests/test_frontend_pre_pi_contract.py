@@ -73,7 +73,8 @@ def test_backlog_managed_pre_pi_fields_are_rendered_read_only():
     assert "sourceField:'tshirt_size'" in section
     assert "prepFieldLocked(i,'effort_by_competency')" in section
     assert "ownerCompsBlockHTML(i,'pi',effortLocked" in section
-    assert "Поля с 🔒 синхронизируются из вкладки «Бэклог»" in section
+    assert "Поля, синхронизируемые из вкладки «Бэклог», недоступны для редактирования" in section
+    assert "🔒" not in section
 
 
 def test_pre_pi_attraction_requests_are_stacked_in_their_column():

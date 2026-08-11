@@ -225,6 +225,7 @@ def test_team_boards_accept_stories_and_work_items():
                         "assignee_name": "Иванов",
                         "competency": "FE",
                         "effort": 3,
+                        "planned_start_date": "2026-07-20",
                         "sprint_index": 1,
                         "week_index": 0,
                     }
@@ -236,6 +237,7 @@ def test_team_boards_accept_stories_and_work_items():
     board = payload.initiatives[0]
     assert board.stories[0].client_uid == "story-1"
     assert board.work_items[0].story_client_uid == "story-1"
+    assert board.work_items[0].planned_start_date == date(2026, 7, 20)
 
 
 def test_team_board_decomposition_period_cannot_be_after_parent():
