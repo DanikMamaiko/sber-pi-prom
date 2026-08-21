@@ -1,0 +1,93 @@
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+api:
+  replicaCount: 1
+  image:
+    repository: nexus.example.local/sberpi/sberpi-api
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  service:
+    port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: nexus.example.local/sberpi/sberpi-frontend
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  service:
+    port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+serviceAccount:
+  create: true
+  name: ""
+
+# This secret must already exist in the target namespace before helm install.
+# Required keys: DATABASE_URL, SESSION_SECRET, AUTH_TEST_USERS.
+secrets:
+  existingSecret: sberpi-secrets
+
+config:
+  appName: SberPI PI Cycle MVP
+  appEnv: production
+  corsOrigins: https://sberpi.example.local
+  authProvider: local
+  sessionTtlMinutes: "60"
+  sessionCookieName: sberpi_session
+  sessionCookieSecure: "true"
+  auditEnabled: "true"
+  auditSourceService: sberpi-api
+  auditHostIp: ""
+  auditTrustedProxyNetworks: ""
+  auditConnectTimeoutSeconds: "3"
+  auditRetrySeconds: "30"
+  adGroupAdmin: SBERPI_ADMIN
+  adGroupPlanningEditor: SBERPI_PLANNING_EDITOR
+  adGroupBusinessViewer: SBERPI_BUSINESS_VIEWER
+  ldapUrl: ldaps://ad.company.local:636
+  ldapBaseDn: DC=company,DC=local
+  ldapUserSearchBase: OU=Users,DC=company,DC=local
+  ldapUserFilter: "(sAMAccountName={username})"
+  ldapGroupSearchBase: OU=Groups,DC=company,DC=local
+  ldapGroupFilter: "(member={user_dn})"
+  ldapUseTls: "true"
+
+migrations:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: sberpi.example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

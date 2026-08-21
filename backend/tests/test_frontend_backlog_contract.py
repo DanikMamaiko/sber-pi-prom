@@ -1,0 +1,102 @@
+from _frontend_source import frontend_source
+
+
+def _source() -> str:
+    return frontend_source()
+
+
+def test_backlog_has_one_backend_read_model_and_no_browser_business_copy():
+    source = _source()
+
+    for forbidden in (
+        "state.tribeBacklog",
+        "seedBacklogDemo",
+        "seedSbolBacklogDemo",
+        "backlogBoardPayload",
+        "persistBacklogBoard",
+        "queueBacklogSync",
+        "flushBacklogSync",
+        "backlogBackendAdopted",
+    ):
+        assert forbidden not in source
+
+    assert "let backlogBoard=null;" in source
+    assert "applyBacklogBoard(await cycleApi(backlogScopedPath('/backlog-board',id)))" in source
+    assert "cycle_id=${encodeURIComponent(backendId)}" in source
+
+
+def test_each_backlog_action_uses_a_dedicated_command_and_server_response():
+    source = _source()
+    start = source.index("function backlogMutation(")
+    mutation = source[start : source.index("function cycleApiPayload", start)]
+
+    assert mutation.count("cycleApi(") == 1
+    assert "backlogScopedPath(path)" in mutation
+    assert "expected_version:backlogBoard.version" in mutation
+    assert "applyBacklogBoard(await backlogMutation" in source
+    assert "'/backlog-board/items','POST'" in source
+    assert "'PATCH',payload" in source
+    assert "'DELETE',{},true" in source
+    assert "'/backlog-board/order','PUT'" in source
+    assert "'/backlog-board/dispatch','POST'" in source
+
+
+def test_backlog_bundle_has_no_legacy_api_or_frontend_effort_calculation():
+    source = _source()
+    start = source.index("function viewBacklog(){")
+    end = source.index("/* =====================================================================\n   БЮДЖЕТИРОВАНИЕ", start)
+    backlog = source[start:end]
+
+    assert "/initiatives/from-backlog" not in source
+    assert "/pi-cycles/${cycleBackendIds[target]}/backlog/dispatch" not in source
+    assert "issueTotalEffort(it)" not in backlog
+    assert "row.total_effort" in source
+
+
+def test_backlog_keeps_the_prototype_structure_and_empty_states():
+    source = _source()
+    start = source.index("function viewBacklogBoard(")
+    view = source[start : source.index("function backlogQuarterCell", start)]
+
+    for marker in (
+        "Выбор трайба",
+        "Добавить по № Issue",
+        "Отправить на Pre PI Planning",
+        "Бэклог пуст — добавьте инициативу по № Issue.",
+        "Компетенции команды владельца",
+        "prep-wrap",
+        "bk-table",
+    ):
+        assert marker in view
+
+    assert "+ Команда-исполнитель" not in view
+    assert "data-bk-execadd" not in view
+
+
+def test_backlog_competencies_follow_the_board_owner_not_the_task_owner():
+    source = _source()
+
+    assert "const boardTeam=(row.executors&&row.executors[0]&&row.executors[0].team)" in source
+    assert "backlogTeamCompetencies(ex.team)" in source
+    assert "backlogTeamCompetencies(iss.owner)" not in source
+
+
+def test_backlog_dispatch_refreshes_and_renders_pre_pi_data():
+    source = _source()
+    start = source.index("async function sendBacklogToPrePI(")
+    handler = source[start : source.index("function budgetIssueKey", start)]
+
+    assert "await loadPrePiCycles();" in handler
+    assert handler.index("await loadPrePiCycles();") < handler.index("render();")
+    assert "loadPrePiCycles().catch(()=>{})" not in handler
+    assert "updated=synced.length-added" in handler
+    assert "Нет новых инициатив" not in handler
+
+
+def test_sent_backlog_fields_remain_editable_for_redispatch():
+    source = _source()
+    start = source.index("function backlogTshirtCell(")
+    tshirt = source[start : source.index("function backlogRowHTML", start)]
+
+    assert "const disabled=readonly;" in tshirt
+    assert "Отправлена в Pre PI Planning" not in tshirt

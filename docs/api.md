@@ -1,0 +1,211 @@
+# API MVP
+
+База: `/api`
+
+## Конкурентное редактирование
+
+Все read-контракты нормализованных агрегатов возвращают `version`. Записывающие запросы
+`PATCH /pi-cycles/{cycle_id}`, все агрегатные PUT, команды `/backlog-board/*` и `pre-pi/submit`
+обязаны передавать `expected_version`. Версия PI-цикла общая для setup, Pre PI, целей,
+командных досок, ёмкости, Program Board и рисков; у глобального `backlog-board` своя версия.
+
+Если данные изменились после чтения, backend отвечает 409 с `expected_version` и
+`current_version`. Проверка, блокировка строки и бизнес-запись выполняются одной транзакцией.
+Клиент должен перечитать агрегаты; автоматический retry с новой версией запрещён, поскольку
+он может скрыть конфликт и затереть изменения другого редактора.
+
+## Системное
+
+- `GET /health`
+
+`GET /health` остаётся публичным. Все остальные бизнес-endpoints требуют действующую
+cookie-сессию и permission. Без сессии API отвечает `401`, без права — `403`.
+
+## Аутентификация и навигация
+
+- `POST /auth/login` — вход по логину/паролю и установка `HttpOnly` cookie;
+- `POST /auth/logout` — завершение текущей сессии;
+- `GET /auth/me` — username, роли, permissions и абсолютное время истечения;
+- `GET /app/navigation` — разрешённые вкладки и минимальный список PI-циклов;
+- `POST /app/pi-cycles` — идемпотентно выбрать или создать минимальный PI-цикл по
+  `year` и `quarter`.
+
+Сессия действует 60 минут от момента входа и не продлевается API-активностью.
+`/app/navigation` возвращает для PI-цикла только `id`, `year`, `quarter`; подробные
+настройки вкладки «Данные PI-цикла» доступны только `admin`.
+Все авторизованные роли имеют `pi_cycle:select`, поэтому могут открыть любой квартал Q1–Q4.
+Создание минимального цикла этим endpoint не даёт доступа к административным настройкам.
+
+Permission-группы API:
+
+| Раздел | Чтение | Изменение |
+|---|---|---|
+| Выбор/инициализация квартала | `pi_cycle:select` | `pi_cycle:select` |
+| Данные PI-цикла и справочники | `pi_data:read` | `pi_data:write` |
+| Бэклог | `backlog:read` | `backlog:write` |
+| Pre PI | `pre_pi:read` | `pre_pi:write` |
+| Цели | `goals:read` | `goals:write` |
+| Командные доски и ёмкость | `team_boards:read` | `team_boards:write` |
+| Согласование задач | — | `tasks:approve` |
+| Program Board | `program_board:read` | `program_board:write` |
+| Риски | `risks:read` | `risks:write` |
+
+## PI-циклы
+
+- `GET /pi-cycles`
+- `POST /pi-cycles`
+- `PATCH /pi-cycles/{cycle_id}`
+- `GET /pi-cycles/{cycle_id}/setup`
+- `PUT /pi-cycles/{cycle_id}/setup`
+- `GET /pi-cycles/{cycle_id}/overview`
+
+`GET /pi-cycles` возвращает метаданные и флаги инициализации всех нормализованных агрегатов.
+Поля `snapshot` нет ни в read, ни в write DTO; из-за `extra="forbid"` старый клиент получает 422.
+
+`setup` — транзакционный контракт вкладки «Данные PI-цикла»: дата старта,
+количество спринтов, ПИРы, команды и их компетенции, справочник целей и теги.
+
+## Справочники
+
+- `GET /tribes`
+- `POST /tribes`
+- `GET /teams`
+- `POST /teams`
+- `GET /team-members`
+- `POST /team-members`
+
+## Бэклог
+
+- `GET /backlog-board?cycle_id={cycle_id}`
+- `POST /backlog-board/items?cycle_id={cycle_id}`
+- `PATCH /backlog-board/items/{item_id}?cycle_id={cycle_id}`
+- `DELETE /backlog-board/items/{item_id}`
+- `PUT /backlog-board/order`
+- `PUT /backlog-board`
+- `POST /backlog-board/dispatch`
+
+`backlog-board` — основной агрегат вкладки «Бэклог команд»: общий для всех
+PI-циклов список инициатив, порядок строк, теги и системы АС. Активный frontend всегда
+передаёт `cycle_id`: справочники трайбов, владельцев, исполнителей и компетенций тогда
+формируются исключительно из `pi_cycle_teams` выбранного цикла. GET возвращает read model:
+версию, стабильные UUID, справочники, канонический порядок и серверную общую оценку.
+Каждая item/order-команда соответствует одному действию пользователя и возвращает
+полный новый read model. Bulk PUT оставлен как одна атомарная команда сохранения формы.
+
+`dispatch` получает трайб, год и квартал; backend сам выбирает подходящие строки,
+блокирует глобальный бэклог и целевой PI-цикл, валидирует команды и компетенции,
+создаёт PI-копии и меняет обе версии в одной транзакции. Повторная отправка отклоняется.
+Удаление уже отправленного источника требует `confirm_cascade: true` и атомарно
+разрывает связи, не удаляя независимые PI-копии. Legacy `/backlog`, PI-scoped
+`backlog/dispatch` и `/initiatives/from-backlog` удалены.
+
+## Инициативы
+
+- `GET /pi-cycles/{cycle_id}/initiatives`
+- `POST /pi-cycles/{cycle_id}/initiatives`
+- `GET /pi-cycles/{cycle_id}/pre-pi`
+- `PUT /pi-cycles/{cycle_id}/pre-pi`
+- `POST /pi-cycles/{cycle_id}/pre-pi/submit`
+- `PATCH /pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}`
+- `POST /pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}/move`
+- `DELETE /pi-cycles/{cycle_id}/pre-pi/initiatives/{initiative_id}`
+
+`pre-pi/submit` повторно проверяет обязательные поля и одной транзакцией создаёт
+цели команд, публикует инициативы на досках и размещает запросы на привлечение.
+Повторная отправка идемпотентна.
+
+## Цели
+
+- `GET /pi-cycles/{cycle_id}/goals-board`
+- `PUT /pi-cycles/{cycle_id}/goals-board`
+- `GET /pi-cycles/{cycle_id}/goals`
+- `POST /pi-cycles/{cycle_id}/goals`
+
+`goals-board` — агрегат вкладки «Цели». Строка связана с инициативой и командой;
+редактирование метрики, AS IS, TO BE, гипотезы и редизайна обновляет ту же
+инициативу, поэтому изменения сразу доступны в Pre PI.
+
+Агрегатный GET возвращает `planned`/`backlog`, справочники команд и целей,
+`total_estimate`, нормализованные привлечения, server-side capacity и техповестку.
+Focused-команды возвращают этот полный read model. Перенос опубликованной строки и
+удаление зависимой строки отвечают `409 cascade_confirmation_required` до явного
+повтора с `confirm_cascade: true`.
+
+Старые `/goals` пока сохранены для совместимости.
+
+## Командные доски
+
+- `GET /pi-cycles/{cycle_id}/team-boards`
+- `PUT /pi-cycles/{cycle_id}/team-boards`
+- `PATCH /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}`
+- `POST /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}/stories`
+- `PATCH|DELETE /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}/stories/{story_id}`
+- `POST /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}/work-items`
+- `PATCH|DELETE /pi-cycles/{cycle_id}/team-boards/initiatives/{initiative_id}/work-items/{work_item_id}`
+
+`team-boards` — транзакционный агрегат содержимого командных досок. Он хранит размещение
+инициатив по спринтам и неделям, порядок стикеров, согласование, stories и белые подзадачи.
+Frontend использует стабильные `client_uid` для связи story с подзадачами; backend проверяет
+уникальность UID и отклоняет некорректный payload без частичного сохранения.
+Focused-команды соответствуют одному действию пользователя, требуют `expected_version` и
+возвращают каноническую read model всей доски. Редактирование заголовка, типа, комментария,
+тегов и оценки инициативы обновляет ту же серверную `Initiative`, которую читают Pre PI и
+Program Board. Удаление Story с дочерними Work Items и удаление Work Item со связями требуют
+`confirm_cascade: true`; каскад и изменение версии выполняются одной транзакцией.
+
+## Ёмкость команд
+
+- `GET /pi-cycles/{cycle_id}/capacity`
+- `PUT /pi-cycles/{cycle_id}/capacity`
+- `POST /pi-cycles/{cycle_id}/capacity/members`
+- `PATCH|DELETE /pi-cycles/{cycle_id}/capacity/members/{member_id}`
+
+`capacity` хранит квартальный состав команд: ФИО, компетенцию, ставку, периоды отпуска и
+дополнительной недоступности, проценты церемоний/риска и КПД. Ответ содержит рассчитанные
+календарную и доступную ёмкость каждого участника по спринтам, итоги команды по компетенциям,
+а также запланированные трудозатраты из нормализованного Pre PI.
+Backend также возвращает расчёт по каждой неделе спринта и фактическую загрузку доски по
+компетенциям/спринтам/неделям. Work Item хранит ссылку `assignee_member_id` на участника
+ёмкости активного PI; удаление назначенного участника требует подтверждения и атомарно
+очищает назначения.
+
+## Program Board
+
+- `GET /pi-cycles/{cycle_id}/program-board`
+- `PUT /pi-cycles/{cycle_id}/program-board`
+- `PATCH /pi-cycles/{cycle_id}/program-board/initiatives/{initiative_id}/position`
+- `POST /pi-cycles/{cycle_id}/program-board/connections`
+- `PATCH /pi-cycles/{cycle_id}/program-board/connections/{connection_id}`
+- `DELETE /pi-cycles/{cycle_id}/program-board/connections/{connection_id}`
+
+GET возвращает готовую серверную проекцию: спринты с датами и ПИРами, трайбы и команды
+выбранного PI, опубликованные карточки, связи и предупреждения конфликтов. Frontend не
+вычисляет состав строк/спринтов и не восстанавливает его из browser storage.
+
+Focused-команды требуют `expected_version`, блокируют общую версию PI и атомарно возвращают
+новую каноническую проекцию. Перемещение меняет `Initiative.sprint_index` и нормализованный
+порядок дорожки; та же позиция сразу читается `/team-boards`. Изменение спринта согласованного
+привлечения сбрасывает согласование.
+
+`program-board` хранит направленные связи между инициативами (`kind: "c"`, `ref`: Issue ID)
+и белыми работами (`kind: "w"`, `ref`: стабильный `client_uid`). Для каждой связи сохраняются
+стабильный `client_uid`, backend UUID, тип связи, порядок и геометрия изгиба `bend: {dx, dy}`.
+Backend преобразует внешние ссылки в UUID инициатив и работ, запрещает петли и дубли одинаковых
+направленных связей и отклоняет весь некорректный `PUT` без частичного сохранения. При удалении
+инициативы или работы связанные линии удаляются автоматически.
+
+## Риски
+
+- `GET /pi-cycles/{cycle_id}/risks-board`
+- `PUT /pi-cycles/{cycle_id}/risks-board`
+- `GET /pi-cycles/{cycle_id}/risks`
+- `POST /pi-cycles/{cycle_id}/risks`
+
+`risks-board` — транзакционный агрегат вкладки «Риски». Он хранит собственные общие риски
+и командные риски с нормализованной ссылкой на команду текущего PI-цикла. Стабильный
+`client_uid` связывает запись frontend с backend UUID. Флаг `is_shared` не создаёт копию:
+одна командная запись зеркально отображается в таблице общих рисков. Backend проверяет scope,
+команду и уникальность UID и отклоняет некорректный `PUT` без частичного сохранения.
+
+Старые `GET/POST /risks` временно сохранены для совместимости; frontend использует
+только агрегат `risks-board`.
