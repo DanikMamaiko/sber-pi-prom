@@ -51,7 +51,6 @@ def test_protected_api_returns_401_without_session_and_403_without_permission():
             json={"username": "pm", "password": "pm123"},
         )
         assert login.status_code == 200
-        assert client.get("/api/backlog-board").status_code == 403
         assert client.get("/api/pi-cycles").status_code == 403
 
 

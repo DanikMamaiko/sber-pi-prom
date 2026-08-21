@@ -10,6 +10,8 @@ __pycache__
 *.py[cod]
 .pytest_cache
 backups
+artifacts
+.tmp-docker-config
 node_modules
 dist
 build

@@ -1,6 +1,6 @@
-FROM nginx:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 
-COPY frontend /usr/share/nginx/html
-COPY deploy/nginx-default.conf /etc/nginx/conf.d/default.conf
+COPY --chown=101:101 frontend /usr/share/nginx/html
+COPY --chown=101:101 deploy/nginx-container.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 80
+EXPOSE 8080

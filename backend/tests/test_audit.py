@@ -88,14 +88,14 @@ def test_forbidden_data_access_is_audited():
                 json={"username": "pm", "password": "pm123"},
             )
             assert login.status_code == 200
-            response = client.get("/api/backlog-board")
+            response = client.get("/api/pi-cycles")
     finally:
         app.state.audit_sink = previous
 
     assert response.status_code == 403
     event = sink.events[-1]
-    assert event.action == "backlog_board.read"
-    assert event.object_type == "backlog_board"
+    assert event.action == "pi_cycle.read"
+    assert event.object_type == "pi_cycle"
     assert event.username == "pm"
     assert event.result == "failure"
     assert event.error_code == "permission_denied"

@@ -29,6 +29,7 @@ os.environ["APP_ENV"] = "test"
 os.environ["AUTH_PROVIDER"] = "local"
 os.environ["AUTH_TEST_USERS"] = (
     "admin:admin123:admin,editor:editor123:planning_editor,"
+    "po_itl:poitl123:planning_editor,"
     "pm:pm123:business_viewer,user:user123:viewer"
 )
 os.environ["SESSION_SECRET"] = "integration-test-session-secret"

@@ -44,6 +44,7 @@ docker compose up --build
 |---|---|---|
 | `admin` | `admin123` | `admin` |
 | `editor` | `editor123` | `planning_editor` |
+| `po_itl` | `poitl123` | `planning_editor` |
 | `pm` | `pm123` | `business_viewer` |
 | `user` | `user123` | `viewer` |
 

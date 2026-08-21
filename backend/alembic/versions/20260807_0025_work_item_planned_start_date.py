@@ -16,7 +16,18 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("work_items", sa.Column("planned_start_date", sa.Date(), nullable=True))
+    # Revision 0001 builds a fresh database from the current SQLAlchemy metadata.
+    # Therefore a new installation can already contain this column before Alembic
+    # reaches 0025, while an older installation still needs it to be added here.
+    columns = {
+        column["name"]
+        for column in sa.inspect(op.get_bind()).get_columns("work_items")
+    }
+    if "planned_start_date" not in columns:
+        op.add_column(
+            "work_items",
+            sa.Column("planned_start_date", sa.Date(), nullable=True),
+        )
 
 
 def downgrade() -> None:

@@ -58,13 +58,18 @@ def test_permissions_are_unioned_for_multiple_provider_roles():
 
 @pytest.mark.asyncio
 async def test_local_provider_authenticates_users_and_rejects_bad_password():
-    provider = LocalAuthProvider("admin:secret:admin,user:pass:viewer")
+    provider = LocalAuthProvider(
+        "admin:secret:admin,po_itl:pass:planning_editor,user:pass:viewer"
+    )
 
     identity = await provider.authenticate("admin", "secret")
 
     assert identity is not None
     assert identity.username == "admin"
     assert identity.roles == ("admin",)
+    po_itl = await provider.authenticate("po_itl", "pass")
+    assert po_itl is not None
+    assert po_itl.roles == ("planning_editor",)
     assert await provider.authenticate("admin", "wrong") is None
     assert await provider.authenticate("missing", "secret") is None
 

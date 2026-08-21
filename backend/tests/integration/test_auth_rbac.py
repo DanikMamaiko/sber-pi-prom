@@ -58,6 +58,12 @@ async def test_navigation_requires_auth_and_exposes_only_minimal_cycles(raw_api_
             {"backlog", "prep", "teams", "pb", "risks"},
         ),
         (
+            "po_itl",
+            "poitl123",
+            ["backlog", "prep", "goals", "teams", "pb", "risks"],
+            {"backlog", "prep", "teams", "pb", "risks"},
+        ),
+        (
             "pm",
             "pm123",
             ["backlog", "prep", "goals", "teams", "pb", "risks"],
@@ -87,7 +93,7 @@ async def test_navigation_matches_role_matrix(
     assert [tab["id"] for tab in tabs] == expected_tabs
     assert {tab["id"] for tab in tabs if tab["can_write"]} == writable_tabs
     assert {tab["id"] for tab in tabs if tab["can_approve"]} == (
-        {"teams"} if username == "editor" else set()
+        {"teams"} if username in {"editor", "po_itl"} else set()
     )
 
 
@@ -96,6 +102,7 @@ async def test_navigation_matches_role_matrix(
     (
         ("admin", "admin123", 2041),
         ("editor", "editor123", 2042),
+        ("po_itl", "poitl123", 2046),
         ("pm", "pm123", 2043),
         ("user", "user123", 2044),
     ),

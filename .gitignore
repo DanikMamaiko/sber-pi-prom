@@ -4,6 +4,7 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .env
+.env.production
 .venv/
 venv/
 dist/
@@ -12,3 +13,8 @@ build/
 .DS_Store
 node_modules/
 backups/
+artifacts/
+config.yaml
+kubeconfig*
+deploy/helm/sberpi/values.local.yaml
+*.secrets.env

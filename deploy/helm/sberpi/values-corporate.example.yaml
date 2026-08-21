@@ -1,0 +1,34 @@
+# Copy this file to values.local.yaml and replace every CHANGE_ME value.
+# values.local.yaml is ignored by Git.
+imagePullSecrets:
+  - name: CHANGE_ME_NEXUS_PULL_SECRET
+
+api:
+  image:
+    repository: CHANGE_ME_NEXUS/sberpi/sberpi-api
+    tag: "0.1.0"
+
+frontend:
+  image:
+    repository: CHANGE_ME_NEXUS/sberpi/sberpi-frontend
+    tag: "0.1.0"
+
+secrets:
+  existingSecret: sberpi-secrets
+
+config:
+  corsOrigins: https://CHANGE_ME_APPLICATION_HOST
+  auditTrustedProxyNetworks: "CHANGE_ME_CLUSTER_PROXY_CIDRS"
+
+ingress:
+  className: CHANGE_ME_INGRESS_CLASS
+  hosts:
+    - host: CHANGE_ME_APPLICATION_HOST
+      paths:
+        - path: /
+          pathType: Prefix
+  # Uncomment when the cluster administrator provides a TLS secret.
+  # tls:
+  #   - secretName: CHANGE_ME_TLS_SECRET
+  #     hosts:
+  #       - CHANGE_ME_APPLICATION_HOST

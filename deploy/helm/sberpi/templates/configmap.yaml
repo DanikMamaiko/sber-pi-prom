@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sberpi.fullname" . }}-config
+  labels:
+    {{- include "sberpi.labels" . | nindent 4 }}
+data:
+  APP_NAME: {{ .Values.config.appName | quote }}
+  APP_ENV: {{ .Values.config.appEnv | quote }}
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  AUTH_PROVIDER: {{ .Values.config.authProvider | quote }}
+  SESSION_TTL_MINUTES: {{ .Values.config.sessionTtlMinutes | quote }}
+  SESSION_COOKIE_NAME: {{ .Values.config.sessionCookieName | quote }}
+  SESSION_COOKIE_SECURE: {{ .Values.config.sessionCookieSecure | quote }}
+  AUDIT_ENABLED: {{ .Values.config.auditEnabled | quote }}
+  AUDIT_SOURCE_SERVICE: {{ .Values.config.auditSourceService | quote }}
+  AUDIT_HOST_IP: {{ .Values.config.auditHostIp | quote }}
+  AUDIT_TRUSTED_PROXY_NETWORKS: {{ .Values.config.auditTrustedProxyNetworks | quote }}
+  AUDIT_CONNECT_TIMEOUT_SECONDS: {{ .Values.config.auditConnectTimeoutSeconds | quote }}
+  AUDIT_RETRY_SECONDS: {{ .Values.config.auditRetrySeconds | quote }}
+  AD_GROUP_ADMIN: {{ .Values.config.adGroupAdmin | quote }}
+  AD_GROUP_PLANNING_EDITOR: {{ .Values.config.adGroupPlanningEditor | quote }}
+  AD_GROUP_BUSINESS_VIEWER: {{ .Values.config.adGroupBusinessViewer | quote }}
+  LDAP_URL: {{ .Values.config.ldapUrl | quote }}
+  LDAP_BASE_DN: {{ .Values.config.ldapBaseDn | quote }}
+  LDAP_USER_SEARCH_BASE: {{ .Values.config.ldapUserSearchBase | quote }}
+  LDAP_USER_FILTER: {{ .Values.config.ldapUserFilter | quote }}
+  LDAP_GROUP_SEARCH_BASE: {{ .Values.config.ldapGroupSearchBase | quote }}
+  LDAP_GROUP_FILTER: {{ .Values.config.ldapGroupFilter | quote }}
+  LDAP_USE_TLS: {{ .Values.config.ldapUseTls | quote }}

@@ -503,6 +503,7 @@ CREATE TABLE public.work_items (
     week_index integer,
     sort_order integer NOT NULL,
     board_sort_order integer NOT NULL,
+    planned_start_date date,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_work_items_week_index CHECK (((week_index IS NULL) OR (week_index = ANY (ARRAY[0, 1]))))
@@ -1349,7 +1350,7 @@ ALTER TABLE ONLY public.work_items
 --
 
 -- Alembic heads verified by the application release.
-INSERT INTO public.alembic_version (version_num) VALUES ('20260807_0024');
+INSERT INTO public.alembic_version (version_num) VALUES ('20260807_0025');
 INSERT INTO public.audit_alembic_version (version_num) VALUES ('20260804_0001');
 
 COMMIT;
