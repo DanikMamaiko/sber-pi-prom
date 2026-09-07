@@ -47,7 +47,7 @@ secrets:
 config:
   appName: SberPI PI Cycle MVP
   appEnv: production
-  corsOrigins: https://sberpi.example.local
+  corsOrigins: https://sberpi.apps.k8s-ift.sigma-belpsb.by
   authProvider: local
   sessionTtlMinutes: "60"
   sessionCookieName: sberpi_session
@@ -79,7 +79,7 @@ ingress:
   className: ""
   annotations: {}
   hosts:
-    - host: sberpi.example.local
+    - host: sberpi.apps.k8s-ift.sigma-belpsb.by
       paths:
         - path: /
           pathType: Prefix
