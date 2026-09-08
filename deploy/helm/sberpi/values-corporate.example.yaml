@@ -19,6 +19,11 @@ secrets:
 config:
   corsOrigins: https://CHANGE_ME_APPLICATION_HOST
   auditTrustedProxyNetworks: "CHANGE_ME_CLUSTER_PROXY_CIDRS"
+  jiraEnabled: "true"
+  jiraBaseUrl: https://jira-apptst-ift.sigma-belpsb.by/jira
+  jiraVerifySsl: "true"
+  # Set to a mounted corporate CA path when the public trust store is insufficient.
+  jiraCaBundle: ""
 
 ingress:
   className: CHANGE_ME_INGRESS_CLASS

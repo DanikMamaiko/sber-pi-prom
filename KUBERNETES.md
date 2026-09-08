@@ -69,7 +69,8 @@ kubectl auth can-i create ingresses -n sberpi
 Copy-Item .\deploy\k8s\sberpi-secrets.example.env .\sberpi.secrets.env
 ```
 
-Пароль внутри `DATABASE_URL` должен быть URL-кодирован. После заполнения создать Secret:
+Пароль внутри `DATABASE_URL` должен быть URL-кодирован. Для ИФТ также заполнить
+`JIRA_USERNAME` и `JIRA_PASSWORD`. После заполнения создать Secret:
 
 ```powershell
 kubectl -n sberpi create secret generic sberpi-secrets `
@@ -101,6 +102,7 @@ Copy-Item .\deploy\helm\sberpi\values-corporate.example.yaml `
 - hostname приложения;
 - Ingress class и при необходимости TLS Secret;
 - доверенные CIDR ingress-прокси, если их предоставили администраторы.
+- `config.jiraEnabled=true`, IFT URL и параметры проверки TLS Jira.
 
 Проверка перед установкой:
 

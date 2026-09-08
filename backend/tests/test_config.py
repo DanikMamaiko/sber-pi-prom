@@ -19,3 +19,21 @@ def test_legacy_separate_audit_database_remains_supported():
     )
 
     assert settings.effective_audit_database_url == settings.audit_database_url
+
+
+def test_jira_requires_explicit_enablement_and_credentials():
+    disabled = Settings(
+        jira_enabled=False,
+        jira_username="usertest",
+        jira_password="secret",
+        _env_file=None,
+    )
+    enabled = Settings(
+        jira_enabled=True,
+        jira_username="usertest",
+        jira_password="secret",
+        _env_file=None,
+    )
+
+    assert disabled.jira_is_configured is False
+    assert enabled.jira_is_configured is True

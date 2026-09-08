@@ -13,6 +13,26 @@ function backlogTeamCompetencies(name){
   const team=backlogRefs().teams.find(row=>row.name===name);
   return team&&Array.isArray(team.competencies)?team.competencies:[];
 }
+async function importBacklogItemFromJira(issueKey,tribe,fallbackTeam){
+  const run=aggregateMutationChain.then(async()=>{
+    if(!backlogBoard||!Number.isInteger(backlogBoard.version))throw new Error('Read model бэклога ещё не загружен');
+    const result=await cycleApi(backlogScopedPath('/backlog-board/items/from-jira'),{
+      method:'POST',
+      body:{issue_key:issueKey,tribe,fallback_team:fallbackTeam||'',expected_version:backlogBoard.version},
+    });
+    applyBacklogBoard(result.board);
+    return result;
+  });
+  aggregateMutationChain=run.catch(()=>{});
+  try{
+    const result=await run;
+    render();
+    return result;
+  }catch(error){
+    reportBacklogSyncError(error);
+    throw error;
+  }
+}
 // Адаптер только для отображения в точной разметке прототипа. Канонические
 // бизнес-данные остаются неизменённым read model backend в backlogBoard.
 function backlogViewItem(row){
@@ -29,6 +49,7 @@ function backlogViewItem(row){
     teamPrio:row.team_priority||'',status:row.status||'Нет оценки',tshirt:row.tshirt_size||'',
     ac:Array.isArray(row.systems)?row.systems:[],tags:Array.isArray(row.tags)?row.tags:[],
     sentTo:Array.isArray(row.sent_to)?row.sent_to:[],totalEffort:+row.total_effort||0,
+    jira:row.jira&&typeof row.jira==='object'?row.jira:null,
     executors,
   };
 }
@@ -242,7 +263,7 @@ function viewBacklogBoard(tribe){
   }else{
     html+=`<div class="row" style="margin:8px 0;gap:8px;flex-wrap:wrap;align-items:center">
       <input id="bkIssueId" placeholder="Введите № Issue" style="width:200px" title="Например, SBOL-2010. Enter — добавить">
-      <button class="primary" id="bkAddIssue" title="Создать инициативу по номеру Issue. Данные подтянутся из Jira после подключения интеграции">Добавить по № Issue</button>
+      <button class="primary" id="bkAddIssue" title="Получить данные Issue из Jira и создать инициативу">Добавить по № Issue</button>
       <span style="flex:1"></span>
       <span class="muted">Отправить на квартал:</span>
       <select id="bkSendQ" style="width:80px"><option value="">Квартал</option>${qs.map(x=>`<option value="${x}" ${q===x?'selected':''}>${x}</option>`).join('')}</select>
@@ -315,7 +336,7 @@ function backlogRowHTML(it,tribe,teams,readonly=false){
     <td rowspan="${span}">${backlogAcCell(it,readonly)}</td>
     <td rowspan="${span}">${backlogStatusCell(it,readonly)}</td>
     <td rowspan="${span}">${backlogTshirtCell(it,readonly)}</td>
-    <td rowspan="${span}" style="text-align:center;font-weight:700">${round1(it.totalEffort)}</td>`;
+    <td rowspan="${span}" style="text-align:center;font-weight:700" title="${esc(it.jira?`Jira: исходная ${it.jira.original_estimate_days??'—'} чел/дн; уточнённая ${it.jira.refined_estimate_days??'—'} чел/дн`:'')}">${round1(it.totalEffort)}${it.jira&&it.jira.refined_estimate_days!==null&&it.jira.refined_estimate_days!==undefined?`<div class="muted" style="font-size:10px">Jira: ${round1(it.jira.refined_estimate_days)}</div>`:''}</td>`;
   const delCell=readonly?`<td class="row-del-cell" rowspan="${span}"></td>`:`<td class="row-del-cell" rowspan="${span}"><button class="row-del" data-bk-delrow="${esc(it._uid)}" title="Удалить инициативу">✕</button></td>`;
   return `<tr class="exec-row" data-bk-row="${esc(it._uid)}">${lead}${ownerCompsBlockHTML(it,'bk',readonly)}${delCell}</tr>`;
 }
@@ -412,23 +433,21 @@ function bindBacklog(){
     if(!id){ toast('Введите № Issue',{type:'warn'}); issInput.focus(); return; }
     const tf=state.ui.backlogTeamFilter;
     const owner=tf||(backlogTeamRefs(tribe)[0]&&backlogTeamRefs(tribe)[0].name)||'';
-    const executor=owner?{
-      team:owner,
-      effort_by_competency:Object.fromEntries(backlogTeamCompetencies(owner).map(code=>[code,0])),
-    }:null;
+    const button=$('#bkAddIssue');
     try{
       clearColFilters('bk');
-      await executeBacklogCommand('/backlog-board/items','POST',{
-        tribe,issue_key:id,title:'',description:'',product:'',owner_team:owner,
-        initiative_type:'',target_year:null,target_quarter:null,
-        customer_priority:'',team_priority:'',status:'Нет оценки',tshirt_size:'',tags:[],systems:[],
-        executors:executor?[executor]:[],
-      });
+      if(button){button.disabled=true;button.textContent='Загрузка из Jira…';}
+      const result=await importBacklogItemFromJira(id,tribe,owner);
       issInput.value='';
-      toast(`Инициатива ${id} создана. Заполните поля вручную.`,{type:'success'});
-      const created=backlogRows().find(row=>row.issue_key.toLowerCase()===id.toLowerCase());
+      toast(`Инициатива ${result.jira.issue_key} загружена из Jira.`,{type:'success'});
+      if(result.warnings&&result.warnings.length){
+        toast(result.warnings.join('. '),{type:'warn',title:'Импорт выполнен с предупреждениями',timeout:9000});
+      }
+      const created=backlogRows().find(row=>row.issue_key.toLowerCase()===result.jira.issue_key.toLowerCase());
       if(created) flashBacklogRow(created.id);
-    }catch(_){ }
+    }catch(_){
+      if(button){button.disabled=false;button.textContent='Добавить по № Issue';}
+    }
   };
   // Показать только что созданную строку: прокрутить к ней, подсветить и поставить курсор в «Название».
   function flashBacklogRow(u){

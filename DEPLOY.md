@@ -45,6 +45,9 @@ chmod 600 .env.production
 - `SESSION_COOKIE_SECURE=true`;
 - уникальный случайный `SESSION_SECRET`;
 - временные пилотные пользователи без демонстрационных паролей.
+- `JIRA_ENABLED=true` и IFT URL Jira;
+- сервисные `JIRA_USERNAME`/`JIRA_PASSWORD` без хранения в Git;
+- доверенный корпоративный CA через системное хранилище или `JIRA_CA_BUNDLE`.
 
 Секреты нельзя добавлять в Git, архив с кодом или YAML.
 
@@ -88,7 +91,8 @@ docker compose -f docker-compose.prod.yml logs --tail=100 api frontend
 ```
 
 Ожидаемый health-ответ: `{"status":"ok"}`. Дополнительно проверяются вход, открытие
-интерфейса, запись события в `audit_events` и восстановление после перезапуска контейнеров.
+интерфейса, импорт тестового Issue из Jira, запись события в `audit_events` и
+восстановление после перезапуска контейнеров.
 
 ## Обновление
 

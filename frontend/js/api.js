@@ -29,6 +29,7 @@ async function cycleApi(path,options={}){
 }
 function apiPermission(path,method='GET'){
   const clean=String(path).split('?')[0],read=String(method).toUpperCase()==='GET';
+  if(clean==='/backlog-board/items/from-jira')return 'backlog:write';
   if(clean.startsWith('/backlog-board'))return read?'backlog:read':'backlog:write';
   if(clean.includes('/pre-pi')||/\/pi-cycles\/[^/]+\/initiatives(?:\/|$)/.test(clean))return read?'pre_pi:read':'pre_pi:write';
   if(clean.includes('/goals-board')||/\/pi-cycles\/[^/]+\/goals(?:\/|$)/.test(clean))return read?'goals:read':'goals:write';

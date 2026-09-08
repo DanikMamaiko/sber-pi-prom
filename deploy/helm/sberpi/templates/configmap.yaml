@@ -12,6 +12,12 @@ data:
   SESSION_TTL_MINUTES: {{ .Values.config.sessionTtlMinutes | quote }}
   SESSION_COOKIE_NAME: {{ .Values.config.sessionCookieName | quote }}
   SESSION_COOKIE_SECURE: {{ .Values.config.sessionCookieSecure | quote }}
+  JIRA_ENABLED: {{ .Values.config.jiraEnabled | quote }}
+  JIRA_BASE_URL: {{ .Values.config.jiraBaseUrl | quote }}
+  JIRA_VERIFY_SSL: {{ .Values.config.jiraVerifySsl | quote }}
+  JIRA_CA_BUNDLE: {{ .Values.config.jiraCaBundle | quote }}
+  JIRA_TIMEOUT_SECONDS: {{ .Values.config.jiraTimeoutSeconds | quote }}
+  JIRA_WORKDAY_HOURS: {{ .Values.config.jiraWorkdayHours | quote }}
   AUDIT_ENABLED: {{ .Values.config.auditEnabled | quote }}
   AUDIT_SOURCE_SERVICE: {{ .Values.config.auditSourceService | quote }}
   AUDIT_HOST_IP: {{ .Values.config.auditHostIp | quote }}

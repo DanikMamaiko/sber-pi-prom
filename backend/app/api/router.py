@@ -5,6 +5,7 @@ from app.api import (
     auth,
     backlog,
     goals,
+    jira,
     navigation,
     pi_cycle_data,
     pre_pi,
@@ -19,6 +20,7 @@ api_router.include_router(auth.router)
 api_router.include_router(navigation.router)
 api_router.include_router(pi_cycle_data.router)
 api_router.include_router(backlog.router)
+api_router.include_router(jira.router)
 api_router.include_router(pre_pi.router)
 api_router.include_router(goals.router)
 api_router.include_router(team_boards.router)

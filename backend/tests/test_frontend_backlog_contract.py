@@ -34,7 +34,8 @@ def test_each_backlog_action_uses_a_dedicated_command_and_server_response():
     assert "backlogScopedPath(path)" in mutation
     assert "expected_version:backlogBoard.version" in mutation
     assert "applyBacklogBoard(await backlogMutation" in source
-    assert "'/backlog-board/items','POST'" in source
+    assert "'/backlog-board/items/from-jira'" in source
+    assert "applyBacklogBoard(result.board)" in source
     assert "'PATCH',payload" in source
     assert "'DELETE',{},true" in source
     assert "'/backlog-board/order','PUT'" in source
@@ -71,6 +72,17 @@ def test_backlog_keeps_the_prototype_structure_and_empty_states():
 
     assert "+ Команда-исполнитель" not in view
     assert "data-bk-execadd" not in view
+
+
+def test_add_by_issue_imports_from_jira_and_surfaces_mapping_warnings():
+    source = _source()
+    start = source.index("const addByIssue=async()=>")
+    handler = source[start : source.index("// Показать только что созданную строку", start)]
+
+    assert "importBacklogItemFromJira(id,tribe,owner)" in handler
+    assert "Загрузка из Jira…" in handler
+    assert "result.warnings" in handler
+    assert "Заполните поля вручную" not in handler
 
 
 def test_backlog_competencies_follow_the_board_owner_not_the_task_owner():
