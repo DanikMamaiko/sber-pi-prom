@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     session_cookie_name: str = "sberpi_session"
     session_cookie_secure: bool = False
 
+    jira_enabled: bool = False
+    jira_base_url: str = "https://jira-apptst-ift.sigma-belpsb.by/jira"
+    jira_username: str = ""
+    jira_password: str = ""
+    jira_verify_ssl: bool = True
+    jira_ca_bundle: str = ""
+    jira_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
+    jira_workday_hours: float = Field(default=8.0, gt=0.0, le=24.0)
+
     audit_enabled: bool = True
     # Empty means that audit events are stored in the main PostgreSQL database.
     # A separate URL remains supported for local development and legacy deployments.
@@ -64,6 +73,15 @@ class Settings(BaseSettings):
     @property
     def effective_audit_database_url(self) -> str:
         return self.audit_database_url.strip() or self.database_url
+
+    @property
+    def jira_is_configured(self) -> bool:
+        return bool(
+            self.jira_enabled
+            and self.jira_base_url.strip()
+            and self.jira_username.strip()
+            and self.jira_password
+        )
 
 
 @lru_cache

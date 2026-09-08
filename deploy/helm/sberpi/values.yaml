@@ -40,7 +40,8 @@ serviceAccount:
   name: ""
 
 # This secret must already exist in the target namespace before helm install.
-# Required keys: DATABASE_URL, SESSION_SECRET, AUTH_TEST_USERS.
+# Required keys: DATABASE_URL, SESSION_SECRET, AUTH_TEST_USERS,
+# JIRA_USERNAME and JIRA_PASSWORD when config.jiraEnabled is true.
 secrets:
   existingSecret: sberpi-secrets
 
@@ -52,6 +53,12 @@ config:
   sessionTtlMinutes: "60"
   sessionCookieName: sberpi_session
   sessionCookieSecure: "true"
+  jiraEnabled: "false"
+  jiraBaseUrl: https://jira-apptst-ift.sigma-belpsb.by/jira
+  jiraVerifySsl: "true"
+  jiraCaBundle: ""
+  jiraTimeoutSeconds: "10"
+  jiraWorkdayHours: "8"
   auditEnabled: "true"
   auditSourceService: sberpi-api
   auditHostIp: ""

@@ -260,6 +260,7 @@ async def read_backlog_board(
                 sent_to=list(item.sent_to or []),
                 sort_order=item.sort_order,
                 total_effort=_item_effort(item),
+                jira=dict(item.jira_issue_data) if item.jira_issue_data else None,
                 executors=[
                     {
                         "id": executor.id,
@@ -475,7 +476,7 @@ async def create_backlog_item(
     session: AsyncSession,
     payload: BacklogItemCommand,
     cycle_id: uuid.UUID | None = None,
-) -> None:
+) -> BacklogItem:
     issue_key = normalize_issue_key(payload.issue_key)
     if await session.scalar(
         select(BacklogItem).where(func.lower(BacklogItem.issue_key) == issue_key.casefold())
@@ -493,6 +494,7 @@ async def create_backlog_item(
     cycle_context = await cycle_team_context(session, cycle_id) if cycle_id else None
     await _apply_item_fields(session, item, payload, {}, {}, cycle_context)
     await _mark_board_initialized(session)
+    return item
 
 
 async def update_backlog_item(

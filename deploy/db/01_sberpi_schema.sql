@@ -121,6 +121,7 @@ CREATE TABLE public.backlog_items (
     status character varying(80) NOT NULL,
     tags jsonb NOT NULL,
     systems jsonb NOT NULL,
+    jira_issue_data jsonb DEFAULT '{}'::jsonb NOT NULL,
     sent_to jsonb NOT NULL,
     sort_order integer NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,

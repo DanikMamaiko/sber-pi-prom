@@ -109,6 +109,7 @@ class BacklogBoardItemRead(BacklogItemFields):
     sort_order: int
     sent_to: list[str] = Field(default_factory=list)
     total_effort: float = 0.0
+    jira: dict | None = None
     executors: list[BacklogBoardExecutorRead] = Field(default_factory=list)
 
 

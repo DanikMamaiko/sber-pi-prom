@@ -40,6 +40,7 @@ class BacklogItem(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(80), default="not_estimated")
     tags: Mapped[list] = mapped_column(JSONB, default=list)
     systems: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    jira_issue_data: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     sent_to: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
