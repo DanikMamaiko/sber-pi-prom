@@ -3,7 +3,8 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY backend/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1 \
+    && python -m pip install --no-cache-dir -r /app/requirements.txt
 
 COPY backend/app /app/app
 COPY backend/alembic.ini /app/alembic.ini
