@@ -80,9 +80,10 @@ def test_add_by_issue_imports_from_jira_and_surfaces_mapping_warnings():
     handler = source[start : source.index("// Показать только что созданную строку", start)]
 
     assert "importBacklogItemFromJira(id,tribe,owner)" in handler
-    assert "Загрузка из Jira…" in handler
+    assert "Проверка Jira…" in handler
+    assert "result.jira" in handler
+    assert "создана без данных Jira" in handler
     assert "result.warnings" in handler
-    assert "Заполните поля вручную" not in handler
 
 
 def test_backlog_competencies_follow_the_board_owner_not_the_task_owner():

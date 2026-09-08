@@ -253,6 +253,25 @@ def jira_issue_to_backlog_command(
     )
 
 
+def empty_backlog_command(
+    issue_key: str,
+    source: JiraBacklogImportCommand,
+) -> BacklogItemCommand:
+    """Build the minimal initiative used when Jira cannot supply issue data."""
+    team = source.fallback_team.strip()
+    return BacklogItemCommand(
+        tribe=source.tribe,
+        issue_key=issue_key,
+        owner_team=team,
+        executors=(
+            [BacklogBoardExecutor(team=team, effort_by_competency={})]
+            if team
+            else []
+        ),
+        expected_version=source.expected_version,
+    )
+
+
 class JiraClient:
     def __init__(
         self,
@@ -302,7 +321,7 @@ class JiraClient:
             raise JiraIssueNotFound(f"Issue {issue_key} не найден в Jira")
         if response.status_code in {401, 403}:
             raise JiraAccessDenied("Jira отклонила учётные данные или права доступа")
-        if response.status_code >= 500:
+        if response.status_code in {408, 429} or response.status_code >= 500:
             raise JiraUnavailable(f"Jira временно недоступна (HTTP {response.status_code})")
         if response.status_code != 200:
             raise JiraInvalidResponse(f"Jira вернула неожиданный HTTP {response.status_code}")

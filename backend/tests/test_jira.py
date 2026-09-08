@@ -12,6 +12,7 @@ from app.services.jira import (
     JiraClient,
     JiraIssueNotFound,
     JiraUnavailable,
+    empty_backlog_command,
     jira_issue_to_backlog_command,
     parse_jira_issue,
 )
@@ -133,6 +134,25 @@ def test_import_warns_when_cycle_team_does_not_have_a_jira_competency():
     assert warnings == ["Оценки Jira не перенесены для отсутствующих компетенций: DES"]
 
 
+def test_build_empty_backlog_command_keeps_entered_issue_and_selected_team():
+    source = JiraBacklogImportCommand(
+        issue_key="  FALLBACK-42  ",
+        tribe="Технологии",
+        fallback_team=" ORG-24 ",
+        expected_version=7,
+    )
+
+    command = empty_backlog_command("FALLBACK-42", source)
+
+    assert command.issue_key == "FALLBACK-42"
+    assert command.tribe == "Технологии"
+    assert command.owner_team == "ORG-24"
+    assert command.title == ""
+    assert command.executors[0].team == "ORG-24"
+    assert command.executors[0].effort_by_competency == {}
+    assert command.expected_version == 7
+
+
 @pytest.mark.asyncio
 async def test_jira_client_uses_basic_auth_api_v2_and_explicit_fields():
     captured: dict[str, str] = {}
@@ -164,7 +184,14 @@ async def test_jira_client_uses_basic_auth_api_v2_and_explicit_fields():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status_code", "error_type"),
-    [(404, JiraIssueNotFound), (401, JiraAccessDenied), (403, JiraAccessDenied), (503, JiraUnavailable)],
+    [
+        (404, JiraIssueNotFound),
+        (401, JiraAccessDenied),
+        (403, JiraAccessDenied),
+        (408, JiraUnavailable),
+        (429, JiraUnavailable),
+        (503, JiraUnavailable),
+    ],
 )
 async def test_jira_client_maps_upstream_errors(status_code, error_type):
     settings = Settings(

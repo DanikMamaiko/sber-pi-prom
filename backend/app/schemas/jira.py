@@ -31,5 +31,5 @@ class JiraBacklogImportCommand(BaseModel):
 
 class JiraBacklogImportRead(BaseModel):
     board: BacklogBoardRead
-    jira: JiraIssueRead
+    jira: JiraIssueRead | None = None
     warnings: list[str] = Field(default_factory=list)

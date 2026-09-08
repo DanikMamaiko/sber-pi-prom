@@ -436,14 +436,17 @@ function bindBacklog(){
     const button=$('#bkAddIssue');
     try{
       clearColFilters('bk');
-      if(button){button.disabled=true;button.textContent='Загрузка из Jira…';}
+      if(button){button.disabled=true;button.textContent='Проверка Jira…';}
       const result=await importBacklogItemFromJira(id,tribe,owner);
       issInput.value='';
-      toast(`Инициатива ${result.jira.issue_key} загружена из Jira.`,{type:'success'});
+      const createdKey=result.jira&&result.jira.issue_key||id;
+      toast(result.jira
+        ?`Инициатива ${createdKey} загружена из Jira.`
+        :`Инициатива ${createdKey} создана без данных Jira.`,{type:'success'});
       if(result.warnings&&result.warnings.length){
-        toast(result.warnings.join('. '),{type:'warn',title:'Импорт выполнен с предупреждениями',timeout:9000});
+        toast(result.warnings.join('. '),{type:'warn',title:'Требуется ручное заполнение',timeout:9000});
       }
-      const created=backlogRows().find(row=>row.issue_key.toLowerCase()===result.jira.issue_key.toLowerCase());
+      const created=backlogRows().find(row=>row.issue_key.toLowerCase()===createdKey.toLowerCase());
       if(created) flashBacklogRow(created.id);
     }catch(_){
       if(button){button.disabled=false;button.textContent='Добавить по № Issue';}

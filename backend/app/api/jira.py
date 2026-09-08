@@ -22,6 +22,7 @@ from app.services.jira import (
     JiraIssueNotFound,
     JiraNotConfigured,
     JiraUnavailable,
+    empty_backlog_command,
     jira_issue_to_backlog_command,
 )
 from app.services.optimistic_locking import lock_backlog
@@ -49,6 +50,16 @@ def _jira_http_error(error: Exception) -> HTTPException:
     return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error))
 
 
+def _jira_fallback_warning(error: Exception) -> str:
+    if isinstance(error, JiraIssueNotFound):
+        reason = str(error)
+    elif isinstance(error, JiraNotConfigured):
+        reason = "Jira отключена или не настроена"
+    else:
+        reason = str(error)
+    return f"{reason}. Инициатива создана без данных Jira — заполните поля вручную"
+
+
 @router.post(
     "/backlog-board/items/from-jira",
     response_model=JiraBacklogImportRead,
@@ -64,15 +75,13 @@ async def post_backlog_item_from_jira(
         issue_key = normalize_issue_key(payload.issue_key)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    jira_issue = None
+    fallback_warnings: list[str] = []
     try:
         jira_issue = await jira_client.get_issue(issue_key)
-    except (
-        JiraAccessDenied,
-        JiraInvalidResponse,
-        JiraIssueNotFound,
-        JiraNotConfigured,
-        JiraUnavailable,
-    ) as error:
+    except (JiraIssueNotFound, JiraNotConfigured, JiraUnavailable) as error:
+        fallback_warnings.append(_jira_fallback_warning(error))
+    except (JiraAccessDenied, JiraInvalidResponse) as error:
         raise _jira_http_error(error) from error
 
     # Do not hold a database transaction or row lock while waiting on Jira.
@@ -81,11 +90,16 @@ async def post_backlog_item_from_jira(
     await lock_backlog(session, payload.expected_version)
     try:
         current = await read_backlog_board(session, cycle_id)
-        command, warnings = jira_issue_to_backlog_command(
-            jira_issue, payload, current.reference_data.teams
-        )
+        if jira_issue is None:
+            command = empty_backlog_command(issue_key, payload)
+            warnings = fallback_warnings
+        else:
+            command, warnings = jira_issue_to_backlog_command(
+                jira_issue, payload, current.reference_data.teams
+            )
         item = await create_backlog_item(session, command, cycle_id)
-        item.jira_issue_data = jira_issue.model_dump(mode="json")
+        if jira_issue is not None:
+            item.jira_issue_data = jira_issue.model_dump(mode="json")
         await session.commit()
         return JiraBacklogImportRead(
             board=await read_backlog_board(session, cycle_id),
