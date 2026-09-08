@@ -65,9 +65,14 @@ _ERROR_CODES = {
 }
 
 
+def _request_path(request: Request) -> str:
+    """Return the path used by ASGI routing without re-parsing the Host header."""
+    return str(request.scope.get("path", ""))
+
+
 def _route_template(request: Request) -> str:
     route = request.scope.get("route")
-    return str(getattr(route, "path", request.url.path))
+    return str(getattr(route, "path", _request_path(request)))
 
 
 def _object_type(route: str) -> str:
@@ -166,9 +171,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
         self.host_ip, self.host_name = _host_identity(settings.audit_host_ip)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        if not self.settings.audit_enabled or not request.url.path.startswith("/api/"):
+        request_path = _request_path(request)
+        if not self.settings.audit_enabled or not request_path.startswith("/api/"):
             return await call_next(request)
-        if request.url.path == "/api/health" or request.method == "OPTIONS":
+        if request_path == "/api/health" or request.method == "OPTIONS":
             return await call_next(request)
 
         started_at = datetime.now(timezone.utc)
@@ -237,7 +243,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             session_id=request.state.audit_session_id,
             http_method=request.method,
             http_route=route,
-            http_path=request.url.path,
+            http_path=request_path,
             http_status=status_code,
             error_code=request.state.audit_error_code or _ERROR_CODES.get(status_code),
             details={

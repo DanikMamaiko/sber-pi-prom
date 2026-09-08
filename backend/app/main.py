@@ -38,7 +38,8 @@ async def _cache_control_headers(request: Request, call_next):
     Статику отдаёт nginx, а данные API всегда должны запрашиваться заново.
     """
     response = await call_next(request)
-    if request.url.path.startswith("/api/"):
+    request_path = str(request.scope.get("path", ""))
+    if request_path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

@@ -112,6 +112,23 @@ def test_health_probe_is_not_a_user_audit_event():
     assert sink.events == []
 
 
+def test_malformed_host_cannot_disable_api_audit():
+    sink, previous = _with_memory_sink()
+    try:
+        response = TestClient(app).post(
+            "/api/auth/login",
+            headers={"host": "example.com/ignored?path="},
+            json={"username": "editor", "password": "editor123"},
+        )
+    finally:
+        app.state.audit_sink = previous
+
+    assert response.status_code == 200
+    assert len(sink.events) == 1
+    assert sink.events[0].http_path == "/api/auth/login"
+    assert sink.events[0].action == "authentication.login"
+
+
 def test_audit_database_outage_does_not_change_completed_operation():
     previous = app.state.audit_sink
     app.state.audit_sink = FailingAuditSink()
