@@ -44,7 +44,8 @@ chmod 600 .env.production
 - `CORS_ORIGINS=https://safe.pip.sigma-belpsb.by`;
 - `SESSION_COOKIE_SECURE=true`;
 - уникальный случайный `SESSION_SECRET`;
-- временные пилотные пользователи без демонстрационных паролей.
+- `AUTH_PROVIDER=ldap`, LDAP-параметры ИФТ и техническая учётная запись без хранения
+  её пароля в Git;
 - `JIRA_ENABLED=true` и IFT URL Jira;
 - сервисные `JIRA_USERNAME`/`JIRA_PASSWORD` без хранения в Git;
 - доверенный корпоративный CA через системное хранилище или `JIRA_CA_BUNDLE`.

@@ -99,7 +99,7 @@ function renderLoginScreen(message=''){
     <div class="auth-logo">SberPI</div>
     <div class="auth-kicker">Платформа планирования</div>
     <h1>Вход в систему</h1>
-    <p class="auth-copy">Используйте тестовую учётную запись, назначенную администратором.</p>
+    <p class="auth-copy">Используйте корпоративную учётную запись, которой предоставлен доступ к SberPI.</p>
     ${message?`<div class="auth-error" role="alert">${escapeAuthText(message)}</div>`:''}
     <label class="auth-field"><span>Логин</span><input id="loginUsername" name="username" autocomplete="username" required autofocus></label>
     <label class="auth-field"><span>Пароль</span><input id="loginPassword" name="password" type="password" autocomplete="current-password" required></label>

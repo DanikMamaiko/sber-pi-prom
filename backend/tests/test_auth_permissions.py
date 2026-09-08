@@ -1,6 +1,7 @@
 import pytest
 
 from app.auth.permissions import ALL_PERMISSIONS, Permission, ROLE_PERMISSIONS, permissions_for_roles
+from app.auth import providers
 from app.auth.providers import AuthProviderUnavailable, LdapAuthProvider, LocalAuthProvider
 
 
@@ -88,7 +89,122 @@ def test_local_provider_rejects_invalid_configuration(raw_users):
         LocalAuthProvider(raw_users)
 
 
+class _FakeAttribute:
+    def __init__(self, *, value=None, values=()):
+        self.value = value
+        self.values = list(values)
+
+
+class _FakeEntry:
+    entry_dn = "CN=Test User,OU=Users ALL,DC=belpsb,DC=by"
+
+    def __init__(self, groups):
+        self.sAMAccountName = _FakeAttribute(value="test.user")
+        self.memberOf = _FakeAttribute(values=groups)
+
+    def __contains__(self, attribute):
+        return attribute in {"sAMAccountName", "memberOf"}
+
+
+def _ldap_provider(monkeypatch, *, groups, user_password="domain-secret", service_binds=True):
+    captured = {"connections": [], "search_filter": None}
+
+    class FakeConnection:
+        def __init__(self, _server, *, user, password, **_kwargs):
+            self.user = user
+            self.password = password
+            self.entries = []
+            self.result = {"result": 0}
+            captured["connections"].append(self)
+
+        def bind(self):
+            if self.user == "service@belpsb.by":
+                return service_binds
+            if self.password == user_password:
+                return True
+            self.result = {"result": 49}
+            return False
+
+        def search(self, *, search_filter, **_kwargs):
+            captured["search_filter"] = search_filter
+            self.entries = [_FakeEntry(groups)]
+            return True
+
+        def unbind(self):
+            return True
+
+    monkeypatch.setattr(providers, "Server", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(providers, "Connection", FakeConnection)
+    provider = LdapAuthProvider(
+        url="ldap://belpsb.by:389",
+        user_search_base="OU=Users ALL,DC=belpsb,DC=by",
+        user_filter="(cn={username})",
+        bind_dn="service@belpsb.by",
+        bind_password="service-secret",
+        use_tls=False,
+        role_groups={
+            "admin": "CN=SberPI-Admins,OU=SberPI,DC=belpsb,DC=by",
+            "planning_editor": "CN=SberPI-PlanningEditors,OU=SberPI,DC=belpsb,DC=by",
+            "business_viewer": "CN=SberPI-BusinessViewers,OU=SberPI,DC=belpsb,DC=by",
+            "viewer": "CN=SberPI-Viewers,OU=SberPI,DC=belpsb,DC=by",
+        },
+    )
+    return provider, captured
+
+
 @pytest.mark.asyncio
-async def test_ldap_skeleton_never_falls_back_to_local_users():
+async def test_ldap_authenticates_user_and_maps_direct_groups(monkeypatch):
+    provider, _captured = _ldap_provider(
+        monkeypatch,
+        groups=(
+            "CN=SberPI-PlanningEditors,OU=SberPI,DC=belpsb,DC=by",
+            "CN=SberPI-Viewers,OU=SberPI,DC=belpsb,DC=by",
+        ),
+    )
+
+    identity = await provider.authenticate("test.user", "domain-secret")
+
+    assert identity is not None
+    assert identity.username == "test.user"
+    assert identity.roles == ("planning_editor", "viewer")
+    assert identity.provider == "ldap"
+
+
+@pytest.mark.asyncio
+async def test_ldap_rejects_wrong_password_and_non_member(monkeypatch):
+    provider, _captured = _ldap_provider(
+        monkeypatch,
+        groups=("CN=SberPI-Viewers,OU=SberPI,DC=belpsb,DC=by",),
+    )
+    assert await provider.authenticate("test.user", "wrong") is None
+
+    provider, captured = _ldap_provider(
+        monkeypatch,
+        groups=("CN=SomeOtherGroup,OU=Groups,DC=belpsb,DC=by",),
+    )
+    assert await provider.authenticate("test.user", "domain-secret") is None
+    assert len(captured["connections"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_ldap_escapes_username_in_search_filter(monkeypatch):
+    provider, captured = _ldap_provider(
+        monkeypatch,
+        groups=("CN=SberPI-Viewers,OU=SberPI,DC=belpsb,DC=by",),
+    )
+
+    await provider.authenticate("*)(cn=*)", "domain-secret")
+
+    assert captured["search_filter"] == r"(cn=\2a\29\28cn=\2a\29)"
+
+
+@pytest.mark.asyncio
+async def test_ldap_provider_unavailability_never_falls_back_to_local(monkeypatch):
+    provider, _captured = _ldap_provider(
+        monkeypatch,
+        groups=(),
+        service_binds=False,
+    )
+
     with pytest.raises(AuthProviderUnavailable):
-        await LdapAuthProvider().authenticate("admin", "admin123")
+        await provider.authenticate("admin", "admin123")

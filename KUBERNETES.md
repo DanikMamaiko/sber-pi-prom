@@ -9,6 +9,7 @@
 - hostname приложения, `ingressClassName` и имя TLS Secret;
 - строку подключения к PostgreSQL и требования к SSL;
 - подтверждение сетевого доступа из namespace `sberpi` к PostgreSQL;
+- подтверждение DNS и сетевого доступа из namespace `sberpi` к `belpsb.by:389`;
 - решение по миграциям: их запускает Helm или DBA применяет `deploy/db/01_sberpi_schema.sql`;
 - лимиты CPU/RAM, если предложенные значения не подходят политике кластера.
 
@@ -70,7 +71,8 @@ Copy-Item .\deploy\k8s\sberpi-secrets.example.env .\sberpi.secrets.env
 ```
 
 Пароль внутри `DATABASE_URL` должен быть URL-кодирован. Для ИФТ также заполнить
-`JIRA_USERNAME` и `JIRA_PASSWORD`. После заполнения создать Secret:
+`LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`, `JIRA_USERNAME` и `JIRA_PASSWORD`. После
+заполнения создать Secret:
 
 ```powershell
 kubectl -n sberpi create secret generic sberpi-secrets `
@@ -103,6 +105,8 @@ Copy-Item .\deploy\helm\sberpi\values-corporate.example.yaml `
 - Ingress class и при необходимости TLS Secret;
 - доверенные CIDR ingress-прокси, если их предоставили администраторы.
 - `config.jiraEnabled=true`, IFT URL и параметры проверки TLS Jira.
+- `config.authProvider=ldap`; LDAP URL, база поиска и четыре DN ролевых групп уже
+  заданы по параметрам ИФТ и при необходимости переопределяются в локальном values-файле.
 
 Проверка перед установкой:
 
@@ -144,7 +148,9 @@ kubectl -n sberpi get jobs
 kubectl -n sberpi logs job/sberpi-migrate
 ```
 
-После успешного запуска проверить в браузере вход, чтение и изменение данных, а также появление записей в `audit_events`.
+После успешного запуска проверить вход доменными пользователями из каждой из четырёх
+групп, отказ пользователю вне этих групп, чтение и изменение данных, а также появление
+записей в `audit_events`.
 
 ## Обновление и откат
 

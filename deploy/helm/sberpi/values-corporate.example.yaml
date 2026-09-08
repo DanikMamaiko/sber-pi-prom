@@ -18,6 +18,7 @@ secrets:
 
 config:
   corsOrigins: https://CHANGE_ME_APPLICATION_HOST
+  authProvider: ldap
   auditTrustedProxyNetworks: "CHANGE_ME_CLUSTER_PROXY_CIDRS"
   jiraEnabled: "true"
   jiraBaseUrl: https://jira-apptst-ift.sigma-belpsb.by/jira

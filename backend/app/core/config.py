@@ -43,19 +43,33 @@ class Settings(BaseSettings):
     audit_connect_timeout_seconds: int = Field(default=3, ge=1, le=30)
     audit_retry_seconds: int = Field(default=30, ge=1, le=3600)
 
-    ad_group_admin: str = "SBERPI_ADMIN"
-    ad_group_planning_editor: str = "SBERPI_PLANNING_EDITOR"
-    ad_group_business_viewer: str = "SBERPI_BUSINESS_VIEWER"
+    ad_group_admin: str = (
+        "CN=SberPI-Admins,OU=SberPI,OU=Groups for soft access,"
+        "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+    )
+    ad_group_planning_editor: str = (
+        "CN=SberPI-PlanningEditors,OU=SberPI,OU=Groups for soft access,"
+        "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+    )
+    ad_group_business_viewer: str = (
+        "CN=SberPI-BusinessViewers,OU=SberPI,OU=Groups for soft access,"
+        "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+    )
+    ad_group_viewer: str = (
+        "CN=SberPI-Viewers,OU=SberPI,OU=Groups for soft access,"
+        "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+    )
 
-    ldap_url: str = "ldaps://ad.company.local:636"
-    ldap_base_dn: str = "DC=company,DC=local"
-    ldap_user_search_base: str = "OU=Users,DC=company,DC=local"
-    ldap_user_filter: str = "(sAMAccountName={username})"
-    ldap_group_search_base: str = "OU=Groups,DC=company,DC=local"
+    ldap_url: str = "ldap://belpsb.by:389"
+    ldap_base_dn: str = "DC=belpsb,DC=by"
+    ldap_user_search_base: str = "OU=Users ALL,DC=belpsb,DC=by"
+    ldap_user_filter: str = "(cn={username})"
+    ldap_group_search_base: str = "OU=Groups,OU=Tech,DC=belpsb,DC=by"
     ldap_group_filter: str = "(member={user_dn})"
     ldap_bind_dn: str = ""
     ldap_bind_password: str = ""
-    ldap_use_tls: bool = True
+    ldap_use_tls: bool = False
+    ldap_connect_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @property

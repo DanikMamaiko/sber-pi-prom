@@ -40,8 +40,8 @@ serviceAccount:
   name: ""
 
 # This secret must already exist in the target namespace before helm install.
-# Required keys: DATABASE_URL, SESSION_SECRET, AUTH_TEST_USERS,
-# JIRA_USERNAME and JIRA_PASSWORD when config.jiraEnabled is true.
+# Required keys: DATABASE_URL, SESSION_SECRET, LDAP_BIND_DN and LDAP_BIND_PASSWORD
+# when config.authProvider is ldap; JIRA_USERNAME and JIRA_PASSWORD when Jira is enabled.
 secrets:
   existingSecret: sberpi-secrets
 
@@ -49,7 +49,7 @@ config:
   appName: SberPI PI Cycle MVP
   appEnv: production
   corsOrigins: https://sberpi.apps.k8s-ift.sigma-belpsb.by
-  authProvider: local
+  authProvider: ldap
   sessionTtlMinutes: "60"
   sessionCookieName: sberpi_session
   sessionCookieSecure: "true"
@@ -65,16 +65,18 @@ config:
   auditTrustedProxyNetworks: ""
   auditConnectTimeoutSeconds: "3"
   auditRetrySeconds: "30"
-  adGroupAdmin: SBERPI_ADMIN
-  adGroupPlanningEditor: SBERPI_PLANNING_EDITOR
-  adGroupBusinessViewer: SBERPI_BUSINESS_VIEWER
-  ldapUrl: ldaps://ad.company.local:636
-  ldapBaseDn: DC=company,DC=local
-  ldapUserSearchBase: OU=Users,DC=company,DC=local
-  ldapUserFilter: "(sAMAccountName={username})"
-  ldapGroupSearchBase: OU=Groups,DC=company,DC=local
+  adGroupAdmin: CN=SberPI-Admins,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=belpsb,DC=by
+  adGroupPlanningEditor: CN=SberPI-PlanningEditors,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=belpsb,DC=by
+  adGroupBusinessViewer: CN=SberPI-BusinessViewers,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=belpsb,DC=by
+  adGroupViewer: CN=SberPI-Viewers,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=belpsb,DC=by
+  ldapUrl: ldap://belpsb.by:389
+  ldapBaseDn: DC=belpsb,DC=by
+  ldapUserSearchBase: OU=Users ALL,DC=belpsb,DC=by
+  ldapUserFilter: "(cn={username})"
+  ldapGroupSearchBase: OU=Groups,OU=Tech,DC=belpsb,DC=by
   ldapGroupFilter: "(member={user_dn})"
-  ldapUseTls: "true"
+  ldapUseTls: "false"
+  ldapConnectTimeoutSeconds: "5"
 
 migrations:
   enabled: true

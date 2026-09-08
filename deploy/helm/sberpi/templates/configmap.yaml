@@ -27,6 +27,7 @@ data:
   AD_GROUP_ADMIN: {{ .Values.config.adGroupAdmin | quote }}
   AD_GROUP_PLANNING_EDITOR: {{ .Values.config.adGroupPlanningEditor | quote }}
   AD_GROUP_BUSINESS_VIEWER: {{ .Values.config.adGroupBusinessViewer | quote }}
+  AD_GROUP_VIEWER: {{ .Values.config.adGroupViewer | quote }}
   LDAP_URL: {{ .Values.config.ldapUrl | quote }}
   LDAP_BASE_DN: {{ .Values.config.ldapBaseDn | quote }}
   LDAP_USER_SEARCH_BASE: {{ .Values.config.ldapUserSearchBase | quote }}
@@ -34,3 +35,4 @@ data:
   LDAP_GROUP_SEARCH_BASE: {{ .Values.config.ldapGroupSearchBase | quote }}
   LDAP_GROUP_FILTER: {{ .Values.config.ldapGroupFilter | quote }}
   LDAP_USE_TLS: {{ .Values.config.ldapUseTls | quote }}
+  LDAP_CONNECT_TIMEOUT_SECONDS: {{ .Values.config.ldapConnectTimeoutSeconds | quote }}
