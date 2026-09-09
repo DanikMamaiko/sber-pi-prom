@@ -8,7 +8,8 @@ api:
   image:
     repository: nexus.example.local/sberpi/sberpi-api
     tag: "0.1.0"
-    pullPolicy: IfNotPresent
+    digest: ""
+    pullPolicy: Always
   service:
     port: 8000
   resources:
@@ -24,7 +25,8 @@ frontend:
   image:
     repository: nexus.example.local/sberpi/sberpi-frontend
     tag: "0.1.0"
-    pullPolicy: IfNotPresent
+    digest: ""
+    pullPolicy: Always
   service:
     port: 80
   resources:
@@ -44,6 +46,8 @@ serviceAccount:
 # when config.authProvider is ldap; JIRA_USERNAME and JIRA_PASSWORD when Jira is enabled.
 secrets:
   existingSecret: sberpi-secrets
+  # files (preferred) or env (legacy compatibility). Restart pods after rotation.
+  mode: files
 
 config:
   appName: SberPI PI Cycle MVP
@@ -100,3 +104,21 @@ podLabels: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Enable after the platform team supplies destinations and confirms CNI support.
+# Empty peers never mean allow-all. For a separate audit DB include both peers.
+networkPolicy:
+  enabled: false
+  ingressPeers: []
+  dnsPeers:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+  database:
+    port: 5432
+    peers: []
+  # Kubernetes egress rules for LDAP, Jira and other approved API dependencies.
+  apiExtraEgress: []

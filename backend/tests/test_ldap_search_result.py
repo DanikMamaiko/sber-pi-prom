@@ -1,3 +1,5 @@
+from auth_fixtures import TEST_SERVICE_PASSWORD
+
 import pytest
 from ldap3 import MOCK_SYNC, Connection, Server
 
@@ -11,10 +13,10 @@ async def test_empty_user_search_is_distinguished_from_invalid_base(monkeypatch,
     bind_dn = "CN=Service,DC=example,DC=test"
     search_base = "OU=Users,DC=example,DC=test"
     connection = Connection(
-        server, user=bind_dn, password="test-only", client_strategy=MOCK_SYNC,
+        server, user=bind_dn, password=TEST_SERVICE_PASSWORD, client_strategy=MOCK_SYNC,
         check_names=False,
     )
-    connection.strategy.add_entry(bind_dn, {"userPassword": "test-only", "objectClass": "person"})
+    connection.strategy.add_entry(bind_dn, {"userPassword": TEST_SERVICE_PASSWORD, "objectClass": "person"})
     if base_exists:
         connection.strategy.add_entry(search_base, {"objectClass": "organizationalUnit"})
     provider = LdapAuthProvider(
@@ -22,7 +24,7 @@ async def test_empty_user_search_is_distinguished_from_invalid_base(monkeypatch,
         user_search_base=search_base,
         user_filter="(cn={username})",
         bind_dn=bind_dn,
-        bind_password="test-only",
+        bind_password=TEST_SERVICE_PASSWORD,
         role_groups={"viewer": "CN=Viewers,DC=example,DC=test"},
     )
     monkeypatch.setattr(provider, "_connection", lambda *args: connection)

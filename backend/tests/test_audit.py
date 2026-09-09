@@ -1,3 +1,5 @@
+from auth_fixtures import INVALID_TEST_PASSWORD, TEST_PASSWORDS
+
 import json
 from unittest.mock import patch
 
@@ -35,7 +37,7 @@ def test_successful_login_and_logout_are_audited_without_secrets():
         with TestClient(app) as client:
             login = client.post(
                 "/api/auth/login",
-                json={"username": "editor", "password": "editor123"},
+                json={"username": "editor", "password": TEST_PASSWORDS["editor"]},
             )
             assert login.status_code == 200
             assert login.headers["x-request-id"]
@@ -52,7 +54,7 @@ def test_successful_login_and_logout_are_audited_without_secrets():
     assert login_event.http_status == 200
     assert login_event.operation_finished_at >= login_event.operation_started_at
     assert login_event.session_id
-    assert "editor123" not in json.dumps(login_event.as_log_dict())
+    assert TEST_PASSWORDS["editor"] not in json.dumps(login_event.as_log_dict())
 
     assert logout_event.action == "authentication.logout"
     assert logout_event.username == "editor"
@@ -65,7 +67,7 @@ def test_failed_login_records_attempted_username_and_reason():
     try:
         response = TestClient(app).post(
             "/api/auth/login",
-            json={"username": "admin", "password": "wrong"},
+            json={"username": "admin", "password": INVALID_TEST_PASSWORD},
         )
     finally:
         app.state.audit_sink = previous
@@ -85,7 +87,7 @@ def test_forbidden_data_access_is_audited():
         with TestClient(app) as client:
             login = client.post(
                 "/api/auth/login",
-                json={"username": "pm", "password": "pm123"},
+                json={"username": "pm", "password": TEST_PASSWORDS["pm"]},
             )
             assert login.status_code == 200
             response = client.get("/api/pi-cycles")
@@ -118,7 +120,7 @@ def test_malformed_host_cannot_disable_api_audit():
         response = TestClient(app).post(
             "/api/auth/login",
             headers={"host": "example.com/ignored?path="},
-            json={"username": "editor", "password": "editor123"},
+            json={"username": "editor", "password": TEST_PASSWORDS["editor"]},
         )
     finally:
         app.state.audit_sink = previous
@@ -139,7 +141,7 @@ def test_audit_database_outage_does_not_change_completed_operation():
         ):
             response = TestClient(app).post(
                 "/api/auth/login",
-                json={"username": "editor", "password": "editor123"},
+                json={"username": "editor", "password": TEST_PASSWORDS["editor"]},
             )
     finally:
         app.state.audit_sink = previous

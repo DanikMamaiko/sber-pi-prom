@@ -2,6 +2,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
+  namespace: {{ .Release.Namespace | quote }}
   name: {{ include "sberpi.fullname" . }}-migrate
   labels:
     {{- include "sberpi.labels" . | nindent 4 }}
@@ -34,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          image: {{ include "sberpi.image" .Values.api.image | quote }}
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
           command: ["sh", "-c"]
           args:
@@ -47,11 +48,19 @@ spec:
           env:
             - name: APP_ENV
               value: {{ .Values.config.appEnv | quote }}
+            - name: AUTH_PROVIDER
+              value: {{ .Values.config.authProvider | quote }}
+            {{- if include "sberpi.secretFiles" . }}
+            - name: SBERPI_SECRETS_DIR
+              value: /run/secrets/sberpi
+            {{- end }}
             - name: AUDIT_ENABLED
               value: {{ .Values.config.auditEnabled | quote }}
+          {{- if not (include "sberpi.secretFiles" .) }}
           envFrom:
             - secretRef:
                 name: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -65,9 +74,20 @@ spec:
               cpu: 500m
               memory: 512Mi
           volumeMounts:
+            {{- if include "sberpi.secretFiles" . }}
+            - name: credentials
+              mountPath: /run/secrets/sberpi
+              readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
       volumes:
+        {{- if include "sberpi.secretFiles" . }}
+        - name: credentials
+          secret:
+            secretName: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
+            defaultMode: 0440
+        {{- end }}
         - name: tmp
           emptyDir: {}
 {{- end }}

@@ -1,6 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  namespace: {{ .Release.Namespace | quote }}
   name: {{ include "sberpi.fullname" . }}-config
   labels:
     {{- include "sberpi.labels" . | nindent 4 }}

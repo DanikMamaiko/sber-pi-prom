@@ -1,3 +1,5 @@
+from auth_fixtures import TEST_SERVICE_PASSWORD
+
 import socket
 from struct import pack
 from unittest.mock import MagicMock
@@ -19,11 +21,11 @@ def test_ldap_socket_opens_with_linux_receive_timeout(
         user_search_base="DC=example,DC=test",
         user_filter="(cn={username})",
         bind_dn="service@example.test",
-        bind_password="test-only-password",
+        bind_password=TEST_SERVICE_PASSWORD,
         role_groups={"viewer": "CN=Viewers,DC=example,DC=test"},
         connect_timeout_seconds=timeout,
     )
-    connection = provider._connection("service@example.test", "test-only-password")
+    connection = provider._connection("service@example.test", TEST_SERVICE_PASSWORD)
     addresses = [
         [socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (f"127.0.0.{i + 1}", 389), None, None]
         for i in range(address_count)

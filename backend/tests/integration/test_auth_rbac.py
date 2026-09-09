@@ -1,3 +1,5 @@
+from auth_fixtures import TEST_PASSWORDS
+
 import pytest
 
 
@@ -15,7 +17,7 @@ async def _login(client, username: str, password: str):
 
 async def test_navigation_requires_auth_and_exposes_only_minimal_cycles(raw_api_client):
     assert (await raw_api_client.get("/app/navigation")).status_code == 401
-    await _login(raw_api_client, "admin", "admin123")
+    await _login(raw_api_client, "admin", TEST_PASSWORDS["admin"])
     created = await raw_api_client.post(
         "/pi-cycles",
         json={"year": 2038, "quarter": "Q2", "start_date": "2038-04-01", "sprint_count": 6},
@@ -53,25 +55,25 @@ async def test_navigation_requires_auth_and_exposes_only_minimal_cycles(raw_api_
     (
         (
             "editor",
-            "editor123",
+            TEST_PASSWORDS["editor"],
             ["backlog", "prep", "goals", "teams", "pb", "risks"],
             {"backlog", "prep", "teams", "pb", "risks"},
         ),
         (
             "po_itl",
-            "poitl123",
+            TEST_PASSWORDS["po_itl"],
             ["backlog", "prep", "goals", "teams", "pb", "risks"],
             {"backlog", "prep", "teams", "pb", "risks"},
         ),
         (
             "pm",
-            "pm123",
+            TEST_PASSWORDS["pm"],
             ["backlog", "prep", "goals", "teams", "pb", "risks"],
             {"prep"},
         ),
         (
             "user",
-            "user123",
+            TEST_PASSWORDS["user"],
             ["backlog", "prep", "goals", "teams", "pb", "risks"],
             set(),
         ),
@@ -100,11 +102,11 @@ async def test_navigation_matches_role_matrix(
 @pytest.mark.parametrize(
     ("username", "password", "year"),
     (
-        ("admin", "admin123", 2041),
-        ("editor", "editor123", 2042),
-        ("po_itl", "poitl123", 2046),
-        ("pm", "pm123", 2043),
-        ("user", "user123", 2044),
+        ("admin", TEST_PASSWORDS["admin"], 2041),
+        ("editor", TEST_PASSWORDS["editor"], 2042),
+        ("po_itl", TEST_PASSWORDS["po_itl"], 2046),
+        ("pm", TEST_PASSWORDS["pm"], 2043),
+        ("user", TEST_PASSWORDS["user"], 2044),
     ),
 )
 async def test_every_role_can_select_and_initialize_any_quarter(
@@ -141,7 +143,7 @@ async def test_select_cycle_requires_authentication(raw_api_client):
 
 
 async def test_pm_can_read_backlog_and_edit_pre_pi_but_not_pi_data(raw_api_client):
-    await _login(raw_api_client, "pm", "pm123")
+    await _login(raw_api_client, "pm", TEST_PASSWORDS["pm"])
 
     # PM получил доступ на просмотр «Бэклога команд».
     assert (await raw_api_client.get("/backlog-board")).status_code == 200

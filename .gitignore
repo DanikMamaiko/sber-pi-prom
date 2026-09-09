@@ -12,6 +12,7 @@ build/
 *.egg-info/
 .DS_Store
 node_modules/
+.tmp-docker-config/
 backups/
 artifacts/
 config.yaml

@@ -26,7 +26,7 @@ cookie-сессия, ролевая модель доступа и read-only и�
 
 ```powershell
 cd "C:\Users\User\Desktop\Сбер работа\sberpi-pi-cycle-mvp"
-copy .env.example .env
+python deploy/scripts/init-local-env.py
 docker compose up --build
 ```
 
@@ -37,15 +37,18 @@ docker compose up --build
 - OpenAPI: http://localhost:8000/docs
 - аудит безопасности хранится в той же PostgreSQL-базе и использует таблицу версий `audit_alembic_version`;
 
-Тестовые пользователи по умолчанию:
+Генератор создаёт `.env` с уникальными случайными паролями и ключом сессии.
+Существующий `.env` он не перезаписывает. Пароли смотрите в `AUTH_TEST_USERS`
+своего локального файла; приведённые ниже значения — только placeholders.
+Пользователей и паролей по умолчанию в приложении нет.
 
 | Логин | Пароль | Роль |
 |---|---|---|
-| `admin` | `admin123` | `admin` |
-| `editor` | `editor123` | `planning_editor` |
-| `po_itl` | `poitl123` | `planning_editor` |
-| `pm` | `pm123` | `business_viewer` |
-| `user` | `user123` | `viewer` |
+| `admin` | `CHANGE_ME_ADMIN_PASSWORD` | `admin` |
+| `editor` | `CHANGE_ME_EDITOR_PASSWORD` | `planning_editor` |
+| `po_itl` | `CHANGE_ME_POITL_PASSWORD` | `planning_editor` |
+| `pm` | `CHANGE_ME_PM_PASSWORD` | `business_viewer` |
+| `user` | `CHANGE_ME_USER_PASSWORD` | `viewer` |
 
 Сессия истекает ровно через 60 минут от входа и не продлевается активностью. После
 истечения приложение автоматически возвращает пользователя на экран входа. Перед
@@ -69,22 +72,25 @@ UI обслуживается frontend-контейнером nginx на `:8080`
 
 ## Тесты
 
-Быстрые unit/schema-тесты:
+Быстрые unit/schema-тесты (без внешней БД):
 
 ```powershell
 cd backend
-python -m pytest -q tests/test_planning.py
+python -m pytest -q tests --ignore=tests/integration
 ```
 
 Полный набор с интеграционными API-тестами на отдельном Postgres:
 
 ```powershell
 cd "C:\Users\User\Desktop\Сбер работа\sberpi-pi-cycle-mvp"
+$env:POSTGRES_PASSWORD = python -c "import secrets; print(secrets.token_urlsafe(32))"
 docker compose -f docker-compose.test.yml up -d --wait
 cd backend
-$env:TEST_DATABASE_URL='postgresql+asyncpg://sberpi:sberpi@localhost:5433/sberpi_test'
+$env:TEST_DATABASE_URL="postgresql+asyncpg://sberpi:$env:POSTGRES_PASSWORD@localhost:5433/sberpi_test"
 python -m pytest -q
 ```
+
+Без `TEST_DATABASE_URL` интеграционные тесты пропускаются с явной причиной.
 
 Полный набор включает unit-, архитектурные и интеграционные сценарии на PostgreSQL 16.
 Отдельные сценарии проверяют optimistic locking PI-цикла и общего бэклога: устаревшая
@@ -120,3 +126,16 @@ docs/
 
 Архитектурный шаблон для реализации следующих вкладок описан в
 [`docs/golden-standard-tab.md`](docs/golden-standard-tab.md).
+
+## Настройки после исправлений безопасности
+
+При обновлении существующего локального `.env` добавьте `POSTGRES_PASSWORD`, совпадающий
+с паролем базы в `DATABASE_URL`, и явно задайте `AUTH_TEST_USERS` и `SESSION_SECRET`.
+Изменение env не меняет пароль в уже созданном PostgreSQL volume: для такой базы пароль
+нужно согласованно менять в PostgreSQL и настройках. Генератор рассчитан на новый запуск.
+При ручном заполнении `.env.example` замените все `CHANGE_ME`; пароль в URL должен быть
+URL-кодирован. Ключ сессии генерируйте случайно, рекомендуемая длина — не менее 32 символов.
+Скрипт `backend/verify_regressions.py` требует `VERIFY_USERNAME` и `VERIFY_PASSWORD`;
+он изменяет данные выбранного PI-цикла, поэтому предназначен для тестового контура.
+
+Итоги исправлений и статусы замечаний: [SECURITY_FINDINGS_RESOLUTION.md](SECURITY_FINDINGS_RESOLUTION.md).

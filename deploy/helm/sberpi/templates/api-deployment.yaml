@@ -1,6 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: {{ .Release.Namespace | quote }}
   name: {{ include "sberpi.fullname" . }}-api
   labels:
     {{- include "sberpi.labels" . | nindent 4 }}
@@ -41,7 +42,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          image: {{ include "sberpi.image" .Values.api.image | quote }}
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -51,8 +52,15 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "sberpi.fullname" . }}-config
+            {{- if not (include "sberpi.secretFiles" .) }}
             - secretRef:
                 name: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
+            {{- end }}
+          {{- if include "sberpi.secretFiles" . }}
+          env:
+            - name: SBERPI_SECRETS_DIR
+              value: /run/secrets/sberpi
+          {{- end }}
           ports:
             - name: http
               containerPort: 8000
@@ -76,9 +84,20 @@ spec:
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
+            {{- if include "sberpi.secretFiles" . }}
+            - name: credentials
+              mountPath: /run/secrets/sberpi
+              readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
       volumes:
+        {{- if include "sberpi.secretFiles" . }}
+        - name: credentials
+          secret:
+            secretName: {{ required "secrets.existingSecret is required" .Values.secrets.existingSecret }}
+            defaultMode: 0440
+        {{- end }}
         - name: tmp
           emptyDir: {}
       {{- with .Values.nodeSelector }}
