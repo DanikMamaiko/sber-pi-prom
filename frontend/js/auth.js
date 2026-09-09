@@ -168,7 +168,9 @@ function renderUserPanel(){
   const panel=document.getElementById('userPanel');
   if(!panel)return;
   if(!currentUser){panel.innerHTML='';return;}
-  panel.innerHTML=`<span class="user-name">${escapeAuthText(currentUser.username)}</span><button class="ghost user-logout" id="logoutButton">Выйти</button>`;
+  const roleNames={admin:'Администратор',planning_editor:'Редактор планирования',business_viewer:'Бизнес-наблюдатель',viewer:'Наблюдатель'};
+  const roles=(currentUser.roles||[]).map(role=>Object.hasOwn(roleNames,role)?roleNames[role]:role).join(', ');
+  panel.innerHTML=`<div class="user-identity"><span class="user-name">Пользователь <strong>${escapeAuthText(currentUser.username)}</strong></span> <span class="user-role">Роль: ${escapeAuthText(roles||'Не указана')}</span></div><button class="ghost user-logout" id="logoutButton">Выйти</button>`;
   document.getElementById('logoutButton').onclick=logoutCurrentUser;
 }
 

@@ -139,7 +139,6 @@ function viewLanding(){
           <h1>Выберите раздел планирования</h1>
           <p>Бюджетирование или PI-цикл</p>
         </div>
-        <div class="landing-chip">Рабочий контур</div>
       </div>
       <div class="landing-choices">
         <div class="landing-card budget-card">
