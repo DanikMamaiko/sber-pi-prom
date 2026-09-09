@@ -1,3 +1,5 @@
+from auth_fixtures import INVALID_TEST_PASSWORD, TEST_PASSWORDS, TEST_SESSION_SECRET
+
 from fastapi.testclient import TestClient
 
 from app.auth.models import AuthIdentity
@@ -10,7 +12,7 @@ def test_successful_login_me_and_logout_cookie_flow():
     with TestClient(app) as client:
         login = client.post(
             "/api/auth/login",
-            json={"username": "editor", "password": "editor123"},
+            json={"username": "editor", "password": TEST_PASSWORDS["editor"]},
         )
         assert login.status_code == 200
         body = login.json()
@@ -36,7 +38,7 @@ def test_successful_login_me_and_logout_cookie_flow():
 def test_bad_credentials_return_401_without_session_cookie():
     response = TestClient(app).post(
         "/api/auth/login",
-        json={"username": "admin", "password": "wrong"},
+        json={"username": "admin", "password": INVALID_TEST_PASSWORD},
     )
 
     assert response.status_code == 401
@@ -48,7 +50,7 @@ def test_protected_api_returns_401_without_session_and_403_without_permission():
         assert client.get("/api/pi-cycles").status_code == 401
         login = client.post(
             "/api/auth/login",
-            json={"username": "pm", "password": "pm123"},
+            json={"username": "pm", "password": TEST_PASSWORDS["pm"]},
         )
         assert login.status_code == 200
         assert client.get("/api/pi-cycles").status_code == 403
@@ -60,7 +62,7 @@ def test_health_remains_public():
 
 def test_session_has_absolute_non_sliding_expiry():
     settings = Settings(
-        session_secret="test-secret",
+        session_secret=TEST_SESSION_SECRET,
         session_ttl_minutes=60,
         _env_file=None,
     )
@@ -82,7 +84,7 @@ def test_session_has_absolute_non_sliding_expiry():
 
 
 def test_tampered_session_is_rejected():
-    settings = Settings(session_secret="test-secret", _env_file=None)
+    settings = Settings(session_secret=TEST_SESSION_SECRET, _env_file=None)
     manager = SessionManager(settings)
     token, _ = manager.create(
         AuthIdentity(username="user", roles=("viewer",), provider="local"),

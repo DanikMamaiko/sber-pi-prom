@@ -1,25 +1,19 @@
 from functools import lru_cache
+import os
+from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "SberPI PI Cycle MVP"
     app_env: str = "local"
-    database_url: str = Field(
-        default="postgresql+asyncpg://sberpi:sberpi@localhost:5432/sberpi"
-    )
+    database_url: str = Field(repr=False)
     cors_origins: str = "http://localhost:8080,http://127.0.0.1:8080"
     auth_provider: str = "local"
-    auth_test_users: str = (
-        "admin:admin123:admin,"
-        "editor:editor123:planning_editor,"
-        "po_itl:poitl123:planning_editor,"
-        "pm:pm123:business_viewer,"
-        "user:user123:viewer"
-    )
-    session_secret: str = "local-development-only-change-me"
+    auth_test_users: str = Field(default="", repr=False)
+    session_secret: str = Field(repr=False)
     session_ttl_minutes: int = Field(default=60, ge=1, le=1440)
     session_cookie_name: str = "sberpi_session"
     session_cookie_secure: bool = False
@@ -27,7 +21,7 @@ class Settings(BaseSettings):
     jira_enabled: bool = False
     jira_base_url: str = "https://jira-apptst-ift.sigma-belpsb.by/jira"
     jira_username: str = ""
-    jira_password: str = ""
+    jira_password: str = Field(default="", repr=False)
     jira_verify_ssl: bool = True
     jira_ca_bundle: str = ""
     jira_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
@@ -36,7 +30,7 @@ class Settings(BaseSettings):
     audit_enabled: bool = True
     # Empty means that audit events are stored in the main PostgreSQL database.
     # A separate URL remains supported for local development and legacy deployments.
-    audit_database_url: str = ""
+    audit_database_url: str = Field(default="", repr=False)
     audit_source_service: str = "sberpi-api"
     audit_host_ip: str = ""
     audit_trusted_proxy_networks: str = ""
@@ -62,15 +56,50 @@ class Settings(BaseSettings):
 
     ldap_url: str = "ldap://sigma-belpsb.by:389"
     ldap_base_dn: str = "DC=sigma-belpsb,DC=by"
-    ldap_user_search_base: str = "OU=Users ALL,DC=sigma-belpsb,DC=by"
-    ldap_user_filter: str = "(cn={username})"
+    ldap_user_search_base: str = "DC=sigma-belpsb,DC=by"
+    ldap_user_filter: str = "(sAMAccountName={username})"
     ldap_group_search_base: str = "OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by"
     ldap_group_filter: str = "(member={user_dn})"
     ldap_bind_dn: str = ""
-    ldap_bind_password: str = ""
+    ldap_bind_password: str = Field(default="", repr=False)
     ldap_use_tls: bool = False
     ldap_connect_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore",
+        hide_input_in_errors=True,
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls, settings_cls, init_settings, env_settings, dotenv_settings,
+        file_secret_settings,
+    ):
+        # Mounted secrets override stale environment / dotenv values.
+        return init_settings, file_secret_settings, env_settings, dotenv_settings
+
+    @field_validator("database_url", "session_secret")
+    @classmethod
+    def require_configured_value(cls, value: str) -> str:
+        if not value.strip() or "CHANGE_ME" in value or "<" in value or value.startswith("replace-with-"):
+            raise ValueError("Set an explicit value; example placeholders are not credentials")
+        return value
+
+    @model_validator(mode="after")
+    def validate_auth_configuration(self):
+        self.auth_provider = self.auth_provider.strip().lower()
+        if self.auth_provider not in {"local", "ldap"}:
+            raise ValueError("AUTH_PROVIDER must be local or ldap")
+        if self.auth_provider == "local":
+            # Also reject malformed/empty users before the application can start.
+            from app.auth.providers import LocalAuthProvider
+
+            if "CHANGE_ME" in self.auth_test_users or "<" in self.auth_test_users:
+                raise ValueError("Replace AUTH_TEST_USERS placeholders with explicit local users")
+            LocalAuthProvider(self.auth_test_users)
+        if self.app_env.strip().lower() not in {"local", "dev", "development", "test"}:
+            if len(self.session_secret) < 32:
+                raise ValueError("SESSION_SECRET must contain at least 32 characters outside development/tests")
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -100,4 +129,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    secrets_dir = os.environ.get("SBERPI_SECRETS_DIR")
+    if secrets_dir and not Path(secrets_dir).is_dir():
+        raise ValueError("SBERPI_SECRETS_DIR must reference an existing mounted secret directory")
+    return Settings(_secrets_dir=secrets_dir)

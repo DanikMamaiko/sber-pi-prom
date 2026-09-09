@@ -1,3 +1,5 @@
+from auth_fixtures import TEST_SERVICE_PASSWORD
+
 import uuid
 
 import httpx
@@ -166,7 +168,7 @@ async def test_jira_client_uses_basic_auth_api_v2_and_explicit_fields():
         jira_enabled=True,
         jira_base_url="https://jira.example.test/jira/",
         jira_username="service-user",
-        jira_password="secret",
+        jira_password=TEST_SERVICE_PASSWORD,
         _env_file=None,
     )
     issue = await JiraClient(settings, transport=httpx.MockTransport(handler)).get_issue(
@@ -198,7 +200,7 @@ async def test_jira_client_maps_upstream_errors(status_code, error_type):
         jira_enabled=True,
         jira_base_url="https://jira.example.test/jira",
         jira_username="service-user",
-        jira_password="secret",
+        jira_password=TEST_SERVICE_PASSWORD,
         _env_file=None,
     )
     transport = httpx.MockTransport(lambda _request: httpx.Response(status_code))

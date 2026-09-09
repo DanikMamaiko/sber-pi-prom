@@ -1,3 +1,5 @@
+from auth_fixtures import INVALID_TEST_PASSWORD, TEST_AUTH_USERS, TEST_LDAP_PASSWORD, TEST_PASSWORDS, TEST_SERVICE_PASSWORD
+
 import pytest
 
 from app.auth.permissions import ALL_PERMISSIONS, Permission, ROLE_PERMISSIONS, permissions_for_roles
@@ -60,19 +62,19 @@ def test_permissions_are_unioned_for_multiple_provider_roles():
 @pytest.mark.asyncio
 async def test_local_provider_authenticates_users_and_rejects_bad_password():
     provider = LocalAuthProvider(
-        "admin:secret:admin,po_itl:pass:planning_editor,user:pass:viewer"
+        TEST_AUTH_USERS
     )
 
-    identity = await provider.authenticate("admin", "secret")
+    identity = await provider.authenticate("admin", TEST_PASSWORDS["admin"])
 
     assert identity is not None
     assert identity.username == "admin"
     assert identity.roles == ("admin",)
-    po_itl = await provider.authenticate("po_itl", "pass")
+    po_itl = await provider.authenticate("po_itl", TEST_PASSWORDS["po_itl"])
     assert po_itl is not None
     assert po_itl.roles == ("planning_editor",)
-    assert await provider.authenticate("admin", "wrong") is None
-    assert await provider.authenticate("missing", "secret") is None
+    assert await provider.authenticate("admin", INVALID_TEST_PASSWORD) is None
+    assert await provider.authenticate("missing", TEST_SERVICE_PASSWORD) is None
 
 
 @pytest.mark.parametrize(
@@ -80,8 +82,8 @@ async def test_local_provider_authenticates_users_and_rejects_bad_password():
     (
         "broken",
         "user::viewer",
-        "user:pass:unknown",
-        "user:one:viewer,user:two:admin",
+        f"user:{TEST_PASSWORDS['user']}:unknown",
+        f"user:{TEST_PASSWORDS['user']}:viewer,user:{INVALID_TEST_PASSWORD}:admin",
     ),
 )
 def test_local_provider_rejects_invalid_configuration(raw_users):
@@ -106,7 +108,7 @@ class _FakeEntry:
         return attribute in {"sAMAccountName", "memberOf"}
 
 
-def _ldap_provider(monkeypatch, *, groups, user_password="domain-secret", service_binds=True):
+def _ldap_provider(monkeypatch, *, groups, user_password=TEST_LDAP_PASSWORD, service_binds=True):
     captured = {"connections": [], "search_filter": None}
 
     class FakeConnection:
@@ -140,7 +142,7 @@ def _ldap_provider(monkeypatch, *, groups, user_password="domain-secret", servic
         user_search_base="OU=Users ALL,DC=sigma-belpsb,DC=by",
         user_filter="(cn={username})",
         bind_dn="service@belpsb.by",
-        bind_password="service-secret",
+        bind_password=TEST_SERVICE_PASSWORD,
         use_tls=False,
         role_groups={
             "admin": "CN=SberPI-Admins,OU=SberPI,DC=sigma-belpsb,DC=by",
@@ -162,7 +164,7 @@ async def test_ldap_authenticates_user_and_maps_direct_groups(monkeypatch):
         ),
     )
 
-    identity = await provider.authenticate("test.user", "domain-secret")
+    identity = await provider.authenticate("test.user", TEST_LDAP_PASSWORD)
 
     assert identity is not None
     assert identity.username == "test.user"
@@ -176,13 +178,13 @@ async def test_ldap_rejects_wrong_password_and_non_member(monkeypatch):
         monkeypatch,
         groups=("CN=SberPI-Viewers,OU=SberPI,DC=sigma-belpsb,DC=by",),
     )
-    assert await provider.authenticate("test.user", "wrong") is None
+    assert await provider.authenticate("test.user", INVALID_TEST_PASSWORD) is None
 
     provider, captured = _ldap_provider(
         monkeypatch,
         groups=("CN=SomeOtherGroup,OU=Groups,DC=sigma-belpsb,DC=by",),
     )
-    assert await provider.authenticate("test.user", "domain-secret") is None
+    assert await provider.authenticate("test.user", TEST_LDAP_PASSWORD) is None
     assert len(captured["connections"]) == 1
 
 
@@ -193,7 +195,7 @@ async def test_ldap_escapes_username_in_search_filter(monkeypatch):
         groups=("CN=SberPI-Viewers,OU=SberPI,DC=sigma-belpsb,DC=by",),
     )
 
-    await provider.authenticate("*)(cn=*)", "domain-secret")
+    await provider.authenticate("*)(cn=*)", TEST_LDAP_PASSWORD)
 
     assert captured["search_filter"] == r"(cn=\2a\29\28cn=\2a\29)"
 
@@ -207,4 +209,4 @@ async def test_ldap_provider_unavailability_never_falls_back_to_local(monkeypatc
     )
 
     with pytest.raises(AuthProviderUnavailable):
-        await provider.authenticate("admin", "admin123")
+        await provider.authenticate("admin", TEST_PASSWORDS["admin"])

@@ -1,3 +1,5 @@
+from auth_fixtures import TEST_PASSWORDS
+
 import os
 import re
 from collections.abc import AsyncIterator
@@ -14,10 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 
-TEST_DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://sberpi:sberpi@localhost:5433/sberpi_test",
-)
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+if not TEST_DATABASE_URL:
+    pytest.skip("Set TEST_DATABASE_URL to a dedicated PostgreSQL *_test database", allow_module_level=True)
 database_name = urlparse(TEST_DATABASE_URL.replace("postgresql+asyncpg", "postgresql")).path.lstrip("/")
 if not database_name.endswith("_test"):
     raise RuntimeError("Integration tests may only use a database whose name ends with _test")
@@ -27,12 +28,6 @@ if not database_name.endswith("_test"):
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["APP_ENV"] = "test"
 os.environ["AUTH_PROVIDER"] = "local"
-os.environ["AUTH_TEST_USERS"] = (
-    "admin:admin123:admin,editor:editor123:planning_editor,"
-    "po_itl:poitl123:planning_editor,"
-    "pm:pm123:business_viewer,user:user123:viewer"
-)
-os.environ["SESSION_SECRET"] = "integration-test-session-secret"
 os.environ["SESSION_TTL_MINUTES"] = "60"
 
 from app.core.config import get_settings  # noqa: E402
@@ -155,7 +150,7 @@ async def raw_api_client(clean_test_database: None) -> AsyncIterator[AsyncClient
 async def api_client(raw_api_client: AsyncClient) -> AsyncIterator[AsyncClient]:
     login = await raw_api_client.post(
         "/auth/login",
-        json={"username": "admin", "password": "admin123"},
+        json={"username": "admin", "password": TEST_PASSWORDS["admin"]},
     )
     login.raise_for_status()
     yield VersionedApiClient(raw_api_client)

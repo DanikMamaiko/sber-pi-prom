@@ -7,14 +7,19 @@ api:
   image:
     repository: CHANGE_ME_NEXUS/sberpi/sberpi-api
     tag: "0.1.0"
+    digest: "sha256:CHANGE_ME"
+    pullPolicy: Always
 
 frontend:
   image:
     repository: CHANGE_ME_NEXUS/sberpi/sberpi-frontend
     tag: "0.1.0"
+    digest: "sha256:CHANGE_ME"
+    pullPolicy: Always
 
 secrets:
   existingSecret: sberpi-secrets
+  mode: files
 
 config:
   corsOrigins: https://CHANGE_ME_APPLICATION_HOST
@@ -38,3 +43,32 @@ ingress:
   #   - secretName: CHANGE_ME_TLS_SECRET
   #     hosts:
   #       - CHANGE_ME_APPLICATION_HOST
+
+networkPolicy:
+  enabled: true
+  ingressPeers:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: CHANGE_ME_INGRESS_NAMESPACE
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: CHANGE_ME_INGRESS_CONTROLLER_LABEL
+  # Adjust dnsPeers for corporate DNS / NodeLocal DNS when necessary.
+  database:
+    port: 5432
+    peers:
+      - ipBlock:
+          cidr: CHANGE_ME_POSTGRES_CIDR
+  apiExtraEgress:
+    - to:
+        - ipBlock:
+            cidr: CHANGE_ME_LDAP_CIDR
+      ports:
+        - protocol: TCP
+          port: 389
+    - to:
+        - ipBlock:
+            cidr: CHANGE_ME_JIRA_CIDR
+      ports:
+        - protocol: TCP
+          port: 443

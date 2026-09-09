@@ -1,3 +1,4 @@
+import os
 import json, urllib.request, urllib.error, http.cookiejar, datetime as dt
 
 BASE = "http://localhost:8000/api"
@@ -20,7 +21,7 @@ def check(cond, msg):
     if not cond: fails.append(msg)
 
 # 1. login
-s, _ = req("/auth/login", "POST", {"username": "admin", "password": "admin123"})
+s, _ = req("/auth/login", "POST", {"username": os.environ["VERIFY_USERNAME"], "password": os.environ["VERIFY_PASSWORD"]})
 check(s == 200, f"login admin (status {s})")
 
 # 2. pick a cycle with start_date; ensure sprint_count>=2

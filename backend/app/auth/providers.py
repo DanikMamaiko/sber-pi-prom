@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 from ldap3 import SUBTREE, Connection, Server
 from ldap3.core.exceptions import LDAPException
-from ldap3.core.results import RESULT_INVALID_CREDENTIALS
+from ldap3.core.results import RESULT_INVALID_CREDENTIALS, RESULT_SUCCESS
 from ldap3.utils.conv import escape_filter_chars
 
 from app.auth.models import AuthIdentity
@@ -142,14 +142,17 @@ class LdapAuthProvider(AuthProvider):
             search_filter = self._user_filter.replace(
                 "{username}", escape_filter_chars(username)
             )
-            if not service_connection.search(
+            service_connection.search(
                 search_base=self._user_search_base,
                 search_filter=search_filter,
                 search_scope=SUBTREE,
                 attributes=["sAMAccountName", "memberOf"],
                 size_limit=2,
                 time_limit=max(1, int(self._receive_timeout)),
-            ):
+            )
+            # ldap3 also returns False for a successful search with no entries.
+            # Use the LDAP result code to distinguish no match from an error.
+            if service_connection.result.get("result") != RESULT_SUCCESS:
                 raise AuthProviderUnavailable("LDAP не выполнил поиск пользователя")
             if len(service_connection.entries) != 1:
                 return None

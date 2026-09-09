@@ -9,7 +9,7 @@
 - hostname приложения, `ingressClassName` и имя TLS Secret;
 - строку подключения к PostgreSQL и требования к SSL;
 - подтверждение сетевого доступа из namespace `sberpi` к PostgreSQL;
-- подтверждение DNS и сетевого доступа из namespace `sberpi` к `belpsb.by:389`;
+- подтверждение DNS и сетевого доступа из namespace `sberpi` к `sigma-belpsb.by:389`;
 - решение по миграциям: их запускает Helm или DBA применяет `deploy/db/01_sberpi_schema.sql`;
 - лимиты CPU/RAM, если предложенные значения не подходят политике кластера.
 
@@ -85,7 +85,7 @@ kubectl -n sberpi create secret generic sberpi-secrets `
 kubectl -n sberpi create secret docker-registry sberpi-nexus-pull `
   --docker-server=NEXUS_HOST `
   --docker-username=USERNAME `
-  --docker-password=PASSWORD
+  --docker-password="$env:NEXUS_PASSWORD"
 ```
 
 Файл `sberpi.secrets.env` игнорируется Git. После создания Secret его следует удалить с диска по корпоративным правилам хранения секретов.
@@ -99,7 +99,8 @@ Copy-Item .\deploy\helm\sberpi\values-corporate.example.yaml `
 
 В `values.local.yaml` заменить все `CHANGE_ME`:
 
-- адреса двух образов в Nexus и их одинаковый тег;
+- адреса двух образов в Nexus и реальные SHA256 digest опубликованных образов;
+- разрешённые CIDR PostgreSQL, LDAP, Jira, labels ingress-контроллера и параметры DNS;
 - имя Nexus pull secret;
 - hostname приложения;
 - Ingress class и при необходимости TLS Secret;
@@ -107,6 +108,26 @@ Copy-Item .\deploy\helm\sberpi\values-corporate.example.yaml `
 - `config.jiraEnabled=true`, IFT URL и параметры проверки TLS Jira.
 - `config.authProvider=ldap`; LDAP URL, база поиска и четыре DN ролевых групп уже
   заданы по параметрам ИФТ и при необходимости переопределяются в локальном values-файле.
+
+Рабочие параметры поиска пользователей в домене Sigma:
+
+```yaml
+config:
+  ldapUrl: ldap://sigma-belpsb.by:389
+  ldapUserSearchBase: DC=sigma-belpsb,DC=by
+  ldapUserFilter: "(sAMAccountName={username})"
+  ldapUseTls: "false"
+```
+
+При входе используется короткий корпоративный логин без домена. Поиск выполняется
+от корня домена во вложенных подразделениях. Старый путь `OU=Users ALL` в этом
+контуре возвращал `32 noSuchObject`; с рабочей базой поиск и вход подтверждены.
+Роль редактора должна быть связана с `SberPI-PlanningEditors`, роль бизнес-просмотра —
+с `SberPI-BusinessViewers`. Полные DN четырёх групп заданы в `values.yaml`.
+
+Применение изменений ConfigMap через текущий Helm chart автоматически обновляет
+backend-поды. После изменения только внешнего Secret нужен перезапуск backend.
+Исправления кода LDAP требуют сборки и развёртывания нового образа backend.
 
 Проверка перед установкой:
 
@@ -164,3 +185,44 @@ helm rollback sberpi REVISION -n sberpi --wait
 ```
 
 Откат Helm не откатывает структуру БД автоматически. Изменение схемы и восстановление БД выполняются отдельно по согласованию с DBA.
+
+## Дополнительные настройки безопасности
+
+`api.image.digest` и `frontend.image.digest` имеют приоритет над тегом; API и миграции
+используют один образ. Возьмите digest из Nexus после публикации (контрольная сумма TAR
+не является digest образа). Невалидный digest блокирует Helm render. `pullPolicy: Always`
+установлен по умолчанию и в корпоративном примере; другое значение — по политике платформы.
+Все namespaced ресурсы получают `metadata.namespace` из `--namespace`.
+
+По умолчанию `secrets.mode: files`: существующий Secret монтируется только для чтения
+в `/run/secrets/sberpi` с правами `0440` и группой `10001`; API и Alembic читают его через
+`SBERPI_SECRETS_DIR`. Имена ключей Secret не меняются. Значения файлов имеют приоритет
+над env и `.env`. Настройки кэшируются при запуске: после ротации секрета перезапустите API
+и используйте новый Job миграций. Для совместимости доступно `secrets.mode: env`,
+которое возвращает `envFrom.secretRef` и повторно открывает соответствующие замечания.
+
+`networkPolicy.enabled` выключен в базовых values для совместимости и включён в
+корпоративном примере. Перед включением заполните все peers и подтвердите поддержку
+NetworkPolicy вашим CNI. Шаблон требует хотя бы одного назначения PostgreSQL. Пустой
+`ingressPeers` запрещает вход во frontend; пустой `apiExtraEgress` не разрешает LDAP/Jira.
+Frontend принимает HTTP от разрешённых ingress peers, API — от frontend этого release.
+API и миграции могут обращаться к заданной PostgreSQL; API дополнительно — к явно
+разрешённым LDAP/Jira. Укажите отдельную аудит-БД в database.peers, если она используется
+(при другом порте добавьте отдельное правило в шаблон/согласуйте values перед установкой).
+DNS разрешён по UDP/TCP 53 к указанным dnsPeers; для NodeLocal DNS нужны peers вашей платформы.
+Не используйте `0.0.0.0/0` вместо конкретных назначений. Kubernetes policies складываются:
+существующее широкое разрешающее правило может ослабить эти ограничения.
+
+Политика migration создаётся Helm hook с весом -10 до Job с весом -5. Она сохраняется
+после Job, чтобы не снять ограничения во время миграции. Helm не удаляет hook-ресурсы
+при uninstall автоматически: после удаления release или отключения политик удалите
+`<release-fullname>-migration` NetworkPolicy вручную, когда миграции уже не работают.
+
+Frontend, backend и миграции используют UID/GID 10001 и в Docker, и в Helm.
+Frontend использует конфигурацию nginx-unprivileged с PID и временными файлами в `/tmp`;
+образ запускает nginx напрямую без изменения конфигурации entrypoint-скриптами.
+В Helm root filesystem доступна только для чтения, временные каталоги монтируются отдельно,
+повышение привилегий запрещено, capabilities сняты.
+
+Справка: [наследование NGINX headers](https://nginx.org/en/docs/http/ngx_http_headers_module.html),
+[ограничения и поведение NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/).

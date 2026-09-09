@@ -173,7 +173,7 @@ frontend.
 ```json
 {
   "username": "editor",
-  "password": "editor123"
+  "password": "CHANGE_ME_EDITOR_PASSWORD"
 }
 ```
 
@@ -335,9 +335,9 @@ Auth token не записывается ни в `localStorage`, ни в `sessio
 
 ```env
 AUTH_PROVIDER=local
-AUTH_TEST_USERS=admin:admin123:admin,editor:editor123:planning_editor,pm:pm123:business_viewer,user:user123:viewer
+AUTH_TEST_USERS=admin:CHANGE_ME_ADMIN_PASSWORD:admin,editor:CHANGE_ME_EDITOR_PASSWORD:planning_editor,pm:CHANGE_ME_PM_PASSWORD:business_viewer,user:CHANGE_ME_USER_PASSWORD:viewer
 
-SESSION_SECRET=replace-with-a-long-random-secret
+SESSION_SECRET=CHANGE_ME_TO_A_RANDOM_VALUE_OF_AT_LEAST_32_CHARACTERS
 SESSION_TTL_MINUTES=60
 SESSION_COOKIE_NAME=sberpi_session
 SESSION_COOKIE_SECURE=false
@@ -467,7 +467,7 @@ python -m pytest -q tests/test_frontend_*_contract.py
 cd ..
 docker compose -f docker-compose.test.yml up -d --wait
 cd backend
-$env:TEST_DATABASE_URL='postgresql+asyncpg://sberpi:sberpi@localhost:5433/sberpi_test'
+$env:TEST_DATABASE_URL='postgresql+asyncpg://sberpi:CHANGE_ME_DB_PASSWORD@localhost:5433/sberpi_test'
 python -m pytest -q
 ```
 
