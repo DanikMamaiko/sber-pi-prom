@@ -71,8 +71,8 @@ config:
   adGroupViewer: CN=SberPI-Viewers,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by
   ldapUrl: ldap://sigma-belpsb.by:389
   ldapBaseDn: DC=sigma-belpsb,DC=by
-  ldapUserSearchBase: OU=Users ALL,DC=sigma-belpsb,DC=by
-  ldapUserFilter: "(cn={username})"
+  ldapUserSearchBase: DC=sigma-belpsb,DC=by
+  ldapUserFilter: "(sAMAccountName={username})"
   ldapGroupSearchBase: OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by
   ldapGroupFilter: "(member={user_dn})"
   ldapUseTls: "false"

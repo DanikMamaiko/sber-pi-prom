@@ -9,7 +9,7 @@
 - hostname приложения, `ingressClassName` и имя TLS Secret;
 - строку подключения к PostgreSQL и требования к SSL;
 - подтверждение сетевого доступа из namespace `sberpi` к PostgreSQL;
-- подтверждение DNS и сетевого доступа из namespace `sberpi` к `belpsb.by:389`;
+- подтверждение DNS и сетевого доступа из namespace `sberpi` к `sigma-belpsb.by:389`;
 - решение по миграциям: их запускает Helm или DBA применяет `deploy/db/01_sberpi_schema.sql`;
 - лимиты CPU/RAM, если предложенные значения не подходят политике кластера.
 
@@ -107,6 +107,26 @@ Copy-Item .\deploy\helm\sberpi\values-corporate.example.yaml `
 - `config.jiraEnabled=true`, IFT URL и параметры проверки TLS Jira.
 - `config.authProvider=ldap`; LDAP URL, база поиска и четыре DN ролевых групп уже
   заданы по параметрам ИФТ и при необходимости переопределяются в локальном values-файле.
+
+Рабочие параметры поиска пользователей в домене Sigma:
+
+```yaml
+config:
+  ldapUrl: ldap://sigma-belpsb.by:389
+  ldapUserSearchBase: DC=sigma-belpsb,DC=by
+  ldapUserFilter: "(sAMAccountName={username})"
+  ldapUseTls: "false"
+```
+
+При входе используется короткий корпоративный логин без домена. Поиск выполняется
+от корня домена во вложенных подразделениях. Старый путь `OU=Users ALL` в этом
+контуре возвращал `32 noSuchObject`; с рабочей базой поиск и вход подтверждены.
+Роль редактора должна быть связана с `SberPI-PlanningEditors`, роль бизнес-просмотра —
+с `SberPI-BusinessViewers`. Полные DN четырёх групп заданы в `values.yaml`.
+
+Применение изменений ConfigMap через текущий Helm chart автоматически обновляет
+backend-поды. После изменения только внешнего Secret нужен перезапуск backend.
+Исправления кода LDAP требуют сборки и развёртывания нового образа backend.
 
 Проверка перед установкой:
 

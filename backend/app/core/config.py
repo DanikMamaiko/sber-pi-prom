@@ -62,8 +62,8 @@ class Settings(BaseSettings):
 
     ldap_url: str = "ldap://sigma-belpsb.by:389"
     ldap_base_dn: str = "DC=sigma-belpsb,DC=by"
-    ldap_user_search_base: str = "OU=Users ALL,DC=sigma-belpsb,DC=by"
-    ldap_user_filter: str = "(cn={username})"
+    ldap_user_search_base: str = "DC=sigma-belpsb,DC=by"
+    ldap_user_filter: str = "(sAMAccountName={username})"
     ldap_group_search_base: str = "OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by"
     ldap_group_filter: str = "(member={user_dn})"
     ldap_bind_dn: str = ""

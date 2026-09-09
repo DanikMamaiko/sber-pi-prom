@@ -44,8 +44,8 @@ def test_ift_ldap_defaults_use_plain_port_and_all_four_direct_role_groups():
 
     assert settings.ldap_url == "ldap://sigma-belpsb.by:389"
     assert settings.ldap_use_tls is False
-    assert settings.ldap_user_search_base == "OU=Users ALL,DC=sigma-belpsb,DC=by"
-    assert settings.ldap_user_filter == "(cn={username})"
+    assert settings.ldap_user_search_base == "DC=sigma-belpsb,DC=by"
+    assert settings.ldap_user_filter == "(sAMAccountName={username})"
     assert settings.ad_group_admin.startswith("CN=SberPI-Admins,")
     assert settings.ad_group_planning_editor.startswith("CN=SberPI-PlanningEditors,")
     assert settings.ad_group_business_viewer.startswith("CN=SberPI-BusinessViewers,")
