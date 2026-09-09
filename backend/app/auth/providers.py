@@ -1,4 +1,5 @@
 import asyncio
+import math
 import secrets
 from abc import ABC, abstractmethod
 
@@ -117,7 +118,9 @@ class LdapAuthProvider(AuthProvider):
         self._user_filter = user_filter
         self._bind_dn = bind_dn.strip()
         self._bind_password = bind_password
-        self._receive_timeout = connect_timeout_seconds
+        # ldap3 2.9.1 packs SO_RCVTIMEO as integer seconds on Linux.
+        # Keep fractional connect timeouts, but round receive timeouts up.
+        self._receive_timeout = max(1, math.ceil(connect_timeout_seconds))
         self._roles_by_group = {
             group_dn.strip().casefold(): role for role, group_dn in role_groups.items()
         }

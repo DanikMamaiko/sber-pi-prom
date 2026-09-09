@@ -96,7 +96,7 @@ class _FakeAttribute:
 
 
 class _FakeEntry:
-    entry_dn = "CN=Test User,OU=Users ALL,DC=belpsb,DC=by"
+    entry_dn = "CN=Test User,OU=Users ALL,DC=sigma-belpsb,DC=by"
 
     def __init__(self, groups):
         self.sAMAccountName = _FakeAttribute(value="test.user")
@@ -136,17 +136,17 @@ def _ldap_provider(monkeypatch, *, groups, user_password="domain-secret", servic
     monkeypatch.setattr(providers, "Server", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(providers, "Connection", FakeConnection)
     provider = LdapAuthProvider(
-        url="ldap://belpsb.by:389",
-        user_search_base="OU=Users ALL,DC=belpsb,DC=by",
+        url="ldap://sigma-belpsb.by:389",
+        user_search_base="OU=Users ALL,DC=sigma-belpsb,DC=by",
         user_filter="(cn={username})",
         bind_dn="service@belpsb.by",
         bind_password="service-secret",
         use_tls=False,
         role_groups={
-            "admin": "CN=SberPI-Admins,OU=SberPI,DC=belpsb,DC=by",
-            "planning_editor": "CN=SberPI-PlanningEditors,OU=SberPI,DC=belpsb,DC=by",
-            "business_viewer": "CN=SberPI-BusinessViewers,OU=SberPI,DC=belpsb,DC=by",
-            "viewer": "CN=SberPI-Viewers,OU=SberPI,DC=belpsb,DC=by",
+            "admin": "CN=SberPI-Admins,OU=SberPI,DC=sigma-belpsb,DC=by",
+            "planning_editor": "CN=SberPI-PlanningEditors,OU=SberPI,DC=sigma-belpsb,DC=by",
+            "business_viewer": "CN=SberPI-BusinessViewers,OU=SberPI,DC=sigma-belpsb,DC=by",
+            "viewer": "CN=SberPI-Viewers,OU=SberPI,DC=sigma-belpsb,DC=by",
         },
     )
     return provider, captured
@@ -157,8 +157,8 @@ async def test_ldap_authenticates_user_and_maps_direct_groups(monkeypatch):
     provider, _captured = _ldap_provider(
         monkeypatch,
         groups=(
-            "CN=SberPI-PlanningEditors,OU=SberPI,DC=belpsb,DC=by",
-            "CN=SberPI-Viewers,OU=SberPI,DC=belpsb,DC=by",
+            "CN=SberPI-PlanningEditors,OU=SberPI,DC=sigma-belpsb,DC=by",
+            "CN=SberPI-Viewers,OU=SberPI,DC=sigma-belpsb,DC=by",
         ),
     )
 
@@ -174,13 +174,13 @@ async def test_ldap_authenticates_user_and_maps_direct_groups(monkeypatch):
 async def test_ldap_rejects_wrong_password_and_non_member(monkeypatch):
     provider, _captured = _ldap_provider(
         monkeypatch,
-        groups=("CN=SberPI-Viewers,OU=SberPI,DC=belpsb,DC=by",),
+        groups=("CN=SberPI-Viewers,OU=SberPI,DC=sigma-belpsb,DC=by",),
     )
     assert await provider.authenticate("test.user", "wrong") is None
 
     provider, captured = _ldap_provider(
         monkeypatch,
-        groups=("CN=SomeOtherGroup,OU=Groups,DC=belpsb,DC=by",),
+        groups=("CN=SomeOtherGroup,OU=Groups,DC=sigma-belpsb,DC=by",),
     )
     assert await provider.authenticate("test.user", "domain-secret") is None
     assert len(captured["connections"]) == 1
@@ -190,7 +190,7 @@ async def test_ldap_rejects_wrong_password_and_non_member(monkeypatch):
 async def test_ldap_escapes_username_in_search_filter(monkeypatch):
     provider, captured = _ldap_provider(
         monkeypatch,
-        groups=("CN=SberPI-Viewers,OU=SberPI,DC=belpsb,DC=by",),
+        groups=("CN=SberPI-Viewers,OU=SberPI,DC=sigma-belpsb,DC=by",),
     )
 
     await provider.authenticate("*)(cn=*)", "domain-secret")

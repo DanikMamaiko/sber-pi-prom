@@ -45,26 +45,26 @@ class Settings(BaseSettings):
 
     ad_group_admin: str = (
         "CN=SberPI-Admins,OU=SberPI,OU=Groups for soft access,"
-        "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+        "OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by"
     )
     ad_group_planning_editor: str = (
         "CN=SberPI-PlanningEditors,OU=SberPI,OU=Groups for soft access,"
-        "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+        "OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by"
     )
     ad_group_business_viewer: str = (
         "CN=SberPI-BusinessViewers,OU=SberPI,OU=Groups for soft access,"
-        "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+        "OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by"
     )
     ad_group_viewer: str = (
         "CN=SberPI-Viewers,OU=SberPI,OU=Groups for soft access,"
-        "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+        "OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by"
     )
 
-    ldap_url: str = "ldap://belpsb.by:389"
-    ldap_base_dn: str = "DC=belpsb,DC=by"
-    ldap_user_search_base: str = "OU=Users ALL,DC=belpsb,DC=by"
+    ldap_url: str = "ldap://sigma-belpsb.by:389"
+    ldap_base_dn: str = "DC=sigma-belpsb,DC=by"
+    ldap_user_search_base: str = "OU=Users ALL,DC=sigma-belpsb,DC=by"
     ldap_user_filter: str = "(cn={username})"
-    ldap_group_search_base: str = "OU=Groups,OU=Tech,DC=belpsb,DC=by"
+    ldap_group_search_base: str = "OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by"
     ldap_group_filter: str = "(member={user_dn})"
     ldap_bind_dn: str = ""
     ldap_bind_password: str = ""

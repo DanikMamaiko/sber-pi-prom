@@ -65,15 +65,15 @@ config:
   auditTrustedProxyNetworks: ""
   auditConnectTimeoutSeconds: "3"
   auditRetrySeconds: "30"
-  adGroupAdmin: CN=SberPI-Admins,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=belpsb,DC=by
-  adGroupPlanningEditor: CN=SberPI-PlanningEditors,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=belpsb,DC=by
-  adGroupBusinessViewer: CN=SberPI-BusinessViewers,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=belpsb,DC=by
-  adGroupViewer: CN=SberPI-Viewers,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=belpsb,DC=by
-  ldapUrl: ldap://belpsb.by:389
-  ldapBaseDn: DC=belpsb,DC=by
-  ldapUserSearchBase: OU=Users ALL,DC=belpsb,DC=by
+  adGroupAdmin: CN=SberPI-Admins,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by
+  adGroupPlanningEditor: CN=SberPI-PlanningEditors,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by
+  adGroupBusinessViewer: CN=SberPI-BusinessViewers,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by
+  adGroupViewer: CN=SberPI-Viewers,OU=SberPI,OU=Groups for soft access,OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by
+  ldapUrl: ldap://sigma-belpsb.by:389
+  ldapBaseDn: DC=sigma-belpsb,DC=by
+  ldapUserSearchBase: OU=Users ALL,DC=sigma-belpsb,DC=by
   ldapUserFilter: "(cn={username})"
-  ldapGroupSearchBase: OU=Groups,OU=Tech,DC=belpsb,DC=by
+  ldapGroupSearchBase: OU=Groups,OU=Tech,DC=sigma-belpsb,DC=by
   ldapGroupFilter: "(member={user_dn})"
   ldapUseTls: "false"
   ldapConnectTimeoutSeconds: "5"
