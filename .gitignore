@@ -20,3 +20,4 @@ kubeconfig*
 deploy/helm/sberpi/values.local.yaml
 *.secrets.env
 deploy/k8s/sberpi-secrets.yaml
+plan.md
