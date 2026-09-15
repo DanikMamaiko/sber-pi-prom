@@ -5,6 +5,7 @@ from app.main import app
 from app.schemas.jira import JiraIssueRead
 from app.services.jira import (
     JiraAccessDenied,
+    JiraCapacityExceeded,
     JiraIssueNotFound,
     JiraNotConfigured,
     JiraUnavailable,
@@ -256,5 +257,29 @@ async def test_jira_access_error_does_not_create_fallback_item(api_client):
         app.dependency_overrides.pop(get_jira_client, None)
 
     assert response.status_code == 502
+    board = assert_ok(await api_client.get(f"/backlog-board?cycle_id={cycle['id']}"))
+    assert board["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_jira_capacity_error_returns_429_without_creating_item(api_client):
+    cycle = await _configured_cycle(api_client)
+    app.dependency_overrides[get_jira_client] = lambda: FailingJiraClient(
+        JiraCapacityExceeded("Лимит обращений к Jira исчерпан", retry_after_seconds=5)
+    )
+    try:
+        response = await api_client.post(
+            f"/backlog-board/items/from-jira?cycle_id={cycle['id']}",
+            json={
+                "issue_key": "BUSY-1",
+                "tribe": "Регрессия",
+                "fallback_team": "Команда Альфа",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_jira_client, None)
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "5"
     board = assert_ok(await api_client.get(f"/backlog-board?cycle_id={cycle['id']}"))
     assert board["items"] == []

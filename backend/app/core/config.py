@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     jira_verify_ssl: bool = True
     jira_ca_bundle: str = ""
     jira_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
+    jira_max_concurrent_requests: int = Field(default=20, ge=1, le=100)
+    jira_max_queue_size: int = Field(default=50, ge=0, le=1000)
+    jira_queue_timeout_seconds: float = Field(default=5.0, gt=0.0, le=60.0)
     jira_workday_hours: float = Field(default=8.0, gt=0.0, le=24.0)
 
     audit_enabled: bool = True

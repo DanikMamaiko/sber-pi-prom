@@ -1,5 +1,6 @@
 from auth_fixtures import TEST_SERVICE_PASSWORD
 
+import asyncio
 import uuid
 
 import httpx
@@ -11,8 +12,10 @@ from app.schemas.jira import JiraBacklogImportCommand
 from app.services.jira import (
     JIRA_FIELDS,
     JiraAccessDenied,
+    JiraCapacityExceeded,
     JiraClient,
     JiraIssueNotFound,
+    JiraRequestLimiter,
     JiraUnavailable,
     empty_backlog_command,
     jira_issue_to_backlog_command,
@@ -207,3 +210,63 @@ async def test_jira_client_maps_upstream_errors(status_code, error_type):
 
     with pytest.raises(error_type):
         await JiraClient(settings, transport=transport).get_issue("TECHNOLOGY-15377")
+
+
+@pytest.mark.asyncio
+async def test_jira_request_limiter_never_exceeds_configured_parallelism():
+    limiter = JiraRequestLimiter(
+        max_concurrent=3,
+        max_queue_size=10,
+        queue_timeout_seconds=1,
+    )
+    active = 0
+    peak = 0
+
+    async def worker():
+        nonlocal active, peak
+        async with limiter.slot():
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+
+    await asyncio.gather(*(worker() for _ in range(10)))
+
+    assert peak == 3
+    assert limiter.active_count == 0
+    assert limiter.waiting_count == 0
+
+
+@pytest.mark.asyncio
+async def test_full_jira_queue_rejects_request_without_calling_transport():
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json=jira_payload())
+
+    settings = Settings(
+        jira_enabled=True,
+        jira_base_url="https://jira.example.test/jira",
+        jira_username="service-user",
+        jira_password=TEST_SERVICE_PASSWORD,
+        _env_file=None,
+    )
+    limiter = JiraRequestLimiter(
+        max_concurrent=1,
+        max_queue_size=0,
+        queue_timeout_seconds=5,
+    )
+    client = JiraClient(
+        settings,
+        limiter=limiter,
+        transport=httpx.MockTransport(handler),
+    )
+
+    async with limiter.slot():
+        with pytest.raises(JiraCapacityExceeded) as raised:
+            await client.get_issue("TECHNOLOGY-15377")
+
+    assert raised.value.retry_after_seconds == 5
+    assert calls == 0

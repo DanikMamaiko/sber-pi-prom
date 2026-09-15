@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import math
 import ssl
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 from urllib.parse import quote
 
 import httpx
@@ -11,6 +15,9 @@ import httpx
 from app.core.config import Settings
 from app.schemas.backlog import BacklogBoardExecutor, BacklogItemCommand, BacklogTeamRef
 from app.schemas.jira import JiraBacklogImportCommand, JiraIssueRead
+
+
+logger = logging.getLogger("sberpi.jira")
 
 
 JIRA_FIELDS: tuple[str, ...] = (
@@ -73,6 +80,82 @@ class JiraUnavailable(JiraError):
 
 class JiraInvalidResponse(JiraError):
     pass
+
+
+class JiraCapacityExceeded(JiraError):
+    def __init__(self, message: str, retry_after_seconds: int):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class JiraRequestLimiter:
+    """Process-wide concurrency limit with a bounded, expiring wait queue."""
+
+    def __init__(
+        self,
+        *,
+        max_concurrent: int,
+        max_queue_size: int,
+        queue_timeout_seconds: float,
+    ) -> None:
+        self.max_concurrent = max_concurrent
+        self.max_queue_size = max_queue_size
+        self.queue_timeout_seconds = queue_timeout_seconds
+        self.retry_after_seconds = max(1, math.ceil(queue_timeout_seconds))
+        self._condition = asyncio.Condition()
+        self._active = 0
+        self._waiting = 0
+
+    @property
+    def active_count(self) -> int:
+        return self._active
+
+    @property
+    def waiting_count(self) -> int:
+        return self._waiting
+
+    def _capacity_error(self, reason: str) -> JiraCapacityExceeded:
+        logger.warning(
+            "jira_request_rejected reason=%s active=%s waiting=%s "
+            "max_concurrent=%s max_queue_size=%s",
+            reason,
+            self._active,
+            self._waiting,
+            self.max_concurrent,
+            self.max_queue_size,
+        )
+        return JiraCapacityExceeded(
+            "Лимит обращений к Jira исчерпан, повторите запрос позже",
+            retry_after_seconds=self.retry_after_seconds,
+        )
+
+    @asynccontextmanager
+    async def slot(self) -> AsyncIterator[None]:
+        async with self._condition:
+            if self._active >= self.max_concurrent:
+                if self._waiting >= self.max_queue_size:
+                    raise self._capacity_error("queue_full")
+                self._waiting += 1
+                try:
+                    try:
+                        await asyncio.wait_for(
+                            self._condition.wait_for(
+                                lambda: self._active < self.max_concurrent
+                            ),
+                            timeout=self.queue_timeout_seconds,
+                        )
+                    except TimeoutError as error:
+                        raise self._capacity_error("queue_timeout") from error
+                finally:
+                    self._waiting -= 1
+            self._active += 1
+
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._active -= 1
+                self._condition.notify(1)
 
 
 def _seconds_to_days(value: Any, workday_hours: float) -> float | None:
@@ -277,9 +360,11 @@ class JiraClient:
         self,
         settings: Settings,
         *,
+        limiter: JiraRequestLimiter | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.settings = settings
+        self.limiter = limiter
         self.transport = transport
 
     def _verify(self) -> bool | ssl.SSLContext:
@@ -300,7 +385,7 @@ class JiraClient:
             + "/rest/api/2/issue/"
             + quote(issue_key, safe="")
         )
-        try:
+        async def request_issue() -> httpx.Response:
             async with httpx.AsyncClient(
                 auth=httpx.BasicAuth(
                     self.settings.jira_username.strip(), self.settings.jira_password
@@ -311,7 +396,14 @@ class JiraClient:
                 follow_redirects=False,
                 transport=self.transport,
             ) as client:
-                response = await client.get(url, params={"fields": ",".join(JIRA_FIELDS)})
+                return await client.get(url, params={"fields": ",".join(JIRA_FIELDS)})
+
+        try:
+            if self.limiter is None:
+                response = await request_issue()
+            else:
+                async with self.limiter.slot():
+                    response = await request_issue()
         except httpx.TimeoutException as error:
             raise JiraUnavailable("Jira не ответила за отведённое время") from error
         except httpx.HTTPError as error:

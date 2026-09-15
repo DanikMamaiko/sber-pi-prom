@@ -30,6 +30,9 @@ config:
   jiraVerifySsl: "true"
   # Set to a mounted corporate CA path when the public trust store is insufficient.
   jiraCaBundle: ""
+  jiraMaxConcurrentRequests: "20"
+  jiraMaxQueueSize: "50"
+  jiraQueueTimeoutSeconds: "5"
 
 ingress:
   className: CHANGE_ME_INGRESS_CLASS

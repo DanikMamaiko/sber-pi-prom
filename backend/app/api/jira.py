@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._common import get_cycle_or_404
@@ -17,6 +17,7 @@ from app.services.backlog_board import (
 )
 from app.services.jira import (
     JiraAccessDenied,
+    JiraCapacityExceeded,
     JiraClient,
     JiraInvalidResponse,
     JiraIssueNotFound,
@@ -34,11 +35,20 @@ router = APIRouter(
 )
 
 
-def get_jira_client(settings: Settings = Depends(get_settings)) -> JiraClient:
-    return JiraClient(settings)
+def get_jira_client(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> JiraClient:
+    return JiraClient(settings, limiter=request.app.state.jira_limiter)
 
 
 def _jira_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, JiraCapacityExceeded):
+        return HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(error),
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        )
     if isinstance(error, JiraIssueNotFound):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
     if isinstance(error, JiraNotConfigured):
@@ -79,6 +89,8 @@ async def post_backlog_item_from_jira(
     fallback_warnings: list[str] = []
     try:
         jira_issue = await jira_client.get_issue(issue_key)
+    except JiraCapacityExceeded as error:
+        raise _jira_http_error(error) from error
     except (JiraIssueNotFound, JiraNotConfigured, JiraUnavailable) as error:
         fallback_warnings.append(_jira_fallback_warning(error))
     except (JiraAccessDenied, JiraInvalidResponse) as error:

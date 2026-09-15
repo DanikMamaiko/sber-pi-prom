@@ -59,7 +59,11 @@ docker compose up --build
 `JIRA_USERNAME` и `JIRA_PASSWORD` передайте через секрет контура. Запрос выполняет
 только backend; учётные данные Jira не возвращаются браузеру. По умолчанию TLS
 проверяется системным хранилищем, при необходимости можно указать корпоративный CA
-через `JIRA_CA_BUNDLE`.
+через `JIRA_CA_BUNDLE`. Один процесс backend отправляет не более
+`JIRA_MAX_CONCURRENT_REQUESTS=20` запросов к Jira одновременно. Ещё до
+`JIRA_MAX_QUEUE_SIZE=50` запросов ожидают слот не более
+`JIRA_QUEUE_TIMEOUT_SECONDS=5` секунд; остальные получают `429` с `Retry-After` и до
+Jira не доходят.
 
 Авторизацию нельзя отключить через env. `AUTH_PROVIDER=local` читает тестовых
 пользователей из `AUTH_TEST_USERS`. `AUTH_PROVIDER=ldap` проверяет пароль в Active

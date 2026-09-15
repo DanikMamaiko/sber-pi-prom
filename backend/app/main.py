@@ -5,10 +5,16 @@ from app.api.router import api_router
 from app.audit.middleware import AuditMiddleware
 from app.audit.sink import DatabaseAuditSink, DisabledAuditSink
 from app.core.config import get_settings
+from app.services.jira import JiraRequestLimiter
 
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
+app.state.jira_limiter = JiraRequestLimiter(
+    max_concurrent=settings.jira_max_concurrent_requests,
+    max_queue_size=settings.jira_max_queue_size,
+    queue_timeout_seconds=settings.jira_queue_timeout_seconds,
+)
 app.state.audit_sink = (
     DatabaseAuditSink(
         settings.effective_audit_database_url,

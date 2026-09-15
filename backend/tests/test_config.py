@@ -43,6 +43,14 @@ def test_jira_requires_explicit_enablement_and_credentials():
     assert enabled.jira_is_configured is True
 
 
+def test_jira_request_limit_defaults_match_the_approved_capacity():
+    settings = Settings(_env_file=None)
+
+    assert settings.jira_max_concurrent_requests == 20
+    assert settings.jira_max_queue_size == 50
+    assert settings.jira_queue_timeout_seconds == 5
+
+
 def test_ift_ldap_defaults_use_plain_port_and_all_four_direct_role_groups():
     settings = Settings(_env_file=None)
 

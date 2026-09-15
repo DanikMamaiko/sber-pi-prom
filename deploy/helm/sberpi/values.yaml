@@ -62,6 +62,9 @@ config:
   jiraVerifySsl: "true"
   jiraCaBundle: ""
   jiraTimeoutSeconds: "10"
+  jiraMaxConcurrentRequests: "20"
+  jiraMaxQueueSize: "50"
+  jiraQueueTimeoutSeconds: "5"
   jiraWorkdayHours: "8"
   auditEnabled: "true"
   auditSourceService: sberpi-api

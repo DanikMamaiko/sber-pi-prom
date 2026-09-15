@@ -105,7 +105,9 @@ Copy-Item .\deploy\helm\sberpi\values-corporate.example.yaml `
 - hostname приложения;
 - Ingress class и при необходимости TLS Secret;
 - доверенные CIDR ingress-прокси, если их предоставили администраторы.
-- `config.jiraEnabled=true`, IFT URL и параметры проверки TLS Jira.
+- `config.jiraEnabled=true`, IFT URL, параметры проверки TLS Jira и лимиты исходящих
+  запросов `jiraMaxConcurrentRequests=20`, `jiraMaxQueueSize=50`,
+  `jiraQueueTimeoutSeconds=5`.
 - `config.authProvider=ldap`; LDAP URL, база поиска и четыре DN ролевых групп уже
   заданы по параметрам ИФТ и при необходимости переопределяются в локальном values-файле.
 

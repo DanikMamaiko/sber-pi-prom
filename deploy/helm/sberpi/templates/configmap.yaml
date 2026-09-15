@@ -18,6 +18,9 @@ data:
   JIRA_VERIFY_SSL: {{ .Values.config.jiraVerifySsl | quote }}
   JIRA_CA_BUNDLE: {{ .Values.config.jiraCaBundle | quote }}
   JIRA_TIMEOUT_SECONDS: {{ .Values.config.jiraTimeoutSeconds | quote }}
+  JIRA_MAX_CONCURRENT_REQUESTS: {{ .Values.config.jiraMaxConcurrentRequests | quote }}
+  JIRA_MAX_QUEUE_SIZE: {{ .Values.config.jiraMaxQueueSize | quote }}
+  JIRA_QUEUE_TIMEOUT_SECONDS: {{ .Values.config.jiraQueueTimeoutSeconds | quote }}
   JIRA_WORKDAY_HOURS: {{ .Values.config.jiraWorkdayHours | quote }}
   AUDIT_ENABLED: {{ .Values.config.auditEnabled | quote }}
   AUDIT_SOURCE_SERVICE: {{ .Values.config.auditSourceService | quote }}
