@@ -14,6 +14,13 @@ def test_frontend_boots_auth_first_and_uses_http_only_cookie_credentials():
     assert "sessionStorage.setItem('sberpi" not in source
 
 
+def test_login_screen_does_not_show_product_center_credit():
+    source = frontend_source()
+
+    assert "auth-made-by" in source
+    assert "Создано Центром продуктового управления" not in source
+
+
 def test_unauthorized_response_returns_to_login_and_stops_background_work():
     source = frontend_source()
 

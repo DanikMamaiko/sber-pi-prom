@@ -95,7 +95,7 @@ function renderLoginScreen(message=''){
   const app=document.getElementById('app');
   if(!app)return;
   app.classList.remove('read-only-view');
-  app.innerHTML=`<div class="auth-shell"><form class="auth-card" id="loginForm">
+  app.innerHTML=`<div class="auth-shell"><div class="auth-stack"><form class="auth-card" id="loginForm">
     <div class="auth-logo">SberPI</div>
     <div class="auth-kicker">Платформа планирования</div>
     <h1>Вход в систему</h1>
@@ -104,7 +104,9 @@ function renderLoginScreen(message=''){
     <label class="auth-field"><span>Логин</span><input id="loginUsername" name="username" placeholder="Например: ivanov_a" autocomplete="username" required autofocus></label>
     <label class="auth-field"><span>Пароль</span><input id="loginPassword" name="password" type="password" placeholder="Введите пароль" autocomplete="current-password" required></label>
     <button class="primary auth-submit" id="loginSubmit" type="submit">Войти</button>
-  </form></div>`;
+  </form><footer class="auth-made-by">
+    <div class="auth-copyright">© 2026 · SberPI</div>
+  </footer></div></div>`;
   const form=document.getElementById('loginForm');
   form.onsubmit=async event=>{
     event.preventDefault();
