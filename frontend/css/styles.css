@@ -926,6 +926,13 @@
   }
   .data-teams td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
   .data-teams tbody tr:hover{background:var(--panel2)}
+  .add-team-bottom{
+    display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:10px;padding:10px 16px;
+    background:transparent;border:1px dashed var(--border2);color:var(--muted);
+  }
+  .add-team-bottom span{font-size:17px;font-weight:700;line-height:1}
+  .add-team-bottom:hover{background:var(--accent-soft);border-color:var(--accent-d);color:var(--accent)}
+  .add-team-bottom[hidden],#addTeam[hidden]{display:none}
   .data-teams input[type=text], .data-teams input:not([type]), .data-teams select{
     background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-s);
     color:var(--text);padding:6px 9px;font-size:13px;transition:border-color var(--ease),box-shadow var(--ease);

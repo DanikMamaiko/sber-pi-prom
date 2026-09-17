@@ -53,7 +53,21 @@ def test_active_pi_data_view_keeps_prototype_layout_contract():
     assert 'id=\"editData\"' in view
     assert 'id=\"addPir\"' in view
     assert 'id=\"addTeam\"' in view
+    assert 'class=\"add-team-bottom\"' in view
+    assert "Добавить команду" in view
     assert 'id=\"addGoal\"' in view
     assert 'id=\"addTag\"' in view
     assert "Расписание backend" not in view
     assert "data-save-pir" not in view
+
+
+def test_pi_data_team_add_buttons_share_the_same_handler():
+    source = frontend_source()
+
+    assert source.count("data-add-team") >= 3
+    assert "button.hasAttribute('data-add-team')" in source
+    assert "class=\"add-team-bottom\" data-add-team ${teamRows?'':'hidden'}" in source
+    assert "id=\"addTeam\" data-add-team aria-label=\"Добавить команду\" title=\"Добавить команду\" ${teamRows?'hidden':''}" in source
+    assert "topButton.hidden=hasTeams" in source
+    assert "bottomButton.hidden=!hasTeams" in source
+    assert "syncTeamAddButtons()" in source

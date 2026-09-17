@@ -90,8 +90,9 @@ function viewData(){
     <h3>Данные ПИРов ${editable?'<button class="plus" id="addPir">+</button>':''}</h3><div id="pirRows">${pirs||'<div class="muted" data-empty>Нет данных</div>'}</div>
     <h3>Данные регрессионного тестирования ${editable?'<button class="plus" id="addRegression">+</button>':''}</h3><div id="regressionRows">${regressions||'<div class="muted" data-empty>Нет данных</div>'}</div>
     <div class="hint" style="margin-top:4px">ПИР и регрессия задаются диапазоном дат: «конец» необязателен (пусто — однодневное событие). Метки ПИР и регрессии отображаются в шапках спринтов на «Командных досках» и «Program Board».</div>
-    <h3>Данные по командам ${editable?'<button class="plus" id="addTeam">+</button>':''}</h3>
+    <h3>Данные по командам ${editable?`<button class="plus" id="addTeam" data-add-team aria-label="Добавить команду" title="Добавить команду" ${teamRows?'hidden':''}>+</button>`:''}</h3>
     <table class="data-teams"><thead><tr><th>Трайб</th><th>Команда</th><th>Тип</th><th>Наличие цели</th><th>Компетенции</th><th></th></tr></thead><tbody id="teamRows">${teamRows||'<tr data-empty><td colspan="6" class="muted">Нет данных</td></tr>'}</tbody></table>
+    ${editable?`<button type="button" class="add-team-bottom" data-add-team ${teamRows?'':'hidden'}><span aria-hidden="true">+</span> Добавить команду</button>`:''}
     <h3>Цели PI ${editable?'<button class="plus" id="addGoal">+</button>':''}</h3><div id="goalRows">${goals||'<div class="muted" data-empty>Целей пока нет</div>'}</div>
     <div class="hint" style="margin-top:4px">Список целей используется на вкладке «Pre PI Planning» — в столбце «Цель» инициативы выбираются из этого списка.</div>
     <h3>Тэги стикеров ${editable?'<button class="plus" id="addTag">+</button>':''}</h3><div id="tagRows">${tags||'<div class="muted" data-empty>Тэгов пока нет</div>'}</div>
@@ -114,17 +115,24 @@ function bindData(){
   const view=piDataViews[currentCycleId()]; if(!view)return;
   const root=$('#piDataCard'); if(!root)return;
   const refs=view.reference_data;
+  const syncTeamAddButtons=()=>{
+    const hasTeams=!!root.querySelector('[data-team-row]');
+    const topButton=root.querySelector('#addTeam');
+    const bottomButton=root.querySelector('.add-team-bottom');
+    if(topButton)topButton.hidden=hasTeams;
+    if(bottomButton)bottomButton.hidden=!hasTeams;
+  };
   root.onclick=async event=>{
     const button=event.target.closest('button'); if(!button)return;
     if(button.id==='editData'){state.ui.dataEdit=true;save(false);render();return;}
     if(button.id==='addPir'){const box=$('#pirRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypePirRow({},true));return;}
     if(button.id==='addRegression'){const box=$('#regressionRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeRegressionRow({},true));return;}
-    if(button.id==='addTeam'){const box=$('#teamRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeTeamRow({team_type:'Agile',competencies:BASE_TEAM_COMPS.slice()},true,refs));return;}
+    if(button.hasAttribute('data-add-team')){const box=$('#teamRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeTeamRow({team_type:'Agile',competencies:BASE_TEAM_COMPS.slice()},true,refs));syncTeamAddButtons();return;}
     if(button.id==='addGoal'){const box=$('#goalRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeNamedRow('goal',{},true));return;}
     if(button.id==='addTag'){const box=$('#tagRows');box.querySelector('[data-empty]')?.remove();box.insertAdjacentHTML('beforeend',prototypeNamedRow('tag',{},true));return;}
     if(button.hasAttribute('data-delete-pir')){button.closest('[data-pir-row]').remove();return;}
     if(button.hasAttribute('data-delete-regression')){button.closest('[data-regression-row]').remove();return;}
-    if(button.hasAttribute('data-delete-team')){button.closest('[data-team-row]').remove();return;}
+    if(button.hasAttribute('data-delete-team')){button.closest('[data-team-row]').remove();syncTeamAddButtons();return;}
     if(button.hasAttribute('data-delete-goal')){button.closest('[data-goal-row]').remove();return;}
     if(button.hasAttribute('data-delete-tag')){button.closest('[data-tag-row]').remove();return;}
     if(button.id==='saveData'){
