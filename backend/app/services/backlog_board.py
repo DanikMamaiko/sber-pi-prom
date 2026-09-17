@@ -497,12 +497,24 @@ async def create_backlog_item(
     return item
 
 
+async def get_backlog_item_issue_key(
+    session: AsyncSession,
+    item_id: uuid.UUID,
+) -> str:
+    issue_key = await session.scalar(
+        select(BacklogItem.issue_key).where(BacklogItem.id == item_id)
+    )
+    if issue_key is None:
+        raise BacklogNotFound("Элемент бэклога не найден")
+    return issue_key
+
+
 async def update_backlog_item(
     session: AsyncSession,
     item_id: uuid.UUID,
     payload: BacklogItemCommand,
     cycle_id: uuid.UUID | None = None,
-) -> None:
+) -> BacklogItem:
     item = await session.scalar(
         select(BacklogItem)
         .options(selectinload(BacklogItem.executors))
@@ -522,6 +534,7 @@ async def update_backlog_item(
     cycle_context = await cycle_team_context(session, cycle_id) if cycle_id else None
     await _apply_item_fields(session, item, payload, {}, {}, cycle_context)
     await _mark_board_initialized(session)
+    return item
 
 
 async def _unlink_dispatched_initiatives(

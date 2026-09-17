@@ -6,6 +6,7 @@ from app.schemas.jira import JiraIssueRead
 from app.services.jira import (
     JiraAccessDenied,
     JiraCapacityExceeded,
+    JiraInvalidResponse,
     JiraIssueNotFound,
     JiraNotConfigured,
     JiraUnavailable,
@@ -140,6 +141,153 @@ async def _configured_cycle(api_client, year: int = 2028) -> dict:
         )
     )
     return cycle
+
+
+async def _create_local_backlog_item(api_client, cycle: dict) -> dict:
+    board = assert_ok(
+        await api_client.post(
+            f"/backlog-board/items?cycle_id={cycle['id']}",
+            json={
+                "tribe": "Регрессия",
+                "issue_key": "TECHNOLOGY-15377",
+                "title": "Локальное название",
+                "description": "Описание только в SberPI",
+                "product": "Старый продукт",
+                "owner_team": "Команда Альфа",
+                "initiative_type": "Локальный тип",
+                "target_year": 2028,
+                "target_quarter": "Q3",
+                "customer_priority": "Высокий",
+                "team_priority": "7",
+                "status": "Оценка проведена",
+                "tshirt_size": "L",
+                "tags": ["local-tag"],
+                "systems": ["Legacy"],
+                "executors": [
+                    {
+                        "team": "Команда Альфа",
+                        "effort_by_competency": {"SA": 99, "DEV": 1},
+                    }
+                ],
+                "expected_version": 0,
+            },
+        ),
+        201,
+    )
+    return board
+
+
+@pytest.mark.asyncio
+async def test_refresh_from_jira_updates_source_fields_and_preserves_sberpi_fields(api_client):
+    cycle = await _configured_cycle(api_client)
+    before = await _create_local_backlog_item(api_client, cycle)
+    before_item = before["items"][0]
+
+    app.dependency_overrides[get_jira_client] = lambda: StubJiraClient()
+    try:
+        refreshed = assert_ok(
+            await api_client.post(
+                f"/backlog-board/items/{before_item['id']}/refresh-from-jira"
+                f"?cycle_id={cycle['id']}",
+                json={"expected_version": before["version"]},
+            )
+        )
+    finally:
+        app.dependency_overrides.pop(get_jira_client, None)
+
+    assert refreshed["warnings"] == []
+    assert set(refreshed["updated_fields"]) == {
+        "title",
+        "product",
+        "initiative_type",
+        "systems",
+        "effort_by_competency",
+    }
+    assert refreshed["jira"]["synced_at"] == "2026-09-08T10:00:00+00:00"
+    assert refreshed["board"]["version"] == before["version"] + 1
+    item = refreshed["board"]["items"][0]
+
+    # Jira-owned fields are refreshed.
+    assert item["issue_key"] == "TECHNOLOGY-15377"
+    assert item["title"] == "Инициатива из Jira"
+    assert item["product"] == "SberPI (CMDB-1)"
+    assert item["initiative_type"] == "Развитие функционала"
+    assert item["systems"] == ["Web (CMDB-2)", "Planning (CMDB-3)", "Platform (CMDB-4)"]
+    assert item["total_effort"] == 23
+    assert item["jira"] == refreshed["jira"]
+
+    # SberPI planning fields are kept exactly as entered.
+    assert item["description"] == "Описание только в SberPI"
+    assert item["target_year"] == 2028
+    assert item["target_quarter"] == "Q3"
+    assert item["customer_priority"] == "Высокий"
+    assert item["team_priority"] == "7"
+    assert item["status"] == "Оценка проведена"
+    assert item["tshirt_size"] == "L"
+    assert item["tags"] == ["local-tag"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_from_jira_honors_backlog_version_and_is_atomic(api_client):
+    cycle = await _configured_cycle(api_client)
+    before = await _create_local_backlog_item(api_client, cycle)
+    item = before["items"][0]
+
+    app.dependency_overrides[get_jira_client] = lambda: StubJiraClient()
+    try:
+        conflict = await api_client.post(
+            f"/backlog-board/items/{item['id']}/refresh-from-jira?cycle_id={cycle['id']}",
+            json={"expected_version": before["version"] - 1},
+        )
+    finally:
+        app.dependency_overrides.pop(get_jira_client, None)
+
+    assert conflict.status_code == 409
+    persisted = assert_ok(
+        await api_client.get(f"/backlog-board?cycle_id={cycle['id']}")
+    )
+    assert persisted["version"] == before["version"]
+    assert persisted["items"][0]["title"] == "Локальное название"
+    assert persisted["items"][0]["jira"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("jira_error", "expected_status"),
+    [
+        (JiraIssueNotFound("Issue не найден"), 404),
+        (JiraNotConfigured("Интеграция Jira не настроена"), 503),
+        (JiraUnavailable("Jira временно недоступна"), 503),
+        (JiraAccessDenied("Jira отклонила права доступа"), 502),
+        (JiraInvalidResponse("Некорректный ответ Jira"), 502),
+        (JiraCapacityExceeded("Лимит обращений к Jira исчерпан", 5), 429),
+    ],
+)
+async def test_refresh_jira_error_keeps_item_and_version(
+    api_client, jira_error, expected_status
+):
+    cycle = await _configured_cycle(api_client)
+    before = await _create_local_backlog_item(api_client, cycle)
+    item = before["items"][0]
+
+    app.dependency_overrides[get_jira_client] = lambda: FailingJiraClient(jira_error)
+    try:
+        response = await api_client.post(
+            f"/backlog-board/items/{item['id']}/refresh-from-jira?cycle_id={cycle['id']}",
+            json={"expected_version": before["version"]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_jira_client, None)
+
+    assert response.status_code == expected_status
+    if expected_status == 429:
+        assert response.headers["Retry-After"] == "5"
+    persisted = assert_ok(
+        await api_client.get(f"/backlog-board?cycle_id={cycle['id']}")
+    )
+    assert persisted["version"] == before["version"]
+    assert persisted["items"][0]["title"] == "Локальное название"
+    assert persisted["items"][0]["jira"] is None
 
 
 @pytest.mark.asyncio

@@ -79,6 +79,7 @@ Permission-группы API:
 - `GET /backlog-board?cycle_id={cycle_id}`
 - `POST /backlog-board/items?cycle_id={cycle_id}`
 - `POST /backlog-board/items/from-jira?cycle_id={cycle_id}`
+- `POST /backlog-board/items/{item_id}/refresh-from-jira?cycle_id={cycle_id}`
 - `PATCH /backlog-board/items/{item_id}?cycle_id={cycle_id}`
 - `DELETE /backlog-board/items/{item_id}`
 - `PUT /backlog-board/order`
@@ -115,6 +116,16 @@ PI-циклов список инициатив, порядок строк, те
 слот за `JIRA_QUEUE_TIMEOUT_SECONDS`, API возвращает `429` с `Retry-After`; Jira не
 вызывается и элемент бэклога не создаётся. При нескольких репликах общий максимум равен
 лимиту процесса, умноженному на число реплик.
+
+`items/{item_id}/refresh-from-jira` требует `backlog:write` и получает только
+`expected_version`. Issue Key берётся из существующего элемента. Запрос к Jira выполняется
+до захвата блокировки бэклога; после ответа backend проверяет optimistic lock и атомарно
+обновляет только Jira-поля: название, продукт, владельца, исполнителя, тип инициативы,
+системы и оценки по компетенциям, а также `jira_issue_data`. Описание, квартал и год,
+приоритеты, статус, размер майки, теги, порядок и отправки в Pre PI сохраняются. Если
+команда Jira не сопоставилась со справочником активного PI-цикла, текущая команда не
+очищается, а ответ содержит предупреждение. Любая ошибка Jira оставляет элемент и версию
+бэклога без изменений.
 
 `dispatch` получает трайб, год и квартал; backend сам выбирает подходящие строки,
 блокирует глобальный бэклог и целевой PI-цикл, валидирует команды и компетенции,

@@ -33,3 +33,16 @@ class JiraBacklogImportRead(BaseModel):
     board: BacklogBoardRead
     jira: JiraIssueRead | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+class JiraBacklogRefreshCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=0)
+
+
+class JiraBacklogRefreshRead(BaseModel):
+    board: BacklogBoardRead
+    jira: JiraIssueRead
+    warnings: list[str] = Field(default_factory=list)
+    updated_fields: list[str] = Field(default_factory=list)

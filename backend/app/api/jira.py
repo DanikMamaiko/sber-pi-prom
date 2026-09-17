@@ -8,12 +8,19 @@ from app.auth.dependencies import require_permission
 from app.auth.permissions import Permission
 from app.core.config import Settings, get_settings
 from app.db.session import get_session
-from app.schemas.jira import JiraBacklogImportCommand, JiraBacklogImportRead
+from app.schemas.jira import (
+    JiraBacklogImportCommand,
+    JiraBacklogImportRead,
+    JiraBacklogRefreshCommand,
+    JiraBacklogRefreshRead,
+)
 from app.services.backlog_board import (
     BacklogNotFound,
     create_backlog_item,
+    get_backlog_item_issue_key,
     normalize_issue_key,
     read_backlog_board,
+    update_backlog_item,
 )
 from app.services.jira import (
     JiraAccessDenied,
@@ -25,6 +32,7 @@ from app.services.jira import (
     JiraUnavailable,
     empty_backlog_command,
     jira_issue_to_backlog_command,
+    jira_issue_to_backlog_refresh_command,
 )
 from app.services.optimistic_locking import lock_backlog
 
@@ -117,6 +125,70 @@ async def post_backlog_item_from_jira(
             board=await read_backlog_board(session, cycle_id),
             jira=jira_issue,
             warnings=warnings,
+        )
+    except BacklogNotFound as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post(
+    "/backlog-board/items/{item_id}/refresh-from-jira",
+    response_model=JiraBacklogRefreshRead,
+)
+async def refresh_backlog_item_from_jira(
+    item_id: uuid.UUID,
+    payload: JiraBacklogRefreshCommand,
+    cycle_id: uuid.UUID | None = None,
+    session: AsyncSession = Depends(get_session),
+    jira_client: JiraClient = Depends(get_jira_client),
+):
+    try:
+        issue_key = await get_backlog_item_issue_key(session, item_id)
+    except BacklogNotFound as error:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    # End the read-only transaction before the potentially slow Jira call.
+    await session.rollback()
+    try:
+        jira_issue = await jira_client.get_issue(issue_key)
+    except (
+        JiraAccessDenied,
+        JiraCapacityExceeded,
+        JiraInvalidResponse,
+        JiraIssueNotFound,
+        JiraNotConfigured,
+        JiraUnavailable,
+    ) as error:
+        raise _jira_http_error(error) from error
+
+    # The optimistic lock is acquired only after Jira has answered. A change
+    # made while waiting produces 409 and leaves the item untouched.
+    if cycle_id is not None:
+        await get_cycle_or_404(session, cycle_id)
+    await lock_backlog(session, payload.expected_version)
+    try:
+        current_board = await read_backlog_board(session, cycle_id)
+        current_item = next((row for row in current_board.items if row.id == item_id), None)
+        if current_item is None:
+            raise BacklogNotFound("Элемент бэклога не найден")
+        command, warnings, updated_fields = jira_issue_to_backlog_refresh_command(
+            jira_issue,
+            current_item,
+            current_board.reference_data.teams,
+            payload.expected_version,
+        )
+        item = await update_backlog_item(session, item_id, command, cycle_id)
+        item.jira_issue_data = jira_issue.model_dump(mode="json")
+        await session.commit()
+        return JiraBacklogRefreshRead(
+            board=await read_backlog_board(session, cycle_id),
+            jira=jira_issue,
+            warnings=warnings,
+            updated_fields=updated_fields,
         )
     except BacklogNotFound as error:
         await session.rollback()

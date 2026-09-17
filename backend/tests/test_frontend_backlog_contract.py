@@ -86,6 +86,29 @@ def test_add_by_issue_imports_from_jira_and_surfaces_mapping_warnings():
     assert "result.warnings" in handler
 
 
+def test_backlog_row_can_refresh_one_item_from_jira():
+    source = _source()
+    refresh = source[
+        source.index("async function refreshBacklogItemFromJira(") :
+        source.index("function backlogJiraSyncLabel(")
+    ]
+    bind = source[
+        source.index("// ручное обновление одной инициативы из Jira") :
+        source.index("// правка полей инициативы")
+    ]
+
+    assert "/refresh-from-jira" in refresh
+    assert "expected_version:backlogBoard.version" in refresh
+    assert "applyBacklogBoard(result.board)" in refresh
+    assert "data-bk-jira-refresh" in source
+    assert "jira.synced_at" in source
+    assert "el.disabled=true" in bind
+    assert "refreshBacklogItemFromJira(row.id)" in bind
+    assert "Данные Jira обновлены" in bind
+    assert "Для переноса изменений в Pre PI" in bind
+    assert "result.warnings" in bind
+
+
 def test_backlog_competencies_follow_the_board_owner_not_the_task_owner():
     source = _source()
 

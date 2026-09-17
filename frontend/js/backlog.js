@@ -33,6 +33,36 @@ async function importBacklogItemFromJira(issueKey,tribe,fallbackTeam){
     throw error;
   }
 }
+async function refreshBacklogItemFromJira(itemId){
+  const run=aggregateMutationChain.then(async()=>{
+    if(!backlogBoard||!Number.isInteger(backlogBoard.version))throw new Error('Read model бэклога ещё не загружен');
+    const result=await cycleApi(backlogScopedPath(`/backlog-board/items/${encodeURIComponent(itemId)}/refresh-from-jira`),{
+      method:'POST',
+      body:{expected_version:backlogBoard.version},
+    });
+    if(!result||!result.board)throw new Error('Сервер не вернул обновлённый бэклог');
+    applyBacklogBoard(result.board);
+    return result;
+  });
+  aggregateMutationChain=run.catch(()=>{});
+  try{
+    const result=await run;
+    render();
+    return result;
+  }catch(error){
+    reportBacklogSyncError(error);
+    throw error;
+  }
+}
+function backlogJiraSyncLabel(jira){
+  const raw=jira&&jira.synced_at;
+  if(!raw)return '';
+  const syncedAt=new Date(raw);
+  if(Number.isNaN(syncedAt.getTime()))return '';
+  return `Jira: ${new Intl.DateTimeFormat('ru-RU',{
+    day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',
+  }).format(syncedAt)}`;
+}
 // Адаптер только для отображения в точной разметке прототипа. Канонические
 // бизнес-данные остаются неизменённым read model backend в backlogBoard.
 function backlogViewItem(row){
@@ -321,11 +351,20 @@ function backlogTshirtCell(it,readonly=false){
 function backlogRowHTML(it,tribe,teams,readonly=false){
   const span=1;
   const ro=readonly?'readonly':'', dis=readonly?'disabled':'';
+  const jiraSync=backlogJiraSyncLabel(it.jira);
   const lead=`
-    <td class="stik1" rowspan="${span}"><div class="id-cell">
-      ${readonly?'':bkDragHandleHTML(it)}
-      <input data-bk="${it._uid}" data-bp="id" value="${esc(it.id)}" ${ro}>
-    </div></td>
+    <td class="stik1" rowspan="${span}">
+      <div class="id-cell bk-issue-cell">
+        ${readonly?'':bkDragHandleHTML(it)}
+        <div class="bk-issue-data">
+          <div class="bk-issue-main">
+            <input data-bk="${it._uid}" data-bp="id" value="${esc(it.id)}" ${ro}>
+            ${readonly?'':`<button type="button" class="bk-jira-refresh" data-bk-jira-refresh="${esc(it._uid)}" aria-label="Обновить ${esc(it.id)} из Jira" title="Обновить данные задачи из Jira">↻</button>`}
+          </div>
+          ${jiraSync?`<span class="bk-jira-synced" title="Последняя успешная синхронизация с Jira">${esc(jiraSync)}</span>`:''}
+        </div>
+      </div>
+    </td>
     <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="name" value="${esc(it.name)}" ${ro}></td>
     <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="custPrio" value="${esc(it.custPrio)}" class="w-narrow" ${ro}></td>
     <td rowspan="${span}"><input data-bk="${it._uid}" data-bp="teamPrio" value="${esc(it.teamPrio)}" class="w-narrow" ${ro}></td>
@@ -473,6 +512,26 @@ function bindBacklog(){
       await executeBacklogCommand(`/backlog-board/items/${el.dataset.bkDelrow}`,'DELETE',{},true);
       toast('Инициатива удалена',{type:'success'});
     }catch(_){ }
+  });
+
+  // ручное обновление одной инициативы из Jira
+  document.querySelectorAll('[data-bk-jira-refresh]').forEach(el=>el.onclick=async(e)=>{
+    e.stopPropagation();
+    const row=findBacklogRow(el.dataset.bkJiraRefresh); if(!row) return;
+    el.disabled=true; el.classList.add('loading');
+    try{
+      const result=await refreshBacklogItemFromJira(row.id);
+      const key=result.jira&&result.jira.issue_key||row.issue_key;
+      const sent=(row.sent_to||[]).length>0;
+      toast(`${key} обновлена из Jira.${sent?' Для переноса изменений в Pre PI отправьте инициативу повторно.':''}`,{
+        type:'success',title:'Данные Jira обновлены',timeout:7000,
+      });
+      if(result.warnings&&result.warnings.length){
+        toast(result.warnings.join('. '),{type:'warn',title:'Проверьте сопоставление',timeout:9000});
+      }
+    }catch(_){
+      el.disabled=false; el.classList.remove('loading');
+    }
   });
 
   // правка полей инициативы

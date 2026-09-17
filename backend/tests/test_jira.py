@@ -7,7 +7,11 @@ import httpx
 import pytest
 
 from app.core.config import Settings
-from app.schemas.backlog import BacklogTeamRef
+from app.schemas.backlog import (
+    BacklogBoardExecutorRead,
+    BacklogBoardItemRead,
+    BacklogTeamRef,
+)
 from app.schemas.jira import JiraBacklogImportCommand
 from app.services.jira import (
     JIRA_FIELDS,
@@ -19,6 +23,7 @@ from app.services.jira import (
     JiraUnavailable,
     empty_backlog_command,
     jira_issue_to_backlog_command,
+    jira_issue_to_backlog_refresh_command,
     parse_jira_issue,
 )
 
@@ -137,6 +142,75 @@ def test_import_warns_when_cycle_team_does_not_have_a_jira_competency():
 
     assert command.executors[0].effort_by_competency == {"SA": 3.0, "DEV": 8.0, "QA": 7.0}
     assert warnings == ["Оценки Jira не перенесены для отсутствующих компетенций: DES"]
+
+
+def test_refresh_command_preserves_local_fields_and_unmatched_current_teams():
+    issue = parse_jira_issue(jira_payload())
+    current_team = BacklogTeamRef(
+        id=uuid.uuid4(),
+        tribe_id=uuid.uuid4(),
+        tribe="Технологии",
+        name="CURRENT-TEAM",
+        competencies=["SA", "DEV", "QA", "DES"],
+    )
+    executor_id = uuid.uuid4()
+    current = BacklogBoardItemRead(
+        id=uuid.uuid4(),
+        tribe="Технологии",
+        issue_key=issue.issue_key,
+        title="Локальное название",
+        description="Локальное описание",
+        product="Локальный продукт",
+        owner_team="CURRENT-TEAM",
+        initiative_type="Локальный тип",
+        target_year=2030,
+        target_quarter="Q2",
+        customer_priority="1",
+        team_priority="2",
+        status="Оценка проведена",
+        tshirt_size="XL",
+        tags=["local"],
+        systems=["Legacy"],
+        executors=[
+            BacklogBoardExecutorRead(
+                id=executor_id,
+                team="CURRENT-TEAM",
+                effort_by_competency={"SA": 100},
+            )
+        ],
+        sort_order=4,
+    )
+
+    command, warnings, updated_fields = jira_issue_to_backlog_refresh_command(
+        issue, current, [current_team], 12
+    )
+
+    assert warnings == [
+        "Команда-владелец Jira не найдена в выбранном трайбе",
+        "Команда-исполнитель Jira не найдена в активном PI-цикле",
+    ]
+    assert command.owner_team == "CURRENT-TEAM"
+    assert command.executors[0].id == executor_id
+    assert command.executors[0].team == "CURRENT-TEAM"
+    assert command.executors[0].effort_by_competency == issue.effort_by_competency
+    assert command.title == issue.title
+    assert command.product == "Discovery (CMDB-6881)"
+    assert command.systems == [
+        "DSA (CMDB-6038)",
+        "Service (CMDB-12882)",
+        "IBM (CMDB-6063)",
+    ]
+    assert command.description == "Локальное описание"
+    assert command.target_year == 2030
+    assert command.target_quarter == "Q2"
+    assert command.customer_priority == "1"
+    assert command.team_priority == "2"
+    assert command.status == "Оценка проведена"
+    assert command.tshirt_size == "XL"
+    assert command.tags == ["local"]
+    assert "owner_team" not in updated_fields
+    assert "executor_team" not in updated_fields
+    assert "effort_by_competency" in updated_fields
 
 
 def test_build_empty_backlog_command_keeps_entered_issue_and_selected_team():

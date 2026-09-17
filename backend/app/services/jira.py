@@ -13,7 +13,12 @@ from urllib.parse import quote
 import httpx
 
 from app.core.config import Settings
-from app.schemas.backlog import BacklogBoardExecutor, BacklogItemCommand, BacklogTeamRef
+from app.schemas.backlog import (
+    BacklogBoardExecutor,
+    BacklogBoardItemRead,
+    BacklogItemCommand,
+    BacklogTeamRef,
+)
 from app.schemas.jira import JiraBacklogImportCommand, JiraIssueRead
 
 
@@ -261,6 +266,39 @@ def _join_limited(values: list[str], max_length: int) -> str:
     return ", ".join(values)[:max_length].rstrip(" ,")
 
 
+def _jira_systems(issue: JiraIssueRead) -> list[str]:
+    systems: list[str] = []
+    for value in [*issue.channels, *issue.services, *issue.infrastructures]:
+        if value not in systems:
+            systems.append(value)
+    return systems
+
+
+def _jira_effort_for_executor(
+    issue: JiraIssueRead,
+    executor: BacklogTeamRef | None,
+) -> tuple[dict[str, float], list[str]]:
+    warnings: list[str] = []
+    effort_by_competency: dict[str, float] = {}
+    if executor is not None:
+        allowed = {value.upper() for value in executor.competencies}
+        effort_by_competency = {
+            key: value
+            for key, value in issue.effort_by_competency.items()
+            if key in allowed and value
+        }
+        omitted = sorted(
+            key for key, value in issue.effort_by_competency.items() if value and key not in allowed
+        )
+        if omitted:
+            warnings.append(
+                "Оценки Jira не перенесены для отсутствующих компетенций: " + ", ".join(omitted)
+            )
+    elif issue.effort_by_competency:
+        warnings.append("Оценки Jira не перенесены: команда для ресурсной строки не определена")
+    return effort_by_competency, warnings
+
+
 def jira_issue_to_backlog_command(
     issue: JiraIssueRead,
     source: JiraBacklogImportCommand,
@@ -280,28 +318,8 @@ def jira_issue_to_backlog_command(
         if issue.executor_teams:
             warnings.append("Команда-исполнитель Jira не найдена в активном PI-цикле")
 
-    effort_by_competency: dict[str, float] = {}
-    if executor is not None:
-        allowed = {value.upper() for value in executor.competencies}
-        effort_by_competency = {
-            key: value
-            for key, value in issue.effort_by_competency.items()
-            if key in allowed and value
-        }
-        omitted = sorted(
-            key for key, value in issue.effort_by_competency.items() if value and key not in allowed
-        )
-        if omitted:
-            warnings.append(
-                "Оценки Jira не перенесены для отсутствующих компетенций: " + ", ".join(omitted)
-            )
-    elif issue.effort_by_competency:
-        warnings.append("Оценки Jira не перенесены: команда для ресурсной строки не определена")
-
-    systems: list[str] = []
-    for value in [*issue.channels, *issue.services, *issue.infrastructures]:
-        if value not in systems:
-            systems.append(value)
+    effort_by_competency, effort_warnings = _jira_effort_for_executor(issue, executor)
+    warnings.extend(effort_warnings)
 
     return (
         BacklogItemCommand(
@@ -319,7 +337,7 @@ def jira_issue_to_backlog_command(
             status="Нет оценки",
             tshirt_size="",
             tags=[],
-            systems=systems,
+            systems=_jira_systems(issue),
             executors=(
                 [
                     BacklogBoardExecutor(
@@ -334,6 +352,104 @@ def jira_issue_to_backlog_command(
         ),
         warnings,
     )
+
+
+def jira_issue_to_backlog_refresh_command(
+    issue: JiraIssueRead,
+    current: BacklogBoardItemRead,
+    teams: list[BacklogTeamRef],
+    expected_version: int,
+) -> tuple[BacklogItemCommand, list[str], list[str]]:
+    """Merge Jira-owned fields into an existing backlog item.
+
+    SberPI-owned planning fields stay unchanged. If a Jira team cannot be
+    resolved in the active PI cycle, keep the current team instead of silently
+    clearing it and return the same mapping warning used during import.
+    """
+    warnings: list[str] = []
+    tribe_teams = [team for team in teams if _normal(team.tribe) == _normal(current.tribe)]
+
+    owner = _match_team(issue.owner_teams, tribe_teams)
+    if owner is None:
+        owner = _match_team([current.owner_team], tribe_teams) if current.owner_team else None
+        if issue.owner_teams:
+            warnings.append("Команда-владелец Jira не найдена в выбранном трайбе")
+
+    current_executor = current.executors[0] if current.executors else None
+    matched_executor = _match_team(issue.executor_teams, teams)
+    executor = matched_executor
+    if executor is None and current_executor is not None:
+        executor = _match_team([current_executor.team], teams)
+    if executor is None and current_executor is None:
+        executor = owner
+    if matched_executor is None and issue.executor_teams:
+        warnings.append("Команда-исполнитель Jira не найдена в активном PI-цикле")
+
+    effort_by_competency, effort_warnings = _jira_effort_for_executor(issue, executor)
+    warnings.extend(effort_warnings)
+
+    executor_rows: list[BacklogBoardExecutor]
+    if executor is not None:
+        current_id = (
+            current_executor.id
+            if current_executor is not None
+            and _normal(current_executor.team) == _normal(executor.name)
+            else None
+        )
+        executor_rows = [
+            BacklogBoardExecutor(
+                id=current_id,
+                team=executor.name,
+                effort_by_competency=effort_by_competency,
+            )
+        ]
+    elif current_executor is not None:
+        # Preserve an existing resource row which is outside the selected
+        # cycle's reference data; validation will reject the command rather
+        # than allowing a refresh to erase it.
+        executor_rows = [
+            BacklogBoardExecutor(
+                id=current_executor.id,
+                team=current_executor.team,
+                effort_by_competency=dict(current_executor.effort_by_competency),
+            )
+        ]
+    else:
+        executor_rows = []
+
+    command = BacklogItemCommand(
+        tribe=current.tribe,
+        issue_key=current.issue_key,
+        title=issue.title,
+        description=current.description,
+        product=_join_limited(issue.user_products, 180),
+        owner_team=owner.name if owner else current.owner_team,
+        initiative_type=issue.initiative_type[:120],
+        target_year=current.target_year,
+        target_quarter=current.target_quarter,
+        customer_priority=current.customer_priority,
+        team_priority=current.team_priority,
+        status=current.status,
+        tshirt_size=current.tshirt_size,
+        tags=list(current.tags),
+        systems=_jira_systems(issue),
+        executors=executor_rows,
+        expected_version=expected_version,
+    )
+
+    updated_fields: list[str] = []
+    for field in ("title", "product", "owner_team", "initiative_type", "systems"):
+        if getattr(current, field) != getattr(command, field):
+            updated_fields.append(field)
+    current_team = current_executor.team if current_executor else ""
+    next_team = executor_rows[0].team if executor_rows else ""
+    if current_team != next_team:
+        updated_fields.append("executor_team")
+    current_effort = dict(current_executor.effort_by_competency) if current_executor else {}
+    next_effort = dict(executor_rows[0].effort_by_competency) if executor_rows else {}
+    if current_effort != next_effort:
+        updated_fields.append("effort_by_competency")
+    return command, warnings, updated_fields
 
 
 def empty_backlog_command(

@@ -604,6 +604,20 @@
   table.prep tbody tr td.row-new{animation:rowNew 1.8s ease-out}
   /* ручка перетаскивания строки — живёт в ячейке «№ Инициативы» */
   .id-cell{display:flex;align-items:center;gap:6px}
+  table.prep.bk-table th.stik1,table.prep.bk-table td.stik1{min-width:230px;width:230px}
+  .bk-issue-cell{align-items:flex-start}
+  .bk-issue-data{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .bk-issue-main{display:flex;align-items:center;gap:5px}
+  .bk-table td .bk-issue-main input:not([type=number]){width:150px;min-width:150px}
+  .bk-jira-refresh{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+    width:27px;height:27px;padding:0;border:1px solid var(--border2);border-radius:6px;
+    background:var(--panel2);color:var(--accent);font-size:17px;line-height:1;cursor:pointer;
+    transition:border-color var(--ease),background var(--ease),color var(--ease)}
+  .bk-jira-refresh:hover{border-color:var(--accent);background:var(--accent-soft);color:#eafff5}
+  .bk-jira-refresh.loading{animation:jiraRefreshSpin .8s linear infinite}
+  .bk-jira-synced{padding-left:1px;color:var(--muted);font-size:10.5px;line-height:1.2;white-space:nowrap}
+  @keyframes jiraRefreshSpin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.bk-jira-refresh.loading{animation:none}}
   .row-drag{flex:0 0 auto;cursor:grab;color:var(--muted);user-select:none;font-size:13px;line-height:1;padding:2px 1px}
   .row-drag:hover{color:var(--accent)}
   .row-drag:active{cursor:grabbing}
