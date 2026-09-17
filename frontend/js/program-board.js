@@ -166,6 +166,10 @@ async function moveGoal(fromId,targetId,after){
   catch(error){handleCommandError(error,()=>goalsBoardCommand('/order','PUT',{goal_ids:ids}));}
 }
 
+const PB_STICKER_ZOOM_MIN=.5;
+const PB_STICKER_ZOOM_MAX=1.3;
+const PB_STICKER_ZOOM_STEP=.1;
+
 function pbTeamFilterOptions(){
   const board=programBoardViews[currentCycleId()];
   return board?(board.teams||[]).map(team=>team.name):[];
@@ -180,11 +184,20 @@ function issueMatchesPBFilters(card){
   if(executor && !(card.executors||[]).some(row=>row.team===executor)) return false;
   return true;
 }
+function pbStickerZoom(){
+  const value=Number(state.ui.pbStickerZoom);
+  return Number.isFinite(value)?Math.min(PB_STICKER_ZOOM_MAX,Math.max(PB_STICKER_ZOOM_MIN,value)):1;
+}
+function pbStickerHoverScale(zoom=pbStickerZoom()){
+  return Math.max(1.25,1/zoom);
+}
 function pbFiltersHTML(){
   const teams=pbTeamFilterOptions();
   const opt=selected=>`<option value="">Все команды</option>`+
     teams.map(t=>`<option value="${esc(t)}" ${selected===t?'selected':''}>${esc(t)}</option>`).join('');
   const active=pbFiltersActive();
+  const zoom=pbStickerZoom();
+  const percent=Math.round(zoom*100);
   return `<div class="pb-filters">
     <label>Команда-владелец
       <select id="pbOwnerFilter">${opt(state.ui.pbOwnerFilter)}</select>
@@ -193,6 +206,13 @@ function pbFiltersHTML(){
       <select id="pbExecutorFilter">${opt(state.ui.pbExecutorFilter)}</select>
     </label>
     ${active?`<button class="ghost" id="pbFilterClear">Сбросить</button>`:''}
+    <div class="pb-sticker-zoom" aria-label="Масштаб стикеров">
+      <span>Стикеры</span>
+      <button id="pbStickerZoomOut" type="button" title="Уменьшить стикеры" aria-label="Уменьшить стикеры" ${zoom<=PB_STICKER_ZOOM_MIN?'disabled':''}>−</button>
+      <output id="pbStickerZoomValue">${percent}%</output>
+      <button id="pbStickerZoomIn" type="button" title="Увеличить стикеры" aria-label="Увеличить стикеры" ${zoom>=PB_STICKER_ZOOM_MAX?'disabled':''}>+</button>
+      <button class="ghost" id="pbStickerZoomReset" type="button" title="Вернуть обычный размер" ${zoom===1?'disabled':''}>100%</button>
+    </div>
   </div>`;
 }
 function pbDate(value){
@@ -237,12 +257,13 @@ function viewPB(){
   const sprints=board.sprints||[];
   const tribes=board.tribes||[];
   const activeFilter=pbFiltersActive();
+  const hasUnscheduled=(board.cards||[]).some(card=>card.sprint_index===null||card.sprint_index===undefined);
   let html=`<div class="card"><div class="flex-between"><h2>Program Board ${cycleBadge()}</h2>
     <div class="hint">Сформировано на сервере из активного PI, Pre PI Planning и «Командных досок». Перетаскивайте стикеры между спринтами — позиция сохраняется атомарно и сразу видна на командной доске.</div></div>`;
   html+=pbConflictsHTML(board);
   html+=pbFiltersHTML();
-  html+=`<div class="pb-wrap${activeFilter?' lane-focus':''}"><table class="pb"><thead><tr>
-    <th>Трайб</th><th>Команда</th><th class="sp pb-unscheduled-head">Не назначено</th>`+
+  html+=`<div class="pb-wrap${activeFilter?' lane-focus':''}" style="--pb-sticker-zoom:${pbStickerZoom()};--pb-sticker-hover-scale:${pbStickerHoverScale()}"><table class="pb"><thead><tr>
+    <th>Трайб</th><th>Команда</th>${hasUnscheduled?'<th class="sp pb-unscheduled-head">Не назначено</th>':''}`+
     sprints.map(s=>`<th class="sp"><div class="sp-head"><div class="num">Спринт ${s.number}</div>
       <div class="dates">${pbDate(s.start_date)}–${pbDate(s.end_date)}</div>
       ${(s.events||[]).map(event=>pbEventPillHTML(event)).join('')}</div></th>`).join('')+
@@ -253,11 +274,13 @@ function viewPB(){
       html+=`<tr>`;
       if(ti===0) html+=`<td class="tribe-cell" rowspan="${teams.length}">${esc(tribe.name)}</td>`;
       html+=`<td class="team-cell">${esc(t.name)}</td>`;
-      const unscheduled=(board.cards||[]).filter(card=>
-        card.primary_team_id===t.id&&(card.sprint_index===null||card.sprint_index===undefined)
-      );
-      html+=`<td class="pb-cell pb-unscheduled" data-pb-team="${esc(t.id)}">`+
-        unscheduled.map(card=>pbCardHTML(card,activeFilter&&issueMatchesPBFilters(card)?'lane-on':'')).join('')+`</td>`;
+      if(hasUnscheduled){
+        const unscheduled=(board.cards||[]).filter(card=>
+          card.primary_team_id===t.id&&(card.sprint_index===null||card.sprint_index===undefined)
+        );
+        html+=`<td class="pb-cell pb-unscheduled" data-pb-team="${esc(t.id)}">`+
+          unscheduled.map(card=>pbCardHTML(card,activeFilter&&issueMatchesPBFilters(card)?'lane-on':'')).join('')+`</td>`;
+      }
       sprints.forEach(s=>{
         const cards=(board.cards||[]).filter(card=>card.primary_team_id===t.id&&card.sprint_index===s.index);
         html+=`<td class="pb-cell dropzone" data-pb-sprint="${s.index}" data-pb-team="${esc(t.id)}">`+
@@ -382,6 +405,30 @@ function bindPB(){
     state.ui.pbExecutorFilter=null;
     save(); render();
   };
+  const setStickerZoom=value=>{
+    const normalized=Math.round(Math.min(PB_STICKER_ZOOM_MAX,Math.max(PB_STICKER_ZOOM_MIN,value))*10)/10;
+    state.ui.pbStickerZoom=normalized;
+    const wrap=document.querySelector('.pb-wrap');
+    if(wrap){
+      wrap.style.setProperty('--pb-sticker-zoom',normalized);
+      wrap.style.setProperty('--pb-sticker-hover-scale',pbStickerHoverScale(normalized));
+    }
+    const output=$('#pbStickerZoomValue');
+    if(output)output.textContent=`${Math.round(normalized*100)}%`;
+    const out=$('#pbStickerZoomOut');
+    const input=$('#pbStickerZoomIn');
+    const reset=$('#pbStickerZoomReset');
+    if(out)out.disabled=normalized<=PB_STICKER_ZOOM_MIN;
+    if(input)input.disabled=normalized>=PB_STICKER_ZOOM_MAX;
+    if(reset)reset.disabled=normalized===1;
+    save(false);
+  };
+  const zoomOut=$('#pbStickerZoomOut');
+  if(zoomOut)zoomOut.onclick=()=>setStickerZoom(pbStickerZoom()-PB_STICKER_ZOOM_STEP);
+  const zoomIn=$('#pbStickerZoomIn');
+  if(zoomIn)zoomIn.onclick=()=>setStickerZoom(pbStickerZoom()+PB_STICKER_ZOOM_STEP);
+  const resetZoom=$('#pbStickerZoomReset');
+  if(resetZoom)resetZoom.onclick=()=>setStickerZoom(1);
   document.querySelectorAll('.pb-cell .sticker').forEach(el=>el.onclick=e=>{
     if(e.target.closest('.x')) return;
     openStickerModal(el.dataset.issueKey);

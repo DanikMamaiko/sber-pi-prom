@@ -65,9 +65,24 @@ function teamToolbar(t,active){
 }
 
 /* ---- 4.x Доска команды ---- */
+const TB_STICKER_ZOOM_MIN=.5;
+const TB_STICKER_ZOOM_MAX=1.3;
+const TB_STICKER_ZOOM_STEP=.1;
+function tbStickerZoom(){
+  const value=Number(state.ui.tbStickerZoom);
+  return Number.isFinite(value)?Math.min(TB_STICKER_ZOOM_MAX,Math.max(TB_STICKER_ZOOM_MIN,value)):1;
+}
+function tbStickerHoverScale(zoom=tbStickerZoom()){
+  return Math.max(1.25,1/zoom);
+}
+function tbStickerZoomStyle(){
+  return `--tb-sticker-zoom:${tbStickerZoom()};--tb-sticker-hover-scale:${tbStickerHoverScale()}`;
+}
 function boardSwitch(){
   const m = state.ui.boardLayout==='lanes' ? 'lanes' : (state.ui.boardLayout==='gantt' ? 'gantt' : 'columns');
   const w = boardWeekly();
+  const zoom=tbStickerZoom();
+  const percent=Math.round(zoom*100);
   return `<div class="board-mode-row">
     <div class="board-switch">
       <button class="${m==='columns'?'active':''}" data-layout="columns">▦ Колонки</button>
@@ -77,6 +92,13 @@ function boardSwitch(){
     ${m==='gantt'?'':`<div class="board-switch">
       <button class="${!w?'active':''}" data-week-mode="off">Спринты</button>
       <button class="${w?'active':''}" data-week-mode="on">Недели</button>
+    </div>`}
+    ${m==='gantt'?'':`<div class="tb-sticker-zoom" aria-label="Масштаб стикеров">
+      <span>Стикеры</span>
+      <button id="tbStickerZoomOut" type="button" title="Уменьшить стикеры" aria-label="Уменьшить стикеры" ${zoom<=TB_STICKER_ZOOM_MIN?'disabled':''}>−</button>
+      <output id="tbStickerZoomValue">${percent}%</output>
+      <button id="tbStickerZoomIn" type="button" title="Увеличить стикеры" aria-label="Увеличить стикеры" ${zoom>=TB_STICKER_ZOOM_MAX?'disabled':''}>+</button>
+      <button class="ghost" id="tbStickerZoomReset" type="button" title="Вернуть обычный размер" ${zoom===1?'disabled':''}>100%</button>
     </div>`}
     <span class="muted">${m==='gantt'
       ?'Календарь команды по дням: одна строка — один сотрудник, цветные полосы — назначенные подзадачи.'
@@ -163,7 +185,7 @@ function viewBoard(t){
   html+=`<div class="row" style="margin-bottom:10px">
     <span class="muted"><b>Стикеры можно свободно перемещать:</b> перетащите стикер в любое место колонки спринта — он встанет в позицию под курсором (порядок сохраняется). Белые подзадачи больше не сгруппированы по родителю — цветные и белые можно свободно смешивать и переставлять в любом порядке (родитель белого виден по цветной плашке с ID). Стрелки декомпозиции (белый → цветной) создаются автоматически и их можно <b>редактировать</b>: кликните по стрелке — на концах появятся точки <b>○</b>, перетащите их на нужные стикеры. Так можно задать порядок выполнения белых стикеров (например, SA1 → SA2). Чтобы <b>удалить</b> стрелку — кликните по ней и нажмите красный <b style="color:#ec8a98">×</b> в середине или клавишу <b>Delete</b>. Чтобы <b>создать связь</b> — на белом стикере нажмите <b style="color:var(--accent)">+ связь</b> и потяните на нужный стикер. <b>Клик по белому стикеру</b> — карточка подзадачи (ФИО/роль/ёмкость/спринт). Если стрелка мешает — <b>потяните её за линию</b> и оттяните в сторону; двойной клик по линии выпрямляет.${state.ui.selectedArrow?` <b style="color:var(--accent)">Стрелка выбрана — перетащите ○ или удалите ×/Delete.</b>`:''}</span>
   </div>`;
-  html+=`<div class="board-scroll" id="boardScroll"><svg class="arrow-layer" id="arrowLayer"></svg><div class="board-grid">`;
+  html+=`<div class="board-scroll" id="boardScroll" style="${tbStickerZoomStyle()}"><svg class="arrow-layer" id="arrowLayer"></svg><div class="board-grid">`;
   // бэклог
   const backlogItems=state.issues
     .filter(i=>issuePrimaryTeam(i)===t.name && i.onBoard && i.sprint===null)
@@ -224,7 +246,7 @@ function viewBoardLanes(t){
   html+=`<div class="row" style="margin-bottom:10px">
     <span class="muted">Каждая задача — отдельная строка. Цветной стикер и его белые подзадачи лежат в ячейках своей строки, стрелки не выходят за строку. Подзадачи можно перетаскивать между спринтами <b>в пределах своей строки</b>. Удалить стрелку: кликните по ней и нажмите <b style="color:#ec8a98">×</b> или <b>Delete</b>. Создать связь: на белом стикере нажмите <b style="color:var(--accent)">+ связь</b> и потяните на цель. Клик по белому стикеру — карточка подзадачи. Стрелку можно оттянуть в сторону — потяните за линию; двойной клик выпрямляет.${state.ui.selectedArrow?` <b style="color:var(--accent)">Стрелка выбрана — перетащите ○ или удалите ×/Delete.</b>`:''}</span>
   </div>`;
-  html+=`<div class="board-scroll" id="boardScroll"><svg class="arrow-layer" id="arrowLayer"></svg>`;
+  html+=`<div class="board-scroll" id="boardScroll" style="${tbStickerZoomStyle()}"><svg class="arrow-layer" id="arrowLayer"></svg>`;
   html+=`<table class="lanes"><thead><tr><th class="lane-id-head">Задача</th>`;
   html+=`<th class="lane-sp-head"><div class="num">Бэклог</div></th>`;
   periods.forEach(p=>{
@@ -916,6 +938,31 @@ function bindTeams(){
   document.querySelectorAll('[data-week-mode]').forEach(b=>b.onclick=()=>{
     state.ui.boardWeeks=b.dataset.weekMode==='on'; save(); render();
   });
+  const setTeamStickerZoom=value=>{
+    const normalized=Math.round(Math.min(TB_STICKER_ZOOM_MAX,Math.max(TB_STICKER_ZOOM_MIN,value))*10)/10;
+    state.ui.tbStickerZoom=normalized;
+    const scroll=$('#boardScroll');
+    if(scroll){
+      scroll.style.setProperty('--tb-sticker-zoom',normalized);
+      scroll.style.setProperty('--tb-sticker-hover-scale',tbStickerHoverScale(normalized));
+    }
+    const output=$('#tbStickerZoomValue');
+    if(output)output.textContent=`${Math.round(normalized*100)}%`;
+    const out=$('#tbStickerZoomOut');
+    const input=$('#tbStickerZoomIn');
+    const reset=$('#tbStickerZoomReset');
+    if(out)out.disabled=normalized<=TB_STICKER_ZOOM_MIN;
+    if(input)input.disabled=normalized>=TB_STICKER_ZOOM_MAX;
+    if(reset)reset.disabled=normalized===1;
+    save(false);
+    requestAnimationFrame(()=>{equalizeBoardColumnHeaders();drawArrows();});
+  };
+  const zoomOut=$('#tbStickerZoomOut');
+  if(zoomOut)zoomOut.onclick=()=>setTeamStickerZoom(tbStickerZoom()-TB_STICKER_ZOOM_STEP);
+  const zoomIn=$('#tbStickerZoomIn');
+  if(zoomIn)zoomIn.onclick=()=>setTeamStickerZoom(tbStickerZoom()+TB_STICKER_ZOOM_STEP);
+  const resetZoom=$('#tbStickerZoomReset');
+  if(resetZoom)resetZoom.onclick=()=>setTeamStickerZoom(1);
   // переключатель таблицы трудозатрат по ФИО
   const effFio=$('#tbEffortFio');
   if(effFio) effFio.onclick=()=>{ state.ui.showEffortFio=!state.ui.showEffortFio; save(); render(); };

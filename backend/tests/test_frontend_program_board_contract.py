@@ -31,9 +31,11 @@ def test_program_board_business_data_is_not_saved_in_browser_storage():
 def test_program_board_renders_unscheduled_initiatives():
     board = source("program-board.js")
 
-    assert "pb-unscheduled-head\">Не назначено" in board
+    assert "const hasUnscheduled=(board.cards||[]).some" in board
+    assert "${hasUnscheduled?'<th class=\"sp pb-unscheduled-head\">Не назначено</th>':''}" in board
     assert "card.sprint_index===null||card.sprint_index===undefined" in board
     assert 'class="pb-cell pb-unscheduled"' in board
+    assert "if(hasUnscheduled){" in board
 
 
 def test_program_board_moves_refresh_team_board_and_capacity():
@@ -44,3 +46,17 @@ def test_program_board_moves_refresh_team_board_and_capacity():
 
     assert refresh in handler
     assert handler.index(refresh) < handler.index("return aggregate;")
+
+
+def test_program_board_sticker_zoom_is_ui_only_and_hover_is_readable():
+    board = source("program-board.js")
+    state = source("state.js")
+    styles = (ROOT / "frontend" / "css" / "styles.css").read_text(encoding="utf-8")
+
+    assert "pbStickerZoom:1" in state
+    assert 'id="pbStickerZoomOut"' in board
+    assert 'id="pbStickerZoomIn"' in board
+    assert "save(false)" in board
+    assert "--pb-sticker-zoom" in styles
+    assert "--pb-sticker-hover-scale" in styles
+    assert "scale(var(--pb-sticker-hover-scale,1.25))" in styles

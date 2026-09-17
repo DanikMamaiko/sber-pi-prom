@@ -75,8 +75,8 @@ const defaultState = {
     // сортировка по столбцу: тот же scope -> {k:'столбец', dir:'asc'|'desc'}; один столбец на таблицу
     colSort:{},
     goalsTribe:null, goalsTeam:null,
-    teamsTribe:null, teamSel:null, teamView:'board', selectedArrow:null,
-    pbOwnerFilter:null, pbExecutorFilter:null,
+    teamsTribe:null, teamSel:null, teamView:'board', selectedArrow:null, tbStickerZoom:1,
+    pbOwnerFilter:null, pbExecutorFilter:null, pbStickerZoom:1,
     riskView:'general', riskTribe:null, riskTeam:null,
   },
 };

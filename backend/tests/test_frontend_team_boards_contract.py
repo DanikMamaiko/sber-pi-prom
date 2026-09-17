@@ -194,3 +194,18 @@ def test_gantt_uses_employee_rows_and_daily_availability_calendar():
     assert ".gantt-person-cell{position:sticky;left:0" in styles
     assert ".gantt-day-bg.vacation" in styles
     assert ".gantt-day-bg.unavailable" in styles
+
+
+def test_team_board_sticker_zoom_covers_cards_but_not_gantt_bars():
+    boards = source("team-boards.js")
+    state = source("state.js")
+    styles = css_source("styles.css")
+
+    assert "tbStickerZoom:1" in state
+    assert 'id="tbStickerZoomOut"' in boards
+    assert 'id="tbStickerZoomIn"' in boards
+    assert "--tb-sticker-zoom" in boards
+    assert "save(false)" in boards
+    assert ".board-scroll:not(.gantt-scroll) :is(.sticker,.story,.white)" in styles
+    assert "scale(var(--tb-sticker-hover-scale,1.25))" in styles
+    assert "m==='gantt'?'':`<div class=\"tb-sticker-zoom\"" in boards
