@@ -742,16 +742,23 @@ function openExtraUnavailableModal(t,i){
 // Ключ стикера (цветного/белого) под курсором, ПЕРЕД которым вставлять, либо null (в конец).
 // Формат ключа: 'i:'+id (цветной) | 'g:'+uid (История) | 's:'+uid (белый).
 function stickerBeforeKey(zone,clientY){
-  const kids=[...zone.querySelectorAll(':scope > .sticker[data-drag="issue"], :scope > .story[data-story-uid], :scope > .white[data-wuid]')];
+  const kids=[...boardDropContainer(zone).children].filter(el=>el.matches('.sticker[data-drag="issue"],.story[data-story-uid],.white[data-wuid]'));
   for(const el of kids){
     const r=el.getBoundingClientRect();
     if(clientY < r.top + r.height/2){
-      if(el.classList.contains('white')) return 's:'+el.dataset.wuid;
-      if(el.classList.contains('story')) return 'g:'+el.dataset.storyUid;
-      return 'i:'+el.dataset.id;
+      return boardStickerKey(el);
     }
   }
   return null;
+}
+function boardDropContainer(zone){
+  return zone.classList.contains('backlog-col')?zone.querySelector('.backlog-body'):zone;
+}
+function boardStickerKey(el){
+  if(!el)return null;
+  if(el.classList.contains('white'))return 's:'+el.dataset.wuid;
+  if(el.classList.contains('story'))return 'g:'+el.dataset.storyUid;
+  return 'i:'+el.dataset.id;
 }
 // Плоский список стикеров колонки (цветные + Истории + белые), отсортированный по ord.
 // sprintVal — индекс спринта или null (бэклог); weekVal — null для обычного режима или 0/1 для недель.
@@ -968,7 +975,7 @@ function bindTeams(){
   if(effFio) effFio.onclick=()=>{ state.ui.showEffortFio=!state.ui.showEffortFio; save(); render(); };
 
   // drag для доски (цветные + белые); zone — сама зона, чтобы знать строку в режиме дорожек
-  enableDrag(document,async(payload,zone,ev)=>{
+  enableDrag(document,async(payload,zone,ev,placement)=>{
     let target=zone.dataset.tbSprint;
     let targetWeek=zone.dataset.tbWeek==='' || zone.dataset.tbWeek===undefined ? null : +zone.dataset.tbWeek;
     let targetDate='';
@@ -997,7 +1004,7 @@ function bindTeams(){
         setBoardPeriod(iss,ns,targetWeek);
         // «Колонки»: свободное размещение среди всех стикеров колонки (цветных и белых)
         if(isColumns && ev){
-          const beforeKey=stickerBeforeKey(zone,ev.clientY);
+          const beforeKey=placement?boardStickerKey(placement.before):stickerBeforeKey(zone,ev.clientY);
           reorderBoardItem(t.name,ns,targetWeek,'i:'+iss.id,beforeKey);
         }
         await runBoardCommand(`/initiatives/${iss._backendId}`,'PATCH',{
@@ -1017,7 +1024,7 @@ function bindTeams(){
         if(decompositionAfterIssue(iss,+target,targetWeek)){ warnDecompositionAfterIssue('История'); return; }
         setBoardPeriod(sy,+target,targetWeek);
         if(isColumns && ev){
-          const beforeKey=stickerBeforeKey(zone,ev.clientY);
+          const beforeKey=placement?boardStickerKey(placement.before):stickerBeforeKey(zone,ev.clientY);
           reorderBoardItem(t.name,+target,targetWeek,'g:'+sy.uid,beforeKey);
         }
         await runBoardCommand(`/initiatives/${iss._backendId}/stories/${sy._backendId}`,'PATCH',{
@@ -1052,7 +1059,7 @@ function bindTeams(){
         if(plannedStartDate)st.startDate=plannedStartDate;else delete st.startDate;
         // «Колонки»: свободное размещение среди всех стикеров колонки (цветных и белых)
         if(isColumns && ev){
-          const beforeKey=stickerBeforeKey(zone,ev.clientY);
+          const beforeKey=placement?boardStickerKey(placement.before):stickerBeforeKey(zone,ev.clientY);
           reorderBoardItem(t.name,+target,targetWeek,'s:'+st.uid,beforeKey);
         }
         await runBoardCommand(`/initiatives/${iss._backendId}/work-items/${st._backendId}`,'PATCH',{
@@ -1060,7 +1067,12 @@ function bindTeams(){
         });
       }
     }
-  },'[data-tb-sprint]',zone=>zone);
+  },'[data-tb-sprint]',zone=>zone,{
+    itemSelector:'.sticker[data-drag="issue"],.story[data-story-uid],.white[data-wuid]',
+    container:boardDropContainer,
+    accepts:(payload,zone)=>zone.dataset.tbIssue===undefined&&zone.dataset.tbFio===undefined&&
+      !(zone.dataset.tbSprint==='backlog'&&payload.kind!=='issue'),
+  });
 
   // стрелки + фокус по наведению
   const scroll=$('#boardScroll');

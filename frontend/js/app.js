@@ -1,23 +1,65 @@
 /* =====================================================================
    DRAG & DROP (общий механизм)
-   onDrop(payload,target) ; targetSel — селектор зон ; targetVal — функция значения
+   onDrop(payload,target,event,placement); placement — позиция визуального индикатора
+   targetSel — селектор зон ; targetVal — функция значения
 ===================================================================== */
-function enableDrag(scope,onDrop,targetSel,targetVal){
+function enableDrag(scope,onDrop,targetSel,targetVal,placementOptions=null){
+  let draggedEl=null,draggedPayload=null,dropIndicator=null;
+  const clearDropIndicator=()=>{
+    if(dropIndicator)dropIndicator.remove();
+    dropIndicator=null;
+  };
+  const placementContainer=zone=>placementOptions&&placementOptions.container
+    ? placementOptions.container(zone)
+    : zone;
+  const updateDropIndicator=(zone,clientY)=>{
+    if(!placementOptions||!draggedPayload||
+      (placementOptions.accepts&&!placementOptions.accepts(draggedPayload,zone))){
+      clearDropIndicator();return null;
+    }
+    const container=placementContainer(zone);if(!container){clearDropIndicator();return null;}
+    const items=[...container.children].filter(el=>el!==draggedEl&&el.matches(placementOptions.itemSelector));
+    const before=items.find(el=>{
+      const rect=el.getBoundingClientRect();
+      return clientY<rect.top+rect.height/2;
+    })||null;
+    if(!dropIndicator){
+      dropIndicator=document.createElement('div');
+      dropIndicator.className='sticker-drop-indicator';
+      dropIndicator.setAttribute('aria-hidden','true');
+    }
+    container.insertBefore(dropIndicator,before);
+    return {before,index:before?items.indexOf(before):items.length};
+  };
   scope.querySelectorAll('[data-drag]').forEach(el=>{
     el.addEventListener('dragstart',e=>{
       const payload={kind:el.dataset.drag,id:el.dataset.id,sub:el.dataset.sub!==undefined?+el.dataset.sub:undefined,story:el.dataset.storyUid};
       e.dataTransfer.setData('text/plain',JSON.stringify(payload));
       e.dataTransfer.effectAllowed='move';
-      setTimeout(()=>el.style.opacity='.4',0);
+      draggedEl=el;draggedPayload=payload;
+      setTimeout(()=>{el.style.opacity='.4';el.classList.add('dragging');},0);
     });
-    el.addEventListener('dragend',()=>el.style.opacity='1');
+    el.addEventListener('dragend',()=>{
+      el.style.opacity='1';el.classList.remove('dragging');
+      draggedEl=null;draggedPayload=null;clearDropIndicator();
+    });
   });
   scope.querySelectorAll(targetSel).forEach(zone=>{
-    zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('dragover');});
-    zone.addEventListener('dragleave',()=>zone.classList.remove('dragover'));
+    zone.addEventListener('dragover',e=>{
+      e.preventDefault();zone.classList.add('dragover');
+      updateDropIndicator(zone,e.clientY);
+    });
+    zone.addEventListener('dragleave',e=>{
+      if(e.relatedTarget&&zone.contains(e.relatedTarget))return;
+      const rect=zone.getBoundingClientRect();
+      if(e.clientX>=rect.left&&e.clientX<=rect.right&&e.clientY>=rect.top&&e.clientY<=rect.bottom)return;
+      zone.classList.remove('dragover');clearDropIndicator();
+    });
     zone.addEventListener('drop',e=>{
       e.preventDefault();zone.classList.remove('dragover');
-      try{const payload=JSON.parse(e.dataTransfer.getData('text/plain'));onDrop(payload,targetVal(zone),e);}catch(err){}
+      const placement=updateDropIndicator(zone,e.clientY);
+      clearDropIndicator();
+      try{const payload=JSON.parse(e.dataTransfer.getData('text/plain'));onDrop(payload,targetVal(zone),e,placement);}catch(err){}
     });
   });
 }

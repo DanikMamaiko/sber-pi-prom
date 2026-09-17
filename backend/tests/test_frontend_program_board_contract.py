@@ -60,3 +60,15 @@ def test_program_board_sticker_zoom_is_ui_only_and_hover_is_readable():
     assert "--pb-sticker-zoom" in styles
     assert "--pb-sticker-hover-scale" in styles
     assert "scale(var(--pb-sticker-hover-scale,1.25))" in styles
+
+
+def test_program_board_shows_and_persists_exact_sticker_drop_position():
+    board = source("program-board.js")
+    app = source("app.js")
+    styles = (ROOT / "frontend" / "css" / "styles.css").read_text(encoding="utf-8")
+
+    assert "placement?placement.index:999999" in board
+    assert 'itemSelector:\'.sticker[data-drag="pb-initiative"]\'' in board
+    assert "dropIndicator.className='sticker-drop-indicator'" in app
+    assert "return {before,index:" in app
+    assert ".sticker-drop-indicator::before" in styles

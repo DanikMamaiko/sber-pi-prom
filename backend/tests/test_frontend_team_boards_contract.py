@@ -209,3 +209,15 @@ def test_team_board_sticker_zoom_covers_cards_but_not_gantt_bars():
     assert ".board-scroll:not(.gantt-scroll) :is(.sticker,.story,.white)" in styles
     assert "scale(var(--tb-sticker-hover-scale,1.25))" in styles
     assert "m==='gantt'?'':`<div class=\"tb-sticker-zoom\"" in boards
+
+
+def test_team_board_shows_sticker_drop_position_inside_columns():
+    boards = source("team-boards.js")
+    app = source("app.js")
+    styles = css_source("styles.css")
+
+    assert "function boardDropContainer(zone)" in boards
+    assert "placement?boardStickerKey(placement.before)" in boards
+    assert 'itemSelector:\'.sticker[data-drag="issue"],.story[data-story-uid],.white[data-wuid]\'' in boards
+    assert "placementOptions.container(zone)" in app
+    assert ".sticker-drop-indicator" in styles

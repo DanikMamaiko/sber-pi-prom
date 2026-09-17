@@ -433,10 +433,10 @@ function bindPB(){
     if(e.target.closest('.x')) return;
     openStickerModal(el.dataset.issueKey);
   });
-  enableDrag(document,async(payload,sprint)=>{
+  enableDrag(document,async(payload,sprint,ev,placement)=>{
     if(payload.kind!=='pb-initiative')return;
     try{
-      await programBoardMoveInitiative(payload.id,+sprint,999999);
+      await programBoardMoveInitiative(payload.id,+sprint,placement?placement.index:999999);
       render();
       toast('Инициатива перемещена. Командная доска обновлена.',{type:'success'});
     }catch(error){
@@ -444,6 +444,9 @@ function bindPB(){
       if(error&&error.status===409)await reloadProgramBoard().catch(()=>{});
       render();
     }
-  }, '[data-pb-sprint]', el=>el.dataset.pbSprint);
+  }, '[data-pb-sprint]', el=>el.dataset.pbSprint,{
+    itemSelector:'.sticker[data-drag="pb-initiative"]',
+    accepts:payload=>payload.kind==='pb-initiative',
+  });
 }
 
