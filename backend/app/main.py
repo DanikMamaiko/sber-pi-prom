@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.audit.middleware import AuditMiddleware
 from app.audit.sink import DatabaseAuditSink, DisabledAuditSink
+from app.audit.siem import JsonFileAuditSink, UdpSyslogAuditSink
 from app.core.config import get_settings
 from app.services.jira import JiraRequestLimiter
 
@@ -23,6 +24,19 @@ app.state.audit_sink = (
     )
     if settings.audit_enabled
     else DisabledAuditSink()
+)
+app.state.siem_audit_sink = (
+    UdpSyslogAuditSink(
+        settings.siem_syslog_target,
+        settings.siem_syslog_port,
+        settings.siem_syslog_hostname,
+    )
+    if settings.siem_syslog_enabled
+    else (
+        JsonFileAuditSink(settings.siem_audit_log_path)
+        if settings.siem_audit_log_path
+        else DisabledAuditSink()
+    )
 )
 
 app.add_middleware(

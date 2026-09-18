@@ -1,0 +1,12 @@
+# Linux production override; prepare /var/log/sberpi as described in docs/siem.md.
+# Use this override for every subsequent production up/recreate operation.
+services:
+  api:
+    environment:
+      SIEM_AUDIT_LOG_PATH: /var/log/sberpi/audit.jsonl
+    volumes:
+      - type: bind
+        source: /var/log/sberpi
+        target: /var/log/sberpi
+        bind:
+          create_host_path: false

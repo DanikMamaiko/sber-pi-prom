@@ -1,0 +1,12 @@
+/var/log/sberpi/audit.jsonl {
+    daily
+    maxsize 100M
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    # Inherit the file's UID/GID; container UID 10001 need not exist in host passwd.
+    create 0640
+    su root root
+}

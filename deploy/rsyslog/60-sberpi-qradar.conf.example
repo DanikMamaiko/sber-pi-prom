@@ -1,0 +1,42 @@
+# Host rsyslog 8.x. Load imfile only once across the host configuration.
+# The global workDirectory must exist and be writable by rsyslog.
+module(load="imfile")
+
+# Stable QRadar Log Source Identifier = sberpi-sigma (RFC5424 HOSTNAME).
+# APP-NAME = sberpi.audit. JSON timestamp is the actual application event time.
+template(name="SberpiQRadar" type="string"
+  string="<%pri%>1 %timegenerated:::date-rfc3339% sberpi-sigma sberpi.audit - - - %msg%\n")
+
+ruleset(name="SberpiToQRadar") {
+  action(
+    type="omfwd"
+    target="CHANGE_ME_COLLECTOR_IP"
+    port="CHANGE_ME_COLLECTOR_PORT"
+    # Replace with tcp OR udp only after the collector transport is confirmed.
+    protocol="CHANGE_ME_TRANSPORT"
+    # Ignored for UDP (one syslog message per datagram).
+    TCP_Framing="traditional"
+    template="SberpiQRadar"
+    action.resumeRetryCount="-1"
+    action.resumeInterval="5"
+    action.reportSuspension="on"
+    action.reportSuspensionContinuation="on"
+    queue.type="Disk"
+    queue.filename="sberpi-qradar"
+    queue.spoolDirectory="/var/spool/rsyslog-sberpi"
+    queue.maxDiskSpace="1g"
+    queue.checkpointInterval="1"
+    queue.syncQueueFiles="on"
+    queue.saveOnShutdown="on"
+  )
+}
+
+input(
+  type="imfile"
+  File="/var/log/sberpi/audit.jsonl"
+  Tag="sberpi.audit:"
+  Facility="local6"
+  Severity="info"
+  PersistStateInterval="1"
+  Ruleset="SberpiToQRadar"
+)

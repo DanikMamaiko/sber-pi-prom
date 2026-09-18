@@ -14,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 from app.audit.events import AuditEvent
+from app.audit.siem import siem_json
 from app.auth.session import InvalidSession, get_session_manager
 from app.core.config import Settings
 
@@ -247,6 +248,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             http_status=status_code,
             error_code=request.state.audit_error_code or _ERROR_CODES.get(status_code),
             details={
+                "user_agent": request.headers.get("user-agent", "")[:512],
                 "path_parameters": {key: str(value) for key, value in request.path_params.items()},
                 "query_parameter_names": sorted(set(request.query_params.keys())),
             },
@@ -260,6 +262,16 @@ class AuditMiddleware(BaseHTTPMiddleware):
         return response
 
     async def _persist_safely(self, request: Request, event: AuditEvent) -> None:
+        # Independent destinations: a failure in either must not suppress the other.
+        try:
+            await request.app.state.siem_audit_sink.write(event)
+        except Exception as error:
+            logger.error(
+                "siem_audit_write_failed event_id=%s error_type=%s",
+                event.event_id,
+                type(error).__name__,
+            )
+            logger.warning("siem_audit_fallback %s", siem_json(event))
         try:
             await request.app.state.audit_sink.write(event)
         except Exception as error:

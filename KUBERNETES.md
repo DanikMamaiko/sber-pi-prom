@@ -144,6 +144,13 @@ helm template sberpi .\deploy\helm\sberpi `
 
 ## 6. Установка
 
+Для отправки аудита в QRadar по UDP/514 добавить в существующий `config:` поля
+`siemSyslogEnabled`, `siemSyslogTarget`, `siemSyslogPort`, `siemSyslogProtocol`,
+`siemSyslogHostname` по [инструкции SIEM](docs/siem.md). Параметры идут в ConfigMap,
+а не Secret. Требуются новый образ API и обновлённые шаблоны ConfigMap/NetworkPolicy.
+Прямой UDP не требует тома или rsyslog sidecar. Сетевое подтверждение фаервола
+и подтверждение получения событий в QRadar выполняются отдельно.
+
 ```powershell
 helm upgrade --install sberpi .\deploy\helm\sberpi `
   --namespace sberpi `

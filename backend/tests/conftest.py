@@ -18,6 +18,12 @@ os.environ.update(
     SESSION_COOKIE_SECURE="false",
     AUDIT_ENABLED="true",
     AUDIT_DATABASE_URL="",
+    SIEM_AUDIT_LOG_PATH="",
+    SIEM_SYSLOG_ENABLED="false",
+    SIEM_SYSLOG_TARGET="",
+    SIEM_SYSLOG_PORT="514",
+    SIEM_SYSLOG_PROTOCOL="udp",
+    SIEM_SYSLOG_HOSTNAME="sberpi-sigma",
     JIRA_ENABLED="false",
 )
 os.environ.pop("SBERPI_SECRETS_DIR", None)
@@ -29,6 +35,9 @@ def isolate_audit_sink():
     from app.audit.sink import DisabledAuditSink
 
     previous = app.state.audit_sink
+    previous_siem = app.state.siem_audit_sink
     app.state.audit_sink = DisabledAuditSink()
+    app.state.siem_audit_sink = DisabledAuditSink()
     yield
     app.state.audit_sink = previous
+    app.state.siem_audit_sink = previous_siem

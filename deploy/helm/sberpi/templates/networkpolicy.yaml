@@ -61,6 +61,14 @@ spec:
   egress:
     {{- include "sberpi.dnsEgress" . | nindent 4 }}
     {{- include "sberpi.databaseEgress" . | nindent 4 }}
+    {{- if eq (.Values.config.siemSyslogEnabled | default "false" | toString | lower) "true" }}
+    - to:
+        - ipBlock:
+            cidr: {{ printf "%s/%s" (required "config.siemSyslogTarget is required when SIEM is enabled" .Values.config.siemSyslogTarget) (ternary "128" "32" (contains ":" .Values.config.siemSyslogTarget)) | quote }}
+      ports:
+        - protocol: UDP
+          port: {{ .Values.config.siemSyslogPort | default "514" | int }}
+    {{- end }}
     {{- with .Values.networkPolicy.apiExtraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

@@ -25,6 +25,12 @@ config:
   corsOrigins: https://CHANGE_ME_APPLICATION_HOST
   authProvider: ldap
   auditTrustedProxyNetworks: "CHANGE_ME_CLUSTER_PROXY_CIDRS"
+  # Enable after replacing target with the collector IP supplied by the SOC.
+  siemSyslogEnabled: "false"
+  siemSyslogTarget: ""
+  siemSyslogPort: "514"
+  siemSyslogProtocol: "udp"
+  siemSyslogHostname: "sberpi-sigma"
   jiraEnabled: "true"
   jiraBaseUrl: https://jira-apptst-ift.sigma-belpsb.by/jira
   jiraVerifySsl: "true"

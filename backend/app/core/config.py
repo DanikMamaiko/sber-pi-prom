@@ -1,6 +1,8 @@
 from functools import lru_cache
+import ipaddress
 import os
 from pathlib import Path
+import re
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +41,14 @@ class Settings(BaseSettings):
     audit_trusted_proxy_networks: str = ""
     audit_connect_timeout_seconds: int = Field(default=3, ge=1, le=30)
     audit_retry_seconds: int = Field(default=30, ge=1, le=3600)
+    # Empty disables the JSON file consumed by the host's rsyslog agent.
+    siem_audit_log_path: str = ""
+    # Direct UDP syslog works in Kubernetes without a file volume or sidecar.
+    siem_syslog_enabled: bool = False
+    siem_syslog_target: str = ""
+    siem_syslog_port: int = Field(default=514, ge=1, le=65535)
+    siem_syslog_protocol: str = "udp"
+    siem_syslog_hostname: str = "sberpi-sigma"
 
     ad_group_admin: str = (
         "CN=SberPI-Admins,OU=SberPI,OU=Groups for soft access,"
@@ -89,6 +99,29 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_auth_configuration(self):
+        self.siem_audit_log_path = self.siem_audit_log_path.strip()
+        self.siem_syslog_target = self.siem_syslog_target.strip()
+        self.siem_syslog_protocol = self.siem_syslog_protocol.strip().lower()
+        if self.siem_syslog_enabled:
+            if not self.audit_enabled:
+                raise ValueError("SIEM_SYSLOG_ENABLED requires AUDIT_ENABLED=true")
+            if self.siem_audit_log_path:
+                raise ValueError("Choose direct SIEM_SYSLOG_ENABLED or SIEM_AUDIT_LOG_PATH, not both")
+            if self.siem_syslog_protocol != "udp":
+                raise ValueError("Direct SIEM_SYSLOG_PROTOCOL supports only udp; use rsyslog for TCP")
+            try:
+                if "%" in self.siem_syslog_target:
+                    raise ValueError("Scoped addresses are unsupported")
+                self.siem_syslog_target = str(ipaddress.ip_address(self.siem_syslog_target))
+            except ValueError as error:
+                raise ValueError("SIEM_SYSLOG_TARGET must be the collector's IPv4 or IPv6 address") from error
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", self.siem_syslog_hostname):
+                raise ValueError("SIEM_SYSLOG_HOSTNAME must be an ASCII syslog identifier without spaces")
+        if self.siem_audit_log_path:
+            if not self.audit_enabled:
+                raise ValueError("SIEM_AUDIT_LOG_PATH requires AUDIT_ENABLED=true")
+            if not Path(self.siem_audit_log_path).is_absolute():
+                raise ValueError("SIEM_AUDIT_LOG_PATH must be an absolute path")
         self.auth_provider = self.auth_provider.strip().lower()
         if self.auth_provider not in {"local", "ldap"}:
             raise ValueError("AUTH_PROVIDER must be local or ldap")
