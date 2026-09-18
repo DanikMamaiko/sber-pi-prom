@@ -27,6 +27,7 @@ def get_auth_service() -> AuthService:
             bind_dn=settings.ldap_bind_dn,
             bind_password=settings.ldap_bind_password,
             use_tls=settings.ldap_use_tls,
+            ca_bundle=settings.ldap_ca_bundle,
             connect_timeout_seconds=settings.ldap_connect_timeout_seconds,
             role_groups={
                 "admin": settings.ad_group_admin,

@@ -1,9 +1,10 @@
 import asyncio
 import math
 import secrets
+import ssl
 from abc import ABC, abstractmethod
 
-from ldap3 import SUBTREE, Connection, Server
+from ldap3 import SUBTREE, Connection, Server, Tls
 from ldap3.core.exceptions import LDAPException
 from ldap3.core.results import RESULT_INVALID_CREDENTIALS, RESULT_SUCCESS
 from ldap3.utils.conv import escape_filter_chars
@@ -82,6 +83,7 @@ class LdapAuthProvider(AuthProvider):
         bind_password: str,
         role_groups: dict[str, str],
         use_tls: bool = False,
+        ca_bundle: str = "",
         connect_timeout_seconds: float = 5.0,
     ):
         required = {
@@ -109,9 +111,29 @@ class LdapAuthProvider(AuthProvider):
                 f"Не заполнены LDAP-группы для ролей: {', '.join(sorted(empty_groups))}"
             )
 
+        url = url.strip()
+        ca_bundle = ca_bundle.strip()
+        # ldap3 lets the URL scheme override use_ssl, so do not silently
+        # downgrade a connection when the operator explicitly requested TLS.
+        if use_tls and url.lower().startswith("ldap://"):
+            raise ValueError(
+                "LDAP_USE_TLS=true требует LDAP_URL=ldaps://<FQDN>:636; StartTLS не поддерживается"
+            )
+        secure = use_tls or url.lower().startswith("ldaps://")
+        if ca_bundle and not secure:
+            raise ValueError("LDAP_CA_BUNDLE требует подключения по LDAPS")
+        if ca_bundle:
+            try:
+                ssl.create_default_context(cafile=ca_bundle)
+            except OSError as error:
+                raise ValueError(
+                    "LDAP_CA_BUNDLE: не удалось загрузить сертификаты УЦ в формате PEM"
+                ) from error
+
         self._server = Server(
-            url.strip(),
+            url,
             use_ssl=use_tls,
+            tls=Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=ca_bundle or None),
             connect_timeout=connect_timeout_seconds,
         )
         self._user_search_base = user_search_base.strip()
@@ -194,5 +216,8 @@ class LdapAuthProvider(AuthProvider):
             user=user,
             password=password,
             receive_timeout=self._receive_timeout,
+            # AD referrals can point to ldap:// endpoints; never send bind
+            # credentials to a different, potentially unencrypted connection.
+            auto_referrals=False,
             raise_exceptions=False,
         )

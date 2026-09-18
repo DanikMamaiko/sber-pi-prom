@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     ldap_bind_dn: str = ""
     ldap_bind_password: str = Field(default="", repr=False)
     ldap_use_tls: bool = False
+    ldap_ca_bundle: str = ""
     ldap_connect_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore",

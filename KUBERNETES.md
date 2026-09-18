@@ -9,7 +9,7 @@
 - hostname приложения, `ingressClassName` и имя TLS Secret;
 - строку подключения к PostgreSQL и требования к SSL;
 - подтверждение сетевого доступа из namespace `sberpi` к PostgreSQL;
-- подтверждение DNS и сетевого доступа из namespace `sberpi` к `sigma-belpsb.by:389`;
+- FQDN LDAPS-сервера из его сертификата, цепочку корпоративного УЦ в PEM и подтверждение доступа из backend к TCP 636;
 - решение по миграциям: их запускает Helm или DBA применяет `deploy/db/01_sberpi_schema.sql`;
 - лимиты CPU/RAM, если предложенные значения не подходят политике кластера.
 
@@ -111,14 +111,18 @@ Copy-Item .\deploy\helm\sberpi\values-corporate.example.yaml `
 - `config.authProvider=ldap`; LDAP URL, база поиска и четыре DN ролевых групп уже
   заданы по параметрам ИФТ и при необходимости переопределяются в локальном values-файле.
 
-Рабочие параметры поиска пользователей в домене Sigma:
+Параметры поиска пользователей в домене Sigma с LDAPS (заменить FQDN):
 
 ```yaml
 config:
-  ldapUrl: ldap://sigma-belpsb.by:389
+  ldapUrl: ldaps://CHANGE_ME_LDAP_FQDN:636
   ldapUserSearchBase: DC=sigma-belpsb,DC=by
   ldapUserFilter: "(sAMAccountName={username})"
-  ldapUseTls: "false"
+  ldapUseTls: "true"
+  ldapCaBundle: /etc/sberpi/ldap/ca.pem
+
+ldapTls:
+  caConfigMapName: sberpi-ldap-ca
 ```
 
 При входе используется короткий корпоративный логин без домена. Поиск выполняется
@@ -130,6 +134,11 @@ config:
 Применение изменений ConfigMap через текущий Helm chart автоматически обновляет
 backend-поды. После изменения только внешнего Secret нужен перезапуск backend.
 Исправления кода LDAP требуют сборки и развёртывания нового образа backend.
+
+До обновления создать ConfigMap с сертификатом УЦ по [инструкции LDAPS](docs/ldaps.md).
+Для существующей установки перенести новые поля в текущий `values.local.yaml`,
+не заменяя его целиком. Если включён NetworkPolicy, заменить разрешённый LDAP-порт
+в `networkPolicy.apiExtraEgress` с 389 на 636.
 
 Проверка перед установкой:
 

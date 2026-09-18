@@ -60,4 +60,5 @@ data:
   LDAP_GROUP_SEARCH_BASE: {{ .Values.config.ldapGroupSearchBase | quote }}
   LDAP_GROUP_FILTER: {{ .Values.config.ldapGroupFilter | quote }}
   LDAP_USE_TLS: {{ .Values.config.ldapUseTls | quote }}
+  LDAP_CA_BUNDLE: {{ .Values.config.ldapCaBundle | default "" | quote }}
   LDAP_CONNECT_TIMEOUT_SECONDS: {{ .Values.config.ldapConnectTimeoutSeconds | quote }}
